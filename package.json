@@ -1,0 +1,14 @@
+{
+  "name": "bug-smash-deadline-hunter",
+  "version": "0.1.0",
+  "description": "Bug Smash multiplayer arena (Colyseus + Phaser). Hosts the static client AND the WebSocket server from a single Node process — deployable to Render/Fly free tier.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "cd server && npm install",
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

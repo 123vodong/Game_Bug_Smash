@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Dev Stickman: DEAD pose (failure screen)
+       Sprawled on back, X eyes, broken open laptop nearby -->
+
+  <!-- Head: tilted on side, X eyes -->
+  <circle cx="36" cy="80" r="14" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="3"/>
+
+  <!-- X eyes -->
+  <g stroke="#1a1a1a" stroke-width="2" stroke-linecap="round">
+    <line x1="29" y1="76" x2="35" y2="82"/>
+    <line x1="35" y1="76" x2="29" y2="82"/>
+    <line x1="40" y1="76" x2="46" y2="82"/>
+    <line x1="46" y1="76" x2="40" y2="82"/>
+  </g>
+
+  <!-- Defeated open mouth -->
+  <ellipse cx="38" cy="87" rx="2.5" ry="3" fill="#1a1a1a"/>
+
+  <!-- Body: horizontal (sprawled) -->
+  <line x1="50" y1="80" x2="92" y2="80" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Arms: splayed -->
+  <line x1="58" y1="80" x2="48" y2="60" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="70" y1="80" x2="80" y2="58" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Legs: splayed -->
+  <line x1="92" y1="80" x2="108" y2="68" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="92" y1="80" x2="112" y2="94" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Hands -->
+  <line x1="44" y1="58" x2="52" y2="62" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="76" y1="56" x2="84" y2="60" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- ===== BROKEN OPEN LAPTOP lying on the ground, tilted ===== -->
+  <g transform="rotate(20 32 38)">
+    <!-- Screen panel (lying open) -->
+    <polygon points="10,22 48,22 46,32 12,32"
+             fill="#2a2a2a" stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round"/>
+    <!-- Cracked red screen of death -->
+    <polygon points="13,23 45,23 43.5,31 14.5,31" fill="#cc3333"/>
+    <!-- Crack lines on screen -->
+    <g stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round">
+      <path d="M18 24 L24 28 L21 27 L28 31"/>
+      <path d="M38 24 L34 27 L37 28 L33 30"/>
+      <line x1="28" y1="23" x2="30" y2="31"/>
+    </g>
+    <!-- Hinge -->
+    <line x1="12" y1="32" x2="46" y2="32" stroke="#1a1a1a" stroke-width="1.2"/>
+    <!-- Keyboard base, lying flat -->
+    <polygon points="12,32 46,32 48,40 10,40"
+             fill="#3a3a3a" stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round"/>
+    <!-- Smashed keys (scattered) -->
+    <g fill="#1a1a1a" opacity="0.55">
+      <rect x="14" y="34" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="18" y="34" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="23" y="34" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="28" y="34" width="2.5" height="1.4" rx="0.3" transform="rotate(20 29 34)"/>
+      <rect x="35" y="34" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="40" y="34" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="16" y="37" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="22" y="37" width="2.5" height="1.4" rx="0.3" transform="rotate(-15 23 37)"/>
+      <rect x="32" y="37" width="2.5" height="1.4" rx="0.3"/>
+      <rect x="38" y="37" width="2.5" height="1.4" rx="0.3"/>
+    </g>
+    <!-- A few popped-off keys flying -->
+    <rect x="50" y="22" width="2.5" height="1.5" rx="0.3" fill="#1a1a1a" transform="rotate(30 51 22)"/>
+    <rect x="-2" y="36" width="2.5" height="1.5" rx="0.3" fill="#1a1a1a" transform="rotate(-25 -1 36)"/>
+  </g>
+
+  <!-- Spirit / soul lines floating up -->
+  <g stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.45">
+    <path d="M36 50 Q40 44 36 38 Q32 32 36 26"/>
+    <circle cx="36" cy="20" r="3"/>
+  </g>
+
+  <!-- Defeat marks -->
+  <text x="100" y="30" font-family="Arial Black, sans-serif" font-size="14" fill="#1a1a1a" opacity="0.5">×</text>
+  <text x="90" y="44" font-family="Arial Black, sans-serif" font-size="10" fill="#1a1a1a" opacity="0.4">×</text>
+</svg>

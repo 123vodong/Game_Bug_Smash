@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Claude Sonnet — Speed buff (blue) -->
+  <defs>
+    <linearGradient id="bg-sonnet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5b9bff"/>
+      <stop offset="100%" stop-color="#1e40af"/>
+    </linearGradient>
+    <linearGradient id="hl-sonnet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tile background -->
+  <rect x="4" y="4" width="120" height="120" rx="22"
+        fill="url(#bg-sonnet)" stroke="#0e1e4a" stroke-width="3"/>
+  <!-- Top glossy highlight -->
+  <rect x="10" y="10" width="108" height="56" rx="16" fill="url(#hl-sonnet)"/>
+
+  <!-- Asterisk burst (10 spokes), centered + small offset because chevron in corner -->
+  <g transform="translate(58 64)" stroke="#ffffff" stroke-width="7" stroke-linecap="round">
+    <line x1="-28" y1="0"   x2="28" y2="0"/>
+    <line x1="0"   y1="-28" x2="0"  y2="28"/>
+    <line x1="-20" y1="-20" x2="20" y2="20"/>
+    <line x1="-20" y1="20"  x2="20" y2="-20"/>
+    <line x1="-12" y1="-26" x2="12" y2="26"/>
+    <line x1="-12" y1="26"  x2="12" y2="-26"/>
+  </g>
+  <circle cx="58" cy="64" r="6" fill="#ffffff"/>
+
+  <!-- Speed chevrons bottom-right indicating "BOOST" -->
+  <g fill="#ffffff" stroke="#0e1e4a" stroke-width="1.5" stroke-linejoin="round">
+    <polygon points="92,98 100,90 100,98 108,90 108,98 100,106 100,98"/>
+  </g>
+</svg>

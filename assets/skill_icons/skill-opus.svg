@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Claude Opus — Power buff (purple, premium with gold accents) -->
+  <defs>
+    <linearGradient id="bg-opus" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c084d6"/>
+      <stop offset="100%" stop-color="#5b2076"/>
+    </linearGradient>
+    <linearGradient id="hl-opus" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="22"
+        fill="url(#bg-opus)" stroke="#2c0e3a" stroke-width="3"/>
+  <rect x="10" y="10" width="108" height="56" rx="16" fill="url(#hl-opus)"/>
+
+  <!-- Gold asterisk burst -->
+  <g transform="translate(64 64)" stroke="#ffd23f" stroke-width="8" stroke-linecap="round">
+    <line x1="-30" y1="0"   x2="30" y2="0"/>
+    <line x1="0"   y1="-30" x2="0"  y2="30"/>
+    <line x1="-22" y1="-22" x2="22" y2="22"/>
+    <line x1="-22" y1="22"  x2="22" y2="-22"/>
+    <line x1="-14" y1="-28" x2="14" y2="28"/>
+    <line x1="-14" y1="28"  x2="14" y2="-28"/>
+  </g>
+  <circle cx="64" cy="64" r="7" fill="#ffd23f"/>
+
+  <!-- Sparkles in corners — premium feel -->
+  <g fill="#ffe066">
+    <polygon points="22,22 24,28 30,30 24,32 22,38 20,32 14,30 20,28"/>
+    <polygon points="106,22 108,27 113,29 108,31 106,36 104,31 99,29 104,27"/>
+    <polygon points="22,106 24,111 29,113 24,115 22,120 20,115 15,113 20,111"/>
+    <polygon points="106,106 108,111 113,113 108,115 106,120 104,115 99,113 104,111"/>
+  </g>
+</svg>

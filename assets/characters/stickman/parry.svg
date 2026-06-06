@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Dev Stickman: PARRY pose
+       Defensive stance, laptop held vertical as a shield in front of body,
+       knees bent low, ready to block. Brief invuln window. -->
+
+  <!-- Defensive glow ring (cyan) behind the stickman -->
+  <circle cx="64" cy="74" r="46" fill="none" stroke="#7ec8ff"
+          stroke-width="3" stroke-dasharray="4 3" opacity="0.55"/>
+
+  <!-- Head, tucked slightly -->
+  <circle cx="64" cy="32" r="14" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="3"/>
+
+  <!-- Hair -->
+  <path d="M52 26 Q58 18 64 20 Q70 18 76 26" fill="#2c1810" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Glasses -->
+  <circle cx="58" cy="33" r="4" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <circle cx="70" cy="33" r="4" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="62" y1="33" x2="66" y2="33" stroke="#1a1a1a" stroke-width="1.5"/>
+
+  <!-- Focused brows -->
+  <line x1="52" y1="27" x2="60" y2="30" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+  <line x1="76" y1="27" x2="68" y2="30" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Determined mouth (small flat line) -->
+  <line x1="60" y1="40" x2="68" y2="40" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Body slightly leaning back, lower -->
+  <line x1="64" y1="46" x2="64" y2="84" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Both arms forward holding laptop as a shield, elbows bent -->
+  <line x1="62" y1="54" x2="42" y2="56" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="42" y1="56" x2="46" y2="74" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="66" y1="54" x2="86" y2="56" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="86" y1="56" x2="82" y2="74" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- ===== LAPTOP HELD VERTICAL AS A SHIELD ===== -->
+  <!-- Outer shield rim (cyan glow) -->
+  <rect x="42" y="50" width="44" height="36" rx="3"
+        fill="none" stroke="#7ec8ff" stroke-width="2.5" opacity="0.85"/>
+  <!-- Open laptop frame, vertical -->
+  <rect x="44" y="52" width="40" height="32" rx="2"
+        fill="#2a2a2a" stroke="#1a1a1a" stroke-width="2"/>
+  <!-- Screen (top half) -->
+  <rect x="47" y="55" width="34" height="13" fill="#4aa3ff"/>
+  <!-- Screen content lines -->
+  <line x1="50" y1="58" x2="68" y2="58" stroke="#fff" stroke-width="0.8" opacity="0.85"/>
+  <line x1="50" y1="61" x2="74" y2="61" stroke="#fff" stroke-width="0.8" opacity="0.85"/>
+  <line x1="50" y1="64" x2="64" y2="64" stroke="#fff" stroke-width="0.8" opacity="0.85"/>
+  <!-- Hinge -->
+  <line x1="47" y1="68" x2="81" y2="68" stroke="#1a1a1a" stroke-width="1.2"/>
+  <!-- Keyboard (bottom half) -->
+  <rect x="47" y="70" width="34" height="11" fill="#3a3a3a"/>
+  <g fill="#1a1a1a" opacity="0.55">
+    <rect x="50" y="72" width="3" height="1.5" rx="0.3"/>
+    <rect x="55" y="72" width="3" height="1.5" rx="0.3"/>
+    <rect x="60" y="72" width="3" height="1.5" rx="0.3"/>
+    <rect x="65" y="72" width="3" height="1.5" rx="0.3"/>
+    <rect x="70" y="72" width="3" height="1.5" rx="0.3"/>
+    <rect x="75" y="72" width="3" height="1.5" rx="0.3"/>
+    <rect x="52" y="75" width="3" height="1.5" rx="0.3"/>
+    <rect x="57" y="75" width="3" height="1.5" rx="0.3"/>
+    <rect x="62" y="75" width="3" height="1.5" rx="0.3"/>
+    <rect x="67" y="75" width="3" height="1.5" rx="0.3"/>
+    <rect x="72" y="75" width="3" height="1.5" rx="0.3"/>
+  </g>
+
+  <!-- Wide low stance: knees bent, feet planted wide -->
+  <line x1="64" y1="84" x2="46" y2="100" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="46" y1="100" x2="48" y2="112" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="64" y1="84" x2="82" y2="100" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="82" y1="100" x2="80" y2="112" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Feet planted wide -->
+  <line x1="42" y1="114" x2="54" y2="114" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="74" y1="114" x2="86" y2="114" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Soft inner glow at chest level (cyan shield core) -->
+  <circle cx="64" cy="68" r="3" fill="#7ec8ff" opacity="0.6"/>
+</svg>

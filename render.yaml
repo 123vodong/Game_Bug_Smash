@@ -1,0 +1,23 @@
+# Render.com blueprint — one service serves both the Phaser client (static)
+# and the Colyseus WebSocket on the same PORT.
+#
+# Deploy:
+#   1. Push this repo to GitHub
+#   2. On render.com → New + → Blueprint → connect the repo
+#   3. Render reads this file and provisions everything
+#
+# The free tier sleeps after 15 min of inactivity (cold start ~30 s). For
+# always-on, upgrade or use a free uptime pinger like cron-job.org to hit
+# the URL every 10 min.
+services:
+  - type: web
+    name: bug-smash
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production

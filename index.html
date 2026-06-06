@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <link rel="icon" href="data:," />
+  <title>BUG SMASH: Deadline Hunter</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; background: #1a1a1a;
+      overflow: hidden; height: 100%; width: 100%;
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #game { display: flex; justify-content: center; align-items: center; height: 100vh; }
+
+    /* Fullscreen overlay shown when phone is in portrait */
+    #rotate-msg {
+      display: none;
+      position: fixed; inset: 0; z-index: 9999;
+      background: #1a1a1a;
+      color: #fff; font-family: Arial Black, sans-serif;
+      text-align: center;
+      flex-direction: column; justify-content: center; align-items: center;
+      padding: 20px;
+    }
+    #rotate-msg .icon { font-size: 64px; animation: spin 2s ease-in-out infinite; }
+    #rotate-msg h1 { font-size: 22px; margin: 18px 0 6px; }
+    #rotate-msg p { font-size: 14px; color: #aab0c0; margin: 0; }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      50% { transform: rotate(90deg); }
+      100% { transform: rotate(90deg); }
+    }
+    /* Only show the rotate overlay on touch devices in portrait */
+    @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
+      #rotate-msg { display: flex; }
+    }
+
+    /* "Tap to play fullscreen" splash — shown on first touch */
+    #fs-prompt {
+      display: none;
+      position: fixed; inset: 0; z-index: 9000;
+      background: rgba(10,14,22,0.92);
+      color: #fff; font-family: Arial Black, sans-serif;
+      flex-direction: column; justify-content: center; align-items: center;
+      cursor: pointer;
+    }
+    #fs-prompt .btn {
+      padding: 18px 28px; border: 3px solid #39c2ff; border-radius: 12px;
+      background: #102030; color: #39c2ff; font-size: 20px;
+      box-shadow: 0 0 24px rgba(57,194,255,0.5);
+    }
+    #fs-prompt .hint { margin-top: 14px; font-size: 12px; color: #aab0c0; font-family: Consolas, monospace; }
+    @media (hover: none) and (pointer: coarse) {
+      #fs-prompt { display: flex; }
+    }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+
+  <div id="rotate-msg">
+    <div class="icon">📱</div>
+    <h1>Rotate your phone</h1>
+    <p>This game is designed for landscape mode.</p>
+  </div>
+
+  <div id="fs-prompt">
+    <div class="btn">▶ TAP TO PLAY</div>
+    <div class="hint">enters fullscreen + landscape lock</div>
+  </div>
+
+  <script>
+    // Touch-device only: handle fullscreen + orientation lock on first tap.
+    (function () {
+      const fsPrompt = document.getElementById('fs-prompt');
+      if (!fsPrompt) return;
+      const enterFullscreenAndLock = async () => {
+        try {
+          const el = document.documentElement;
+          if (el.requestFullscreen)      await el.requestFullscreen();
+          else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+        } catch (e) { /* user cancelled or unsupported */ }
+        try {
+          if (screen.orientation && screen.orientation.lock) {
+            await screen.orientation.lock('landscape');
+          }
+        } catch (e) { /* iOS Safari etc. silently refuse — that's ok, overlay still prompts manual rotate */ }
+        fsPrompt.style.display = 'none';
+      };
+      fsPrompt.addEventListener('click', enterFullscreenAndLock);
+      fsPrompt.addEventListener('touchend', (e) => { e.preventDefault(); enterFullscreenAndLock(); });
+    })();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+  <script src="https://unpkg.com/colyseus.js@^0.16.0/dist/colyseus.js"></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

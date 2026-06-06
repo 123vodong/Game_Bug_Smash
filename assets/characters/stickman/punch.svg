@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Dev Stickman: PUNCH / SIDEWAYS LAPTOP SWING
+       Both arms extended to the right, laptop swung horizontally as a club -->
+
+  <!-- Head: turned with the swing -->
+  <circle cx="62" cy="30" r="14" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="3"/>
+
+  <!-- Hair -->
+  <path d="M50 24 Q56 14 62 16 Q70 14 76 24" fill="#2c1810" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Glasses -->
+  <circle cx="56" cy="31" r="4" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <circle cx="68" cy="31" r="4" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="60" y1="31" x2="64" y2="31" stroke="#1a1a1a" stroke-width="1.5"/>
+
+  <!-- Angry brows -->
+  <line x1="50" y1="25" x2="58" y2="29" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+  <line x1="74" y1="25" x2="66" y2="29" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Mouth -->
+  <ellipse cx="62" cy="39" rx="3" ry="2" fill="#1a1a1a"/>
+
+  <!-- Body, slight twist -->
+  <line x1="62" y1="44" x2="64" y2="84" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Both arms extended right (swing follow-through) -->
+  <line x1="62" y1="52" x2="98" y2="44" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="62" y1="56" x2="96" y2="56" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- ===== LAPTOP swung sideways (rotated so screen edge leads) ===== -->
+  <g transform="rotate(75 102 50)">
+    <polygon points="92,42 116,42 114,50 94,50"
+             fill="#2a2a2a" stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round"/>
+    <polygon points="95,43 113,43 111.5,49 96.5,49" fill="#4aa3ff"/>
+    <line x1="97" y1="45" x2="107" y2="45" stroke="#fff" stroke-width="0.7" opacity="0.8"/>
+    <line x1="97" y1="47" x2="110" y2="47" stroke="#fff" stroke-width="0.7" opacity="0.8"/>
+    <line x1="94" y1="50" x2="114" y2="50" stroke="#1a1a1a" stroke-width="1"/>
+    <polygon points="94,50 114,50 116,56 92,56"
+             fill="#3a3a3a" stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round"/>
+    <g fill="#1a1a1a" opacity="0.55">
+      <rect x="96" y="51.5" width="2" height="1" rx="0.2"/>
+      <rect x="99" y="51.5" width="2" height="1" rx="0.2"/>
+      <rect x="102" y="51.5" width="2" height="1" rx="0.2"/>
+      <rect x="105" y="51.5" width="2" height="1" rx="0.2"/>
+      <rect x="108" y="51.5" width="2" height="1" rx="0.2"/>
+    </g>
+  </g>
+
+  <!-- Horizontal swing arc lines, sweeping left → right -->
+  <g stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.55">
+    <path d="M30 44 Q60 38 88 42"/>
+    <path d="M28 54 Q60 50 86 56"/>
+    <path d="M30 64 Q58 62 84 66"/>
+  </g>
+
+  <!-- Wide stance: planted left leg, right leg trailing -->
+  <line x1="64" y1="84" x2="50" y2="108" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="64" y1="84" x2="76" y2="110" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Feet -->
+  <line x1="46" y1="110" x2="56" y2="110" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="72" y1="112" x2="82" y2="112" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+</svg>

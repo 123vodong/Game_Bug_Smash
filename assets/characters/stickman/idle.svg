@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Dev Stickman: IDLE pose
+       Standing, open laptop held in front, glasses on -->
+
+  <!-- Head: skin-tone circle with black outline -->
+  <circle cx="64" cy="28" r="14" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="3"/>
+
+  <!-- Hair tuft on top -->
+  <path d="M53 22 Q58 14 64 16 Q70 14 75 22" fill="#2c1810" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Glasses -->
+  <circle cx="58" cy="29" r="4" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <circle cx="70" cy="29" r="4" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="62" y1="29" x2="66" y2="29" stroke="#1a1a1a" stroke-width="1.5"/>
+
+  <!-- Mouth: small smile -->
+  <path d="M60 36 Q64 39 68 36" fill="none" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Neck + body line -->
+  <line x1="64" y1="42" x2="64" y2="84" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Arms: both forward holding laptop -->
+  <line x1="64" y1="52" x2="46" y2="72" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="64" y1="52" x2="82" y2="72" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- ===== OPEN LAPTOP (3/4 perspective) ===== -->
+  <!-- Screen panel: tilted back, top wider than bottom (perspective) -->
+  <polygon points="40,56 88,56 84,68 44,68"
+           fill="#2a2a2a" stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Screen display (inset) -->
+  <polygon points="44,58 84,58 81,66 47,66" fill="#4aa3ff"/>
+  <!-- Code lines on screen -->
+  <line x1="48" y1="60" x2="62" y2="60" stroke="#fff" stroke-width="0.8" opacity="0.75"/>
+  <line x1="48" y1="62" x2="70" y2="62" stroke="#fff" stroke-width="0.8" opacity="0.75"/>
+  <line x1="48" y1="64" x2="58" y2="64" stroke="#fff" stroke-width="0.8" opacity="0.75"/>
+  <!-- Hinge line where screen meets base -->
+  <line x1="44" y1="68" x2="84" y2="68" stroke="#1a1a1a" stroke-width="1.2"/>
+  <!-- Keyboard base: horizontal slab, slight perspective (narrower in front) -->
+  <polygon points="44,68 84,68 86,76 42,76"
+           fill="#3a3a3a" stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Keyboard keys (small dots/lines suggesting keys) -->
+  <g fill="#1a1a1a" opacity="0.55">
+    <rect x="46" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="51" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="56" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="61" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="66" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="71" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="76" y="70" width="3" height="1.5" rx="0.3"/>
+    <rect x="48" y="73" width="3" height="1.5" rx="0.3"/>
+    <rect x="53" y="73" width="3" height="1.5" rx="0.3"/>
+    <rect x="58" y="73" width="3" height="1.5" rx="0.3"/>
+    <rect x="63" y="73" width="3" height="1.5" rx="0.3"/>
+    <rect x="68" y="73" width="3" height="1.5" rx="0.3"/>
+    <rect x="73" y="73" width="3" height="1.5" rx="0.3"/>
+  </g>
+  <!-- Trackpad -->
+  <rect x="58" y="74.5" width="12" height="1" rx="0.3" fill="#1a1a1a" opacity="0.4"/>
+
+  <!-- Legs -->
+  <line x1="64" y1="84" x2="54" y2="110" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="64" y1="84" x2="74" y2="110" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Feet -->
+  <line x1="50" y1="112" x2="58" y2="112" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="70" y1="112" x2="78" y2="112" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,9 @@
+node_modules/
+.env
+.DS_Store
+*.log
+server/server.log
+server/server.err
+tools/atlas_raw/
+recycle_bin/
+BugSmashHunter.zip

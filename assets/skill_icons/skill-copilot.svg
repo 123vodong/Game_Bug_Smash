@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- GitHub Copilot — Chaos (green, robot face) -->
+  <defs>
+    <linearGradient id="bg-copilot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7ed957"/>
+      <stop offset="100%" stop-color="#1f5d2a"/>
+    </linearGradient>
+    <linearGradient id="hl-copilot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="22"
+        fill="url(#bg-copilot)" stroke="#0c2412" stroke-width="3"/>
+  <rect x="10" y="10" width="108" height="56" rx="16" fill="url(#hl-copilot)"/>
+
+  <!-- Antenna -->
+  <line x1="64" y1="22" x2="64" y2="34" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="64" cy="20" r="5" fill="#ffd23f" stroke="#0c2412" stroke-width="2"/>
+
+  <!-- Robot head (rounded square body) -->
+  <rect x="30" y="36" width="68" height="58" rx="14"
+        fill="#ffffff" stroke="#0c2412" stroke-width="3"/>
+
+  <!-- Visor band -->
+  <rect x="36" y="48" width="56" height="22" rx="8"
+        fill="#0c2412"/>
+
+  <!-- Eyes (glowing green circles inside the visor) -->
+  <circle cx="50" cy="59" r="6" fill="#7ed957"/>
+  <circle cx="78" cy="59" r="6" fill="#7ed957"/>
+  <!-- Eye shine -->
+  <circle cx="52" cy="57" r="2" fill="#ffffff"/>
+  <circle cx="80" cy="57" r="2" fill="#ffffff"/>
+
+  <!-- Mouth / chip slot -->
+  <rect x="48" y="78" width="32" height="6" rx="3"
+        fill="#0c2412"/>
+
+  <!-- Ear vents on sides -->
+  <rect x="22" y="58" width="8" height="14" rx="3" fill="#ffffff" stroke="#0c2412" stroke-width="2"/>
+  <rect x="98" y="58" width="8" height="14" rx="3" fill="#ffffff" stroke="#0c2412" stroke-width="2"/>
+
+  <!-- Chaos sparks at base corners -->
+  <g stroke="#ffd23f" stroke-width="2.5" stroke-linecap="round">
+    <line x1="20" y1="104" x2="24" y2="100"/>
+    <line x1="20" y1="100" x2="24" y2="104"/>
+    <line x1="104" y1="104" x2="108" y2="100"/>
+    <line x1="104" y1="100" x2="108" y2="104"/>
+  </g>
+</svg>

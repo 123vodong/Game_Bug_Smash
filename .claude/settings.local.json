@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem '.claude/context/design/' | Select-Object Name, @{n='KB';e={'{0:N1}' -f \\($_.Length/1KB\\)}} | Format-Table -AutoSize)"
+    ]
+  }
+}

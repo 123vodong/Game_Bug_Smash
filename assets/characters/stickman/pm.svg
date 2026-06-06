@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 160">
+  <!-- PM Stickman: angry shouting, glasses, red sweater -->
+
+  <!-- Head -->
+  <circle cx="64" cy="30" r="15" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="3"/>
+
+  <!-- Brown hair (combed back, slightly messy from frustration) -->
+  <path d="M49 24 Q56 12 64 13 Q74 14 79 24 L79 28 Q72 19 64 20 Q56 19 49 28 Z"
+        fill="#6b3f1d" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Glasses (round black frames) -->
+  <circle cx="58" cy="31" r="4.5" fill="#ffffff" stroke="#1a1a1a" stroke-width="2"/>
+  <circle cx="70" cy="31" r="4.5" fill="#ffffff" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="62.5" y1="31" x2="65.5" y2="31" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="53.5" y1="31" x2="50" y2="30" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="74.5" y1="31" x2="78" y2="30" stroke="#1a1a1a" stroke-width="2"/>
+  <!-- Angry pupils -->
+  <circle cx="58" cy="31" r="1.8" fill="#1a1a1a"/>
+  <circle cx="70" cy="31" r="1.8" fill="#1a1a1a"/>
+
+  <!-- Angry eyebrows (sharp downward slant) -->
+  <line x1="51" y1="22" x2="62" y2="27" stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"/>
+  <line x1="77" y1="22" x2="66" y2="27" stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Shouting mouth (open wide oval) -->
+  <ellipse cx="64" cy="40" rx="5" ry="4" fill="#3a1010" stroke="#1a1a1a" stroke-width="2"/>
+  <!-- Tongue -->
+  <path d="M61 41 Q64 44 67 41" fill="#cc4444" stroke="none"/>
+
+  <!-- Neck -->
+  <line x1="64" y1="45" x2="64" y2="52" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Red sweater body -->
+  <path d="M50 54 Q50 50 56 50 L72 50 Q78 50 78 54 L80 90 Q64 94 48 90 Z"
+        fill="#d93b3b" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round"/>
+  <!-- Sweater collar V -->
+  <path d="M60 50 L64 58 L68 50" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Left arm — raised pointing finger (angry gesture) -->
+  <line x1="52" y1="58" x2="36" y2="44" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="35" cy="43" r="3" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="2"/>
+  <line x1="35" y1="42" x2="31" y2="36" stroke="#1a1a1a" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Right arm at side, fist clenched -->
+  <line x1="76" y1="58" x2="86" y2="84" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="87" cy="86" r="4" fill="#fcd9b6" stroke="#1a1a1a" stroke-width="2"/>
+
+  <!-- Legs (dark pants) -->
+  <line x1="58" y1="92" x2="54" y2="124" stroke="#1a1a1a" stroke-width="6" stroke-linecap="round"/>
+  <line x1="70" y1="92" x2="74" y2="124" stroke="#1a1a1a" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Feet -->
+  <ellipse cx="52" cy="128" rx="7" ry="3" fill="#1a1a1a"/>
+  <ellipse cx="76" cy="128" rx="7" ry="3" fill="#1a1a1a"/>
+
+  <!-- Anger sweat drop near head -->
+  <path d="M44 22 Q42 26 44 28 Q46 26 44 22 Z" fill="#7ec8ff" stroke="#1a1a1a" stroke-width="1.5"/>
+</svg>
