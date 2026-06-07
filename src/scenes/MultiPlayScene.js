@@ -678,7 +678,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._status = this.add.text(12, statusY, 'connecting…', {
       fontFamily: 'Consolas, monospace', fontSize: 13, color: '#7ec8ff',
     }).setScrollFactor(0).setDepth(50);
-    this._hint = this.add.text(12, H - 20, 'move = click/arrows · SPACE smash · Q dash · W shield · E roll · R ult · ESC menu', {
+    this._hint = this.add.text(12, H - 20, 'move = click/arrows · SPACE smash · Q dash · W shield · E roll · R ult · ENTER chat · ESC menu', {
       fontFamily: 'Consolas, monospace', fontSize: 11, color: '#888a99',
     }).setScrollFactor(0).setDepth(50);
     this._playerListText = this.add.text(W - 12, 10, '', {
@@ -806,11 +806,27 @@ export default class MultiPlayScene extends Phaser.Scene {
     // Arrow-key movement (laptop-friendly direct control)
     this._cursors = this.input.keyboard.createCursorKeys();
 
-    this.input.keyboard.on('keydown-ESC', () => this._leaveAndGoMenu());
+    this.input.keyboard.on('keydown-ESC', () => {
+      // While the chat input is focused, ESC just closes it (doesn't quit).
+      if (this._chatActive) { this._closeChat(false); return; }
+      this._leaveAndGoMenu();
+    });
+
+    // ENTER toggles the chat input (MOBA convention). During name entry the
+    // box's own handler owns ENTER, so we no-op here.
+    this.input.keyboard.on('keydown-ENTER', () => {
+      if (this._nameEntryActive) return;
+      if (this._chatActive) this._closeChat(true); else this._openChat();
+    });
 
     this.input.on('pointerdown', (p) => {
       if (this._nameEntryActive) return; // name box open — swallow world clicks
       if (this._actionButtonsHit(p)) return;
+      if (this._chatBtnHit(p)) return;   // tap on the chat button — not a move
+      if (this._overChatPanel(p)) {      // start drag-scrolling the log
+        this._chatDrag = { y0: p.y, s0: this._chatScroll };
+        return;
+      }
       // On touch, the left half is the joystick's territory — never treat a
       // touch there as a tap-to-move/attack (that handler is right-half + mouse).
       if (this._isJoystickTouch(p)) return;
@@ -820,6 +836,11 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._dragLastAt = 0;
     this.input.on('pointermove', (p) => {
       if (this._nameEntryActive) return; // name box open — ignore drag-to-move
+      if (this._chatDrag && p.isDown) {  // drag-scroll the chat log
+        this._chatScroll = this._chatDrag.s0 + Math.round((p.y - this._chatDrag.y0) / this._chatLineH);
+        this._renderChatLog();
+        return;
+      }
       if (!p.isDown) return;
       if (this._isJoystickTouch(p)) return;
       if (this._actionButtonsHit(p) || this._joystickHit(p)) return;
@@ -836,13 +857,16 @@ export default class MultiPlayScene extends Phaser.Scene {
     //   W     = Laptop Shield  (cooldown skill)
     //   E     = Debug Roll     (cooldown skill)
     //   R     = Deadline Break (ult)
-    this.input.keyboard.on('keydown-SPACE', () => this._triggerAction('smash'));
-    this.input.keyboard.on('keydown-Q',     () => this._castSkill('q'));
-    this.input.keyboard.on('keydown-W',     () => this._castSkill('w'));
-    this.input.keyboard.on('keydown-E',     () => this._castSkill('e'));
-    this.input.keyboard.on('keydown-R',     () => this._castSkill('r'));
+    // Skill keys are suppressed while typing in chat (mouse-driven actions keep
+    // working — the game continues underneath the chat box, LoL-style).
+    this.input.keyboard.on('keydown-SPACE', () => { if (!this._chatActive) this._triggerAction('smash'); });
+    this.input.keyboard.on('keydown-Q',     () => { if (!this._chatActive) this._castSkill('q'); });
+    this.input.keyboard.on('keydown-W',     () => { if (!this._chatActive) this._castSkill('w'); });
+    this.input.keyboard.on('keydown-E',     () => { if (!this._chatActive) this._castSkill('e'); });
+    this.input.keyboard.on('keydown-R',     () => { if (!this._chatActive) this._castSkill('r'); });
 
     this._buildActionButtons();
+    this._buildChat();
     if (this._isTouch) this._buildJoystick();
 
     // ----- Name entry, then connect -----
@@ -873,6 +897,19 @@ export default class MultiPlayScene extends Phaser.Scene {
       this.localId = this.room.sessionId;
       this._status.setText(`connected · room ${this.room.roomId} · you = ${this.playerName}`);
       this._status.setColor('#7ed957');
+
+      // Chat — server broadcasts every message to the whole room.
+      this.room.onMessage('chat', (m) => {
+        if (this._shuttingDown || !m) return;
+        this._addChatMessage(m);
+      });
+      // Recent history for late joiners — sent once on request. These predate us,
+      // so sid is null → they render as "others" (cyan).
+      this.room.onMessage('chatHistory', (arr) => {
+        if (this._shuttingDown || !Array.isArray(arr)) return;
+        for (const m of arr) this._addChatMessage({ sid: null, name: m.name, text: m.text });
+      });
+      this.room.send('getChatHistory');
 
       // Colyseus 0.16 callback API: get a callback proxy via getStateCallbacks(room),
       // then subscribe through $(room.state).<field> and $(child).onChange(...)
@@ -2323,6 +2360,14 @@ export default class MultiPlayScene extends Phaser.Scene {
     return false;
   }
 
+  /** Returns true if the pointer is over the touch chat button. */
+  _chatBtnHit(p) {
+    const z = this._chatBtnHitZone;
+    if (!z) return false;
+    const dx = p.x - z.x, dy = p.y - z.y;
+    return dx * dx + dy * dy < z.r * z.r;
+  }
+
   _despawnRemote(sessionId) {
     const r = this.remotePlayers.get(sessionId);
     if (!r) return;
@@ -2667,9 +2712,10 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (this.localId) {
       let dx = 0, dy = 0;
 
-      // Arrow-key direction (highest priority for laptop play)
+      // Arrow-key direction (highest priority for laptop play). Suppressed while
+      // typing in chat so WASD/arrows go to the text field, not movement.
       let kx = 0, ky = 0;
-      if (this._cursors) {
+      if (this._cursors && !this._chatActive) {
         if (this._cursors.left.isDown)  kx -= 1;
         if (this._cursors.right.isDown) kx += 1;
         if (this._cursors.up.isDown)    ky -= 1;
@@ -3095,6 +3141,205 @@ export default class MultiPlayScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  // ───────────────────────── Chat (Personal Mode) ─────────────────────────
+  // MOBA-style: ENTER opens a one-line input; ENTER again sends, ESC cancels.
+  // Messages broadcast through the server to everyone in the room and stack in
+  // a bottom-left log that fades after a few seconds. The game keeps running
+  // underneath — only the keyboard is captured while the input is focused.
+
+  _buildChat() {
+    const { width: W, height: H } = this.scale;
+    this._chatActive = false;
+    // Whole chat sits on the RIGHT (clear of the mobile joystick, bottom-left).
+    // Vertical order, top → bottom:  LOG panel (scrollable) · INPUT · 💬 button.
+    // The log keeps a big history buffer; a small window shows the latest few,
+    // and the player can scroll up (mouse wheel or drag) to read older ones.
+    const btnX = W - 34;
+    const btnY = Math.round(H * 0.62);    // a little below centre
+    this._chatBtnY = btnY;
+    this._chatX = W - 14;                 // right margin (lines are right-anchored)
+    this._chatHistory = [];               // { str, color } — full buffer
+    this._chatHistMax = 60;               // messages retained
+    this._chatViewN = 6;                  // visible at once
+    this._chatLineH = 18;
+    this._chatScroll = 0;                 // lines scrolled up from newest (0 = bottom)
+    this._chatLineObjs = [];              // currently-rendered Text objects
+    this._chatDrag = null;
+
+    const panelW = Math.min(360, Math.round(W * 0.5));
+    const panelH = this._chatViewN * this._chatLineH + 12;
+    const panelRight = W - 8;
+    const panelBottom = btnY - 84;        // above the input slot
+    this._chatBaseY = panelBottom - 6;    // newest visible line bottom
+    // No visible panel — these bounds only define the wheel/drag scroll region.
+    this._chatPanelBounds = {
+      left: panelRight - panelW, right: panelRight,
+      top: panelBottom - panelH, bottom: panelBottom,
+    };
+    this._chatScrollHint = this.add.text(panelRight - 4, this._chatPanelBounds.top - 1, '', {
+      fontFamily: 'Consolas, monospace', fontSize: 10, color: '#7ec8ff',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(1, 1).setScrollFactor(0).setDepth(54).setVisible(false);
+
+    // Wheel scroll while hovering the log; drag-release clears the drag state.
+    this.input.on('wheel', (pointer, objs, dx, dy) => {
+      if (!this._overChatPanel(pointer)) return;
+      this._chatScroll += (dy < 0 ? 1 : -1);
+      this._renderChatLog();
+    });
+    this.input.on('pointerup', () => { this._chatDrag = null; });
+    this.input.on('pointerupoutside', () => { this._chatDrag = null; });
+
+    // ── Always-visible tap/click chat button (discoverability) ──
+    {
+      const btn = this.add.container(btnX, btnY).setScrollFactor(0).setDepth(50);
+      const ring = this.add.circle(0, 0, 24, 0x05080f, 0.7).setStrokeStyle(3, 0x39c2ff);
+      const icon = this.add.text(0, 0, '💬', { fontSize: 22 }).setOrigin(0.5);
+      const tag  = this.add.text(0, 26, 'CHAT', {
+        fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7ec8ff',
+      }).setOrigin(0.5);
+      btn.add([ring, icon, tag]);
+      const hit = this.add.zone(btnX, btnY, 56, 64).setScrollFactor(0).setDepth(51)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (p, lx, ly, e) => { e?.stopPropagation?.(); this._openChat(); });
+      this._chatBtnHitZone = { x: btnX, y: btnY, r: 30 };
+    }
+
+    // ── Native DOM <input> for typing (all platforms) ──
+    // A real <input> gives us IME composition (so Unikey/VietKey Telex/VNI and
+    // Vietnamese diacritics work) and raises the soft keyboard on phones —
+    // neither is possible with Phaser's raw keydown capture.
+    const el = document.createElement('input');
+    el.type = 'text';
+    el.maxLength = 140;
+    el.autocomplete = 'off';
+    el.lang = 'vi';                       // hint the IME toward Vietnamese
+    el.placeholder = 'say something… (Enter to send)';
+    // Positioned just above the 💬 button at open time (see _positionChatInput).
+    Object.assign(el.style, {
+      position: 'fixed', right: '8px', bottom: '50%',
+      width: 'min(64vw, 320px)', textAlign: 'right',
+      padding: '8px 10px', font: '14px Consolas, monospace', color: '#fff',
+      background: 'rgba(5,8,15,0.96)', border: '2px solid #39c2ff',
+      borderRadius: '6px', zIndex: '9999', display: 'none', outline: 'none',
+    });
+    // Don't let Enter/Escape commit mid-IME-composition (Telex builds chars on
+    // keystrokes); `isComposing` is true while the IME is mid-character.
+    el.addEventListener('keydown', (ev) => {
+      if (ev.isComposing) return;
+      if (ev.key === 'Enter')  { ev.preventDefault(); this._closeChat(true); }
+      if (ev.key === 'Escape') { ev.preventDefault(); this._closeChat(false); }
+    });
+    el.addEventListener('blur', () => { if (this._chatActive) this._closeChat(false); });
+    document.body.appendChild(el);
+    this._chatDomInput = el;
+    this.events.once('shutdown', () => el.remove());
+  }
+
+  _openChat() {
+    if (this._chatActive || this._nameEntryActive || !this._chatDomInput) return;
+    this._chatActive = true;
+    // Hand keystrokes to the native input. Disable Phaser's keyboard AND clear
+    // its key captures — otherwise Phaser keeps calling preventDefault on SPACE
+    // and the arrow keys, so they never reach the focused <input> (no spaces,
+    // no cursor movement). We re-add the captures on close.
+    this.input.keyboard.enabled = false;
+    this.input.keyboard.clearCaptures();
+    this._chatDomInput.value = '';
+    this._positionChatInput();            // sit the field just above the 💬 button
+    this._chatDomInput.style.display = 'block';
+    // focus() must run inside the user gesture chain → defer a tick.
+    setTimeout(() => this._chatDomInput && this._chatDomInput.focus(), 0);
+  }
+
+  /** Anchor the DOM input just above the 💬 button, mapping canvas→page coords
+   *  so it lines up regardless of canvas scaling / letterboxing. */
+  _positionChatInput() {
+    const el = this._chatDomInput;
+    if (!el) return;
+    const canvas = this.game.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width / this.scale.width;
+    const scaleY = rect.height / this.scale.height;
+    const btnTopPageY = rect.top + (this._chatBtnY - 30) * scaleY; // button top edge
+    // Place the input's BOTTOM ~10px above the button top.
+    el.style.bottom = Math.round(window.innerHeight - btnTopPageY + 10) + 'px';
+    el.style.right  = Math.round(window.innerWidth - (rect.right - 8 * scaleX)) + 'px';
+  }
+
+  _closeChat(send) {
+    if (!this._chatActive) return;
+    if (send) {
+      const t = (this._chatDomInput.value || '').trim();
+      if (t && this.room) { try { this.room.send('chat', { text: t }); } catch (_) {} }
+    }
+    this._chatActive = false;
+    this._chatDomInput.value = '';
+    this._chatDomInput.style.display = 'none';
+    this._chatDomInput.blur();
+    this.input.keyboard.enabled = true;
+    // Restore the gameplay key captures (stop SPACE/arrows scrolling the page).
+    this.input.keyboard.addCapture('SPACE,UP,DOWN,LEFT,RIGHT');
+  }
+
+  /** Buffer a received message, keep the view stable, re-render. `m = { sid, name, text }`. */
+  _addChatMessage(m) {
+    const name = String(m.name || 'anon').slice(0, 16);
+    const text = String(m.text || '').slice(0, 140);
+    if (!text) return;
+    const isMe = m.sid === this.localId;
+    const color = isMe ? '#ffd23f' : '#9ad0ff'; // you = gold, others = cyan
+    this._chatHistory.push({ str: `${name}: ${text}`, color });
+    if (this._chatHistory.length > this._chatHistMax) this._chatHistory.shift();
+    // If the player is reading older history (scrolled up), keep their view
+    // anchored on the same messages instead of yanking them to the bottom.
+    if (this._chatScroll > 0) {
+      const maxScroll = Math.max(0, this._chatHistory.length - this._chatViewN);
+      this._chatScroll = Math.min(this._chatScroll + 1, maxScroll);
+    }
+    this._renderChatLog();
+  }
+
+  /** Render the visible window of the history buffer into the log panel. */
+  _renderChatLog() {
+    for (const t of this._chatLineObjs) t.destroy();
+    this._chatLineObjs.length = 0;
+
+    const total = this._chatHistory.length;
+    if (total === 0) { this._chatScrollHint.setVisible(false); return; }
+
+    const viewN = this._chatViewN;
+    const maxScroll = Math.max(0, total - viewN);
+    this._chatScroll = Math.max(0, Math.min(this._chatScroll, maxScroll));
+    const bottomIdx = total - 1 - this._chatScroll;
+    const topIdx = Math.max(0, bottomIdx - viewN + 1);
+
+    let y = this._chatBaseY;
+    for (let i = bottomIdx; i >= topIdx; i--) {
+      const m = this._chatHistory[i];
+      const t = this.add.text(this._chatX, y, m.str, {
+        fontFamily: 'Consolas, monospace', fontSize: 13, color: m.color, align: 'right',
+        stroke: '#000000', strokeThickness: 2,
+        wordWrap: { width: Math.min(420, this.scale.width * 0.5) },
+      }).setOrigin(1, 1).setScrollFactor(0).setDepth(54).setAlpha(0.55);
+      this._chatLineObjs.push(t);
+      y -= t.height + 3;
+    }
+
+    // Scroll affordances: ▲ when older messages exist above, ▼ when newer below.
+    let hint = '';
+    if (topIdx > 0) hint += '▲ older';
+    if (this._chatScroll > 0) hint += (hint ? '   ' : '') + 'newer ▼';
+    this._chatScrollHint.setText(hint).setVisible(!!hint);
+  }
+
+  /** True when the pointer is over the chat log's scroll region (and there's a log). */
+  _overChatPanel(p) {
+    const b = this._chatPanelBounds;
+    if (!b || !this._chatHistory || this._chatHistory.length === 0) return false;
+    return p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom;
   }
 
   /**

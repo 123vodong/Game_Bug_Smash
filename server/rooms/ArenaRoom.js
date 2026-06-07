@@ -486,6 +486,11 @@ export class ArenaRoom extends Room {
     this._bugAttackCD = new Map();
     // Off-schema player bookkeeping: sessionId -> { lastKillAt }
     this._playerState = new Map();
+    // Off-schema chat rate-limit: sessionId -> last chat timestamp (ms)
+    this._lastChatAt = new Map();
+    // Recent chat buffer so players who join later see the conversation so far.
+    this._chatLog = [];
+    this._chatLogMax = 30;
 
     this.onMessage('move', (client, msg) => {
       if (this.state.phase !== 'playing') return;
@@ -705,6 +710,29 @@ export class ArenaRoom extends Room {
     this.onMessage('setName', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
       if (p && typeof msg?.name === 'string') p.name = msg.name.slice(0, 16);
+    });
+
+    // Chat — sanitize, rate-limit, broadcast, and buffer for late joiners.
+    this.onMessage('chat', (client, msg) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      let text = (typeof msg?.text === 'string') ? msg.text : '';
+      text = text.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 140);
+      if (!text) return;
+      const now = Date.now();
+      const last = this._lastChatAt.get(client.sessionId) || 0;
+      if (now - last < 600) return; // ~1.6 msgs/sec max — basic spam guard
+      this._lastChatAt.set(client.sessionId, now);
+      const name = p.name || 'anon';
+      this.broadcast('chat', { sid: client.sessionId, name, text });
+      this._chatLog.push({ name, text });
+      if (this._chatLog.length > this._chatLogMax) this._chatLog.shift();
+    });
+
+    // A freshly-joined client requests the recent history once its handlers are
+    // wired up (requesting avoids a race with onJoin message delivery).
+    this.onMessage('getChatHistory', (client) => {
+      if (this._chatLog.length) client.send('chatHistory', this._chatLog);
     });
 
     this.setSimulationInterval((dt) => this._tick(dt));
@@ -1338,6 +1366,7 @@ export class ArenaRoom extends Room {
   onLeave(client, _consented) {
     this.state.players.delete(client.sessionId);
     this._playerState.delete(client.sessionId);
+    this._lastChatAt.delete(client.sessionId);
     console.log(`[ArenaRoom] -leave ${client.sessionId} (now ${this.state.players.size})`);
   }
 

@@ -27,6 +27,7 @@ How players touch the game — both the *design intent* (why we picked these sch
 | E Jump | E | JUMP button (above-left of SMASH) |
 | R Ult | R | ULT button (directly above SMASH) |
 | Cancel pursuit | Any arrow key | Touch joystick |
+| Chat (Personal Mode) | ENTER to open/send, ESC to cancel | 💬 button (right edge, mid-height) |
 | Quit | ESC | (planned: back button) |
 
 ### Input priority order in update loop
@@ -130,6 +131,15 @@ Every hit spawns a rising, fading damage number at the victim's position (`_spaw
 - Pops in (`Back.easeOut` scale), drifts up ~48 px and fades over ~0.7 s, with small horizontal jitter so stacked hits don't perfectly overlap.
 - **Culled when off-screen** (80 px margin around the camera view) so a crowded arena never spawns hundreds of invisible text objects.
 - Depth 40 — above sprites, below the pinned HUD.
+
+### Chat (Personal Mode, MOBA-style)
+
+Server broadcasts each message to the whole room (`onMessage('chat')` in [ArenaRoom.js](../../../server/rooms/ArenaRoom.js)), sanitized (newlines stripped, ≤ 140 chars) and rate-limited (~1.6 msg/s). The server also keeps a **30-message buffer**; a freshly-joined client sends `getChatHistory` once its handlers are wired and receives the recent conversation (`chatHistory`) — so **late joiners see the chat so far**. (Buffer is in-memory per room, not schema/DB — it survives joins but not a server restart.) Client UI in `_buildChat` / `_openChat` / `_closeChat`.
+
+- **Input:** a native DOM `<input>` on **all** platforms (so IME / Unikey-VietKey Telex-VNI and Vietnamese diacritics work, and the phone soft keyboard appears). **ENTER** opens it (or tap the 💬 button), **ENTER** sends, **ESC**/blur cancels. While open, Phaser's keyboard is disabled **and its key captures cleared** — otherwise it `preventDefault`s SPACE/arrows so they never reach the input.
+- **Right-side column** (clear of the bottom-left mobile joystick), top → bottom: **log** (stacks upward) · **input** (just above the button) · **💬 button** (~62% height). The input is mapped through the canvas rect so it lines up under scaling/letterboxing.
+- **Log:** right-aligned, **no box** — just translucent text (~0.55 alpha) over the game, **persistent** (no auto-fade). Keeps a **60-message history buffer** but shows a **6-line window**; scroll up to read older messages via **mouse wheel** (over the log region) or **drag** (touch). `▲ older` / `newer ▼` hints show when there's more out of view; a new message keeps your scroll position if you're reading history. **Your** lines are gold, **others'** are cyan.
+- **Game keeps running while typing** — only the keyboard is captured; mouse movement and auto-attacks continue (LoL convention). Skills (SPACE/Q/W/E/R) and arrow movement are suppressed until the input closes.
 
 ---
 
