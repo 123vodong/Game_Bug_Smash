@@ -79,7 +79,8 @@ const PHASE_RESULTS_MS = 8_000;   // 8s end screen
 const LEVEL_XP_THRESHOLDS = [0, 150, 600, 1800, 4500, 10000];
 const LEVEL_MAX_ENERGY     = [50,  90, 120, 150, 180, 220];
 const LEVEL_MAX_HEALTH     = [50,  90, 130, 180, 230, 290];
-const LEVEL_BUG_DAMAGE     = [1,   1,   2,   2,   3,   4];
+// (Damage to bugs is now the unified `bugDamage()` — see the damage model
+// below. The old per-level LEVEL_BUG_DAMAGE table was removed in the unify pass.)
 // Basic smash is FREE — it's the main attack. Energy only fuels MOBA skills.
 // Energy does NOT passively regen; only health pickups restore it.
 // Effect: players spam basic smash for combat, save energy for tactical skills.
@@ -95,7 +96,8 @@ const ENERGY_REGEN_PER_SEC = 0;  // disabled — pickups are the only refill
 // Bug Dash tuning — short directional strike, requires an enemy target (client-side)
 const DASH_DISTANCE = 140;     // shorter than ROLL (180) — dash is for closing the gap, not fleeing
 const DASH_HIT_RADIUS = 50;    // bugs within this distance from dash line are hit
-const DASH_BUG_DAMAGE_MUL = 2; // dash hits do `bugDamage * 2` per bug
+// (Dash/ult bug-damage multipliers now come from PVP_SKILL_MUL — see the
+// unified damage model below — so bugs and players share dash ×1.5 / ult ×2.0.)
 
 // Laptop Shield tuning
 const SHIELD_DURATION_MS = 3000; // shield expires after this if not consumed
@@ -110,9 +112,10 @@ const ROLL_INVULN_MS = 600;      // invulnerability window after rolling
 // smaller radius, lower per-level damage, lower cap, shorter stun, costlier
 // energy. Still feels devastating, but no longer auto-wins a fight.
 const ULT_RADIUS = 160;          // damage + knockback circle (was 200)
-const ULT_BUG_DAMAGE_MUL = 3;    // bugDamage × 3 (was × 4)
-const ULT_PLAYER_DMG_PER_LV = 12; // health damage per attacker level (was 20)
-const ULT_PLAYER_DMG_CAP = 70;   // hard cap (was 100) — Lv5+ no longer instakills mid-tier
+// Ult damage (bugs AND players) now flows through the shared model via
+// PVP_SKILL_MUL.ult (×2.0) — no separate bug multiplier or per-level cap.
+// Ult PvP damage now flows through the shared PvP model (PVP_SKILL_MUL.ult +
+// matchup scaling) instead of its own per-level/cap constants — see below.
 const ULT_KNOCKBACK = 120;       // px push away from caster (unchanged)
 const ULT_STUN_MS = 1000;        // enemy stun window (was 1500)
 
@@ -126,7 +129,52 @@ function distToSegment(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 // (ENERGY_REGEN_PER_SEC redefined to 0 above — passive regen disabled)
-const PVP_DAMAGE_PER_LEVEL = 12; // (was 15) — top-tier no longer instakills mid players
+
+// ───── Unified damage model (rebalanced 2026-06-06; unified bugs+players 2026-06-06b) ─────
+// ONE base damage drives every attack, against bugs AND players alike:
+//
+//     base = PVP_BASE_BY_LEVEL[attackerLv] × PVP_SKILL_MUL[source]
+//
+//   • PVP_BASE_BY_LEVEL ≈ player maxHealth / ~4.8 per tier, so a SAME-level PvP
+//     fight is a consistent ~5 smash hits at every level.
+//   • PVP_SKILL_MUL rewards energy spent: smash < dash < ult (same for bugs).
+//
+// Players additionally take a level-gap MATCHUP modifier (bugs don't — they
+// have no level): bonus when an underdog hits UP, penalty when stomping DOWN,
+// clamped so neither extreme is degenerate. This fixes the old problems where
+// (a) energy skills did the same damage as a free smash, and (b) a Lv6 one-shot
+// a Lv1 while a Lv1 needed ~25 hits on a Lv6.
+//
+// Bug HP is scaled into this same domain (×12 vs the old 1–6) so bug TTK is
+// unchanged AND the floating damage numbers read on the same scale as PvP.
+const PVP_BASE_BY_LEVEL    = [12, 20, 28, 38, 48, 60]; // attacker level → base
+const PVP_SKILL_MUL        = { smash: 1.0, dash: 1.5, ult: 2.0 };
+const PVP_MATCHUP_PER_LEVEL = 0.20; // ± per level of (defenderLv − attackerLv)
+const PVP_MATCHUP_MIN      = 0.35;  // floor when stomping far-lower levels
+const PVP_MATCHUP_MAX      = 1.80;  // cap when an underdog hits far-higher levels
+
+function pvpBaseForLevel(lv) {
+  return PVP_BASE_BY_LEVEL[Math.max(0, Math.min(PVP_BASE_BY_LEVEL.length - 1, lv - 1))];
+}
+function pvpMatchupMul(attackerLv, defenderLv) {
+  const m = 1 + PVP_MATCHUP_PER_LEVEL * (defenderLv - attackerLv);
+  return Math.max(PVP_MATCHUP_MIN, Math.min(PVP_MATCHUP_MAX, m));
+}
+/** Shared base damage (no matchup). `source` ∈ {'smash','dash','ult'}. */
+function attackBase(attackerLv, source) {
+  const skillMul = PVP_SKILL_MUL[source] ?? PVP_SKILL_MUL.smash;
+  return pvpBaseForLevel(attackerLv) * skillMul;
+}
+/** Damage to a BUG — unified base, no level-gap modifier (bugs have no level). */
+function bugDamage(attacker, source) {
+  return Math.round(attackBase(attacker.level, source));
+}
+/** Damage to a PLAYER — same base, plus the level-gap matchup modifier. */
+function pvpDamage(attacker, defender, source) {
+  return Math.round(attackBase(attacker.level, source)
+    * pvpMatchupMul(attacker.level, defender.level));
+}
+
 const BROKEN_DURATION_MS   = 20000; // 20s — broken players take real time to recover
 
 // Health pickups (Personal Mode only — Phase B)
@@ -148,9 +196,6 @@ function maxEnergyForLevel(lv) {
 }
 function maxHealthForLevel(lv) {
   return LEVEL_MAX_HEALTH[Math.max(0, Math.min(LEVEL_MAX_HEALTH.length - 1, lv - 1))];
-}
-function bugDamageForLevel(lv) {
-  return LEVEL_BUG_DAMAGE[Math.max(0, Math.min(LEVEL_BUG_DAMAGE.length - 1, lv - 1))];
 }
 
 // ---------------- schema ----------------
@@ -315,14 +360,17 @@ const PALETTE = [
 // Bug catalog — distinct personalities per kind. HP / speed / spawn weight
 // tuned 2026-05-31 so harder kinds are rarer + reward more score on kill.
 // Phase B/C/D will layer on unique behaviors (beetle attacks, toxic cloud, robot charge).
+// HP is in the UNIFIED damage domain (×12 vs the old 1–6) so a player's smash
+// deals the same numbers to bugs as to players, while bug TTK is unchanged: a
+// fresh Lv1 (smash 12) still needs ~1 hit on a ladybug … ~6 on a robot.
 const BUG_KINDS = [
-  { kind: 'bug-ladybug', hp: 1, weight: 7, speed: 35  }, // basic — most common (was 3)
-  { kind: 'bug-null',    hp: 2, weight: 4, speed: 45  }, // common, slightly tougher
-  { kind: 'bug-race',    hp: 2, weight: 2, speed: 130 }, // speedster
-  { kind: 'bug-beetle',  hp: 3, weight: 2, speed: 55  }, // tanky aggressor
-  { kind: 'bug-toxic',   hp: 4, weight: 1, speed: 60  }, // tanky, faster
-  { kind: 'bug-scarab',  hp: 5, weight: 1, speed: 35  }, // armored
-  { kind: 'bug-robot',   hp: 6, weight: 1, speed: 75  }, // boss-tier (was 7)
+  { kind: 'bug-ladybug', hp: 12, weight: 7, speed: 35  }, // basic — most common
+  { kind: 'bug-null',    hp: 24, weight: 4, speed: 45  }, // common, slightly tougher
+  { kind: 'bug-race',    hp: 24, weight: 2, speed: 130 }, // speedster
+  { kind: 'bug-beetle',  hp: 36, weight: 2, speed: 55  }, // tanky aggressor
+  { kind: 'bug-toxic',   hp: 48, weight: 1, speed: 60  }, // tanky, faster
+  { kind: 'bug-scarab',  hp: 60, weight: 1, speed: 35  }, // armored
+  { kind: 'bug-robot',   hp: 72, weight: 1, speed: 75  }, // boss-tier
 ];
 const BUG_KIND_SCORE = {
   'bug-ladybug': 5,
@@ -490,8 +538,7 @@ export class ArenaRoom extends Room {
       if (slot === 'r') {
         const cx = p.x, cy = p.y;
         const r2 = ULT_RADIUS * ULT_RADIUS;
-        const bugDmg = bugDamageForLevel(p.level) * ULT_BUG_DAMAGE_MUL;
-        const playerDmg = Math.min(p.level * ULT_PLAYER_DMG_PER_LV, ULT_PLAYER_DMG_CAP);
+        const bugDmg = bugDamage(p, 'ult');
         const nowMs = Date.now();
         // 1. Bugs in range — damage + knockback (instant teleport)
         this.state.bugs.forEach((bug, id) => {
@@ -511,7 +558,7 @@ export class ArenaRoom extends Room {
           if (sid === client.sessionId || other.broken) return;
           const dx = other.x - cx, dy = other.y - cy;
           if (dx * dx + dy * dy <= r2) {
-            this._applyUltHit(p, other, sid, playerDmg);
+            this._applyPvpHit(p, other, sid, 'ult');
             if (!other.broken) {
               const d = Math.hypot(dx, dy) || 1;
               other.x = Math.max(20, Math.min(ARENA_W - 20, other.x + (dx / d) * ULT_KNOCKBACK));
@@ -554,19 +601,19 @@ export class ArenaRoom extends Room {
         const endY = Math.max(40, Math.min(ARENA_H - 40, p.y + dy * DASH_DISTANCE));
         p.x = endX;
         p.y = endY;
-        // Bugs in line: bugDamage × 2
-        const bugDmg = bugDamageForLevel(p.level) * DASH_BUG_DAMAGE_MUL;
+        // Bugs in line: dash-tier unified damage (×1.5 base)
+        const bugDmg = bugDamage(p, 'dash');
         this.state.bugs.forEach((bug, id) => {
           if (!bug.alive || bug.hidden) return;
           if (distToSegment(bug.x, bug.y, startX, startY, endX, endY) <= DASH_HIT_RADIUS) {
             this._applyDashHit(p, bug, id, bugDmg);
           }
         });
-        // Enemy players in line: level × PVP_DAMAGE_PER_LEVEL (same as smash)
+        // Enemy players in line: dash-tier PvP damage (rewards the energy spend)
         this.state.players.forEach((other, sid) => {
           if (sid === client.sessionId || other.broken) return;
           if (distToSegment(other.x, other.y, startX, startY, endX, endY) <= DASH_HIT_RADIUS) {
-            this._applyPvpHit(p, other, sid);
+            this._applyPvpHit(p, other, sid, 'dash');
           }
         });
       }
@@ -1016,7 +1063,10 @@ export class ArenaRoom extends Room {
 
   /** Apply one hit to a bug from a player. Shared by all attack kinds. */
   _applyHit(sessionId, p, bugId, bug) {
-    bug.hp -= bugDamageForLevel(p.level);
+    // Clamp at 0 — bug.hp is uint8, and a big hit (e.g. an ult) can exceed
+    // remaining HP; an unclamped negative would wrap on serialization and break
+    // the client's damage-number delta on the killing blow.
+    bug.hp = Math.max(0, bug.hp - bugDamage(p, 'smash'));
     bug.hit_seq = (bug.hit_seq + 1) >>> 0;
     if (bug.hp <= 0) {
       const ps = this._playerState.get(sessionId);
@@ -1059,7 +1109,7 @@ export class ArenaRoom extends Room {
 
   /** Apply dash damage to a bug along the dash path. Like _applyHit but with custom dmg. */
   _applyDashHit(p, bug, bugId, dmg) {
-    bug.hp -= dmg;
+    bug.hp = Math.max(0, bug.hp - dmg); // clamp (uint8) — see _applyHit note
     bug.hit_seq = (bug.hit_seq + 1) >>> 0;
     if (bug.hp <= 0) {
       const ps = this._playerState.get(p === this.state.players.get(p)) ? null : null; // never null path
@@ -1115,16 +1165,13 @@ export class ArenaRoom extends Room {
   }
 
   /** Apply ult health damage to a player. Respects roll-invuln + shield. */
-  _applyUltHit(p, other, vSid, dmg) {
-    if (other.broken) return;
-    if (Date.now() < (other.invulnUntil || 0)) return; // dodged
-    if (other.shielded) { other.shielded = false; return; } // shield ate the ult
-    other.health = Math.max(0, other.health - dmg);
-    if (other.health === 0) this._enterBroken(other, vSid);
-  }
-
-  /** Apply PvP health damage from attacker p to victim other (sessionId vSid). */
-  _applyPvpHit(p, other, vSid) {
+  /**
+   * Apply PvP health damage from attacker p to victim other (sessionId vSid).
+   * `source` selects the skill multiplier: 'smash' (basic + punch/kick),
+   * 'dash' (Q Bug Dash), or 'ult' (R Deadline Break). Damage also scales by the
+   * level matchup — see the PvP damage model near the top of the file.
+   */
+  _applyPvpHit(p, other, vSid, source = 'smash') {
     if (other.broken) return;
     // Debug Roll invulnerability window — drop the hit completely (no consume cost).
     if (Date.now() < (other.invulnUntil || 0)) return;
@@ -1133,7 +1180,7 @@ export class ArenaRoom extends Room {
       other.shielded = false;
       return;
     }
-    const dmg = p.level * PVP_DAMAGE_PER_LEVEL;
+    const dmg = pvpDamage(p, other, source);
     other.health = Math.max(0, other.health - dmg);
     if (other.health === 0) this._enterBroken(other, vSid);
   }

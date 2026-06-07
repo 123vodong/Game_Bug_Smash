@@ -173,14 +173,16 @@ Kept shorter than cooldown so sprites read distinct hits.
 
 ## Growth system — Stickyman tiers (re-tuned 2026-06-02 balance pass)
 
-| Lv | Title | XP needed | Sprite scale | Max health | Max energy | Bug damage |
+| Lv | Title | XP needed | Sprite scale | Max health | Max energy | Smash damage |
 |---|---|---|---|---|---|---|
-| 1 | Intern | 0 | **0.70** | **50** | **50** | 1 |
-| 2 | Junior | **150** | 0.88 | 90 | **90** | 1 |
-| 3 | Middle | **600** | 1.05 | 130 | **120** | 2 |
-| 4 | Senior | **1800** | 1.22 | 180 | **150** | 2 |
-| 5 | Lead | **4500** | 1.40 | 230 | **180** | 3 |
-| 6 | Super Senior | **10000** | 1.58 | 290 | **220** | 4 |
+| 1 | Intern | 0 | **0.70** | **50** | **50** | 12 |
+| 2 | Junior | **150** | 0.88 | 90 | **90** | 20 |
+| 3 | Middle | **600** | 1.05 | 130 | **120** | 28 |
+| 4 | Senior | **1800** | 1.22 | 180 | **150** | 38 |
+| 5 | Lead | **4500** | 1.40 | 230 | **180** | 48 |
+| 6 | Super Senior | **10000** | 1.58 | 290 | **220** | 60 |
+
+(Smash damage = `PVP_BASE_BY_LEVEL` — the unified base, dealt to bugs and players alike; Q Dash ×1.5, R Ult ×2.0. See "Unified damage model".)
 
 XP deltas: 150 / 450 / 1200 / 2700 / 5500 — ~3× per tier. Reaching Super Senior takes ~200 robot kills or 2000 ladybug kills (no combo) — endgame-scale commitment.
 
@@ -201,29 +203,62 @@ XP deltas: 150 / 450 / 1200 / 2700 / 5500 — ~3× per tier. Reaching Super Seni
 
 Pickup restores **+40 HP and +25 energy**. Energy bumped +10–20 across all tiers on 2026-06-02 so intern can comfortably fit 2 ults or 1 ult + 1 small skill.
 
-### PvP (2026-06-02 balance pass)
+### Unified damage model (2026-06-06)
+
+One model drives **every** attack — against bugs *and* players. This replaced two separate, mismatched systems (old PvP: flat `attackerLevel × 12`; old PvE: `bugDamageForLevel` 1–4 with its own dash ×2 / ult ×3 multipliers).
+
+**Why.** The old PvP model had two flaws: (1) smash (free), Q Dash and R Ult all did the **same** damage to players — no reason to spend energy; (2) HP (50→290) and damage both scaled ~6×, so cross-level TTK swung ~36× — a **Lv6 one-shot a Lv1**, a **Lv1 needed ~25 hits** on a Lv6. Bugs and players also used totally different damage scales, so unifying lets a single floating damage number read the same everywhere.
+
+**Formula** (`attackBase()` / `bugDamage()` / `pvpDamage()` in [ArenaRoom.js](../../../server/rooms/ArenaRoom.js)):
+
+```
+base          = PVP_BASE_BY_LEVEL[attackerLv] × PVP_SKILL_MUL[source]
+damage to bug = round(base)                       // no level gap — bugs have no level
+damage to PvP = round(base × matchupMul)          // matchup applies to players only
+```
 
 | Constant | Value |
 |---|---|
-| `PVP_DAMAGE_PER_LEVEL` | **12** (was 15) — Lv 6 vs Junior now 72 dmg → survives w/ 18 HP; no more insta-KO above intern |
-| Kick AOE PvP nick | same — `level × 12` to every player in 88 px |
-| **Broken duration** | **20 000 ms** (was 8 000) — defeat is a real strategic event |
-| Bug drop on defeat | `min(10, 2 + floor(score / 50))` bugs (Personal Mode only; cap lowered from 16) |
+| `PVP_BASE_BY_LEVEL` | `[12, 20, 28, 38, 48, 60]` — ≈ player maxHP / 4.8 per tier → **same-level PvP TTK ~5 smashes** |
+| `PVP_SKILL_MUL` | `{ smash: 1.0, dash: 1.5, ult: 2.0 }` — energy buys real burst (bugs use this too) |
+| `PVP_MATCHUP_PER_LEVEL` | `0.20` — ± per level of `(defenderLv − attackerLv)`; **players only** |
+| `PVP_MATCHUP_MIN / MAX` | `0.35 / 1.80` — clamps; hitting **down** is weak (no stomping), **up** is buffed (underdog can fight) |
+| Bug HP (`BUG_KINDS`) | `×12` vs old: ladybug 12 · null/race 24 · beetle 36 · toxic 48 · scarab 60 · robot 72 (uint8; clamped at 0 on hit) |
+| **Broken duration** | **20 000 ms** — defeat is a real strategic event |
+| Bug drop on defeat | `min(10, 2 + floor(score / 50))` bugs (Personal Mode only) |
 | Score reset on defeat | **YES, Personal Mode only** — all points wiped along with level/XP |
 
-### Ult (R) — re-balanced 2026-06-02
+**Per-level attack damage** (identical vs bug or player base; player adds matchup on top):
+
+| Source | Lv1 | Lv2 | Lv3 | Lv4 | Lv5 | Lv6 |
+|---|---|---|---|---|---|---|
+| Smash (×1.0) | 12 | 20 | 28 | 38 | 48 | 60 |
+| Q Dash (×1.5) | 18 | 30 | 42 | 57 | 72 | 90 |
+| R Ult (×2.0) | 24 | 40 | 56 | 76 | 96 | 120 |
+
+**Bug TTK** (smash hits to kill — unchanged by the ×12 rescale): ladybug 1 · null/race 2→1 · beetle 3→1 · toxic 4→1 · scarab 5→1 · **robot 6→2** (Lv1→Lv6).
+
+**PvP TTK** (HP = `[50,90,130,180,230,290]`):
+
+| Matchup | Smash | Q Dash | R Ult |
+|---|---|---|---|
+| Same level (any) | **5** | ~3 | ~3 |
+| Lv6 → Lv1 (was 1-shot) | 3 | 2 | 2 |
+| Lv1 → Lv6 (was ~25 hits) | 14 | 10 | **7** |
+
+Progression still matters (a higher level wins the even fight and survives longer), but you can no longer one-shot a fresh player, and an underdog with skills has a real path to a kill.
+
+### Ult (R) — non-damage tuning (2026-06-02)
 
 | Constant | Value |
 |---|---|
 | Energy cost | 25 |
 | Radius | **160 px** (was 200) |
-| Bug damage multiplier | **× 3** (was × 4) |
-| Player damage per attacker level | **12** (was 20) |
-| Player damage cap | **70** (was 100) |
+| Damage (bugs + players) | via unified model, source `'ult'` (×2.0) — see table above (the old separate `× 3` bug multiplier was removed) |
 | Knockback | 120 px |
 | Stun on hit | **1000 ms** (was 1500) |
 
-Lv 6 ult kills: Intern (50 HP, 70 dmg → 1-shot); Junior (90 → 20 HP); Middle (130 → 60 HP); Senior+ survive with > 100 HP. Strong opener/finisher but no longer a guaranteed delete button above Intern.
+The ult's value vs players is now its AOE + 120 px knockback + 1 s stun on top of the ×2.0 burst — a strong opener/finisher, not a guaranteed delete button.
 
 ### Broken on/off
 

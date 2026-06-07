@@ -116,7 +116,7 @@ Foundation work that enables every skill. Game **plays like before** except old 
 | Dash too short | Bump `DASH_DISTANCE` 140 → 180 (server) + matching 140 → 180 in client `_castSkill` (slot 'q') |
 | Whiffs too easily | Bump client `SEARCH_RANGE` 360 → 500 |
 | Misses fleeing bugs | Bump `DASH_HIT_RADIUS` 50 → 70 |
-| Too powerful | Drop `DASH_BUG_DAMAGE_MUL` 2 → 1.5 |
+| Too powerful | Drop `PVP_SKILL_MUL.dash` 1.5 → 1.25 (unified — affects bugs + players) |
 | Visual snap | Increase tween duration 180 → 230 ms |
 
 ### Phase 3 — Laptop Shield (W) ✅ LANDED 2026-05-30
@@ -173,13 +173,22 @@ Foundation work that enables every skill. Game **plays like before** except old 
 
 ### Tuning levers
 
+> **2026-06-06 (unified damage):** Ult damage to **both bugs and players** now
+> flows through the shared model — `attackBase() × PVP_SKILL_MUL.ult (2.0)`, plus
+> the level-gap matchup for players. The old `ULT_PLAYER_DMG_PER_LV`,
+> `ULT_PLAYER_DMG_CAP` and `ULT_BUG_DAMAGE_MUL` constants were all removed, and
+> bug HP was scaled ×12 into the same domain. See
+> [09_BALANCE.md](../design/09_BALANCE.md) → "Unified damage model".
+
 | Symptom | Knob |
 |---|---|
-| Ult too weak | Bump `ULT_PLAYER_DMG_PER_LV` 20 → 30, or `ULT_BUG_DAMAGE_MUL` 4 → 6 |
-| Ult one-shots whole lobby | Drop `ULT_PLAYER_DMG_CAP` 100 → 70 |
+| Ult too weak (bugs + players) | Bump `PVP_SKILL_MUL.ult` 2.0 → 2.5 |
+| Bugs too tanky / too fragile | Scale `BUG_KINDS[].hp` (currently ×12 the old values) |
+| Ult one-shots low levels | Drop `PVP_MATCHUP_MIN` 0.35 → 0.25 (weakens hitting down) |
+| Underdog can't dent high levels | Bump `PVP_MATCHUP_MAX` 1.80 → 2.20 (buffs hitting up) |
 | Knockback too short | Bump `ULT_KNOCKBACK` 120 → 180 |
-| Stun too long | Drop `ULT_STUN_MS` 1500 → 1000 |
-| Radius too small | Bump `ULT_RADIUS` 200 → 260 |
+| Stun too long | Drop `ULT_STUN_MS` 1000 → 800 |
+| Radius too small | Bump `ULT_RADIUS` 160 → 220 |
 
 ---
 

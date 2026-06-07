@@ -75,18 +75,13 @@ left-click ──────┼────── click within 44 px of player 
 │                                                                  │
 │                                                                  │
 │                                                                  │
-│  COMBO ×4                                            ┌──────────┐│
-│   ×1.5                                               │SMASH│KICK ││
-│                                                      │  Q  │  E  ││
-│                                                      ├─────┼─────┤│
-│                                                      │PUNCH│PARRY││
-│                                                      │  W  │  R  ││
-│                                                      ├─────┴─────┤│
-│                                                      │ JUMP SPC  ││
-│                                                      └───────────┘│
+│  COMBO ×4                                       -12  ╲  (dmg num) │
+│   ×1.5                                          ULT(R)  SMASH     │
+│                                              SHIELD(W) ╱  (fan)   │
+│                                               JUMP(E) DASH(Q)     │
 │        Lv4 · Middle                                              │
-│  ████████████████░░░░  (energy bar)                              │
-│   move = arrows / click  |  Q smash  W punch  E kick  R parry    │
+│  ████████████████░░░░  (health + energy bars)                    │
+│  move = arrows / click | SPACE smash · Q dash · W shield · E roll · R ult │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -121,6 +116,20 @@ Pinned regions (`scrollFactor 0`):
 ```
 
 All elements anchor to **head** or **feet** with scaled offsets so they stay positioned correctly as the sprite grows.
+
+### Floating damage numbers (MOBA-style)
+
+Every hit spawns a rising, fading damage number at the victim's position (`_spawnDamageNumber` in [MultiPlayScene.js](../../../src/scenes/MultiPlayScene.js)). The amount is derived client-side from the synced HP/health delta, so it always matches what the server actually applied — no extra network field.
+
+| Source | Color | Size | Notes |
+|---|---|---|---|
+| Damage to a **bug** | white | 20–26 px (bigger ≥ 30 dmg) | the core attack feedback |
+| Damage to an **enemy player** | gold | 24 px | PvP hits |
+| Damage **you take** | red | 30 px | most prominent — your survival cue |
+
+- Pops in (`Back.easeOut` scale), drifts up ~48 px and fades over ~0.7 s, with small horizontal jitter so stacked hits don't perfectly overlap.
+- **Culled when off-screen** (80 px margin around the camera view) so a crowded arena never spawns hundreds of invisible text objects.
+- Depth 40 — above sprites, below the pinned HUD.
 
 ---
 

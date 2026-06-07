@@ -809,6 +809,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => this._leaveAndGoMenu());
 
     this.input.on('pointerdown', (p) => {
+      if (this._nameEntryActive) return; // name box open — swallow world clicks
       if (this._actionButtonsHit(p)) return;
       // On touch, the left half is the joystick's territory — never treat a
       // touch there as a tap-to-move/attack (that handler is right-half + mouse).
@@ -818,6 +819,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     });
     this._dragLastAt = 0;
     this.input.on('pointermove', (p) => {
+      if (this._nameEntryActive) return; // name box open — ignore drag-to-move
       if (!p.isDown) return;
       if (this._isJoystickTouch(p)) return;
       if (this._actionButtonsHit(p) || this._joystickHit(p)) return;
@@ -843,8 +845,17 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._buildActionButtons();
     if (this._isTouch) this._buildJoystick();
 
-    // ----- Connect -----
-    this._connect();
+    // ----- Name entry, then connect -----
+    // Show an in-canvas box so the player can confirm/edit their display name
+    // (pre-filled with their saved/default name) before joining the arena. We
+    // only open the WebSocket once they confirm.
+    this._status.setText('enter your name to join…');
+    this._showNameEntry(this.playerName, (chosen) => {
+      this.playerName = chosen;
+      SaveManager.setPlayerName?.(chosen);
+      this._status.setText('connecting…');
+      this._connect();
+    });
 
     // Clean up on scene shutdown
     this.events.once('shutdown', () => this._cleanup());
@@ -914,7 +925,14 @@ export default class MultiPlayScene extends Phaser.Scene {
           if (!r) return;
           const prev = r.health | 0;
           const next = h | 0;
-          if (next < prev && prev > 0) this._spawnHitFlash(r);
+          if (next < prev && prev > 0) {
+            this._spawnHitFlash(r);
+            // Floating damage number above the hit player — red for the damage
+            // YOU take, gold for damage dealt to enemy players.
+            this._spawnDamageNumber(r.container.x, r.container.y - 42, prev - next, {
+              kind: sessionId === this.localId ? 'self' : 'player',
+            });
+          }
           r.health = next;
         });
         $(player).listen('maxHealth', (m) => { const r = this.remotePlayers.get(sessionId); if (r) r.maxHealth = m | 0; });
@@ -991,7 +1009,7 @@ export default class MultiPlayScene extends Phaser.Scene {
         if (this._shuttingDown) return;
         this._spawnBug(id, bug);
         const r0 = this.remoteBugs.get(id);
-        if (r0) r0.hitSeq = bug.hit_seq | 0;
+        if (r0) { r0.hitSeq = bug.hit_seq | 0; r0.hp = bug.hp | 0; }
         // Per-hit flash (non-fatal): server bumps hit_seq for every hit
         $(bug).listen('hit_seq', (seq) => {
           const r = this.remoteBugs.get(id);
@@ -999,6 +1017,18 @@ export default class MultiPlayScene extends Phaser.Scene {
           if (seq === r.hitSeq) return;
           r.hitSeq = seq;
           this._spawnBugHitFlash(r);
+        });
+        // Floating damage number (MOBA-style) — derive the amount from the HP
+        // delta the server synced. Covers both chip hits and the killing blow.
+        $(bug).listen('hp', (newHp, oldHp) => {
+          const r = this.remoteBugs.get(id);
+          if (!r) return;
+          const prevHp = (oldHp == null) ? (r.hp | 0) : (oldHp | 0);
+          const dmg = prevHp - (newHp | 0);
+          r.hp = newHp | 0;
+          if (dmg > 0 && r.sprite && r.sprite.scene) {
+            this._spawnDamageNumber(bug.x, bug.y - 20, dmg, { kind: 'bug' });
+          }
         });
         $(bug).onChange(() => {
           const r = this.remoteBugs.get(id);
@@ -2012,6 +2042,42 @@ export default class MultiPlayScene extends Phaser.Scene {
         onComplete: () => s.destroy(),
       });
     }
+  }
+
+  /**
+   * Floating combat damage number (MOBA-style). Pops in, drifts up, fades out.
+   * `kind`: 'bug' (white, scales with size), 'player' (gold — enemy hit),
+   * 'self' (red, bigger — damage you took). Numbers are culled when off-screen
+   * so a busy arena doesn't spawn hundreds of invisible text objects.
+   */
+  _spawnDamageNumber(wx, wy, amount, opts = {}) {
+    amount = Math.round(amount);
+    if (amount <= 0) return;
+    const view = this.cameras.main.worldView;
+    const M = 80; // cull margin around the viewport
+    if (wx < view.x - M || wx > view.right + M || wy < view.y - M || wy > view.bottom + M) return;
+
+    const kind = opts.kind || 'bug';
+    let color, stroke, size;
+    if (kind === 'self')        { color = '#ff5252'; stroke = '#3a0000'; size = 30; }
+    else if (kind === 'player') { color = '#ffd23f'; stroke = '#000000'; size = 24; }
+    else                        { color = '#ffffff'; stroke = '#000000'; size = amount >= 30 ? 26 : 20; }
+
+    const jitterX = (Math.random() - 0.5) * 26;
+    const txt = this.add.text(wx + jitterX, wy, `-${amount}`, {
+      fontFamily: 'Arial Black, sans-serif', fontSize: size, color,
+      stroke, strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(40).setScale(0.4);
+
+    // Pop in, then float up and fade.
+    this.tweens.add({ targets: txt, scale: 1, duration: 120, ease: 'Back.easeOut' });
+    this.tweens.add({
+      targets: txt,
+      y: wy - 48,
+      alpha: { from: 1, to: 0 },
+      duration: 720, delay: 110, ease: 'Cubic.easeIn',
+      onComplete: () => txt.destroy(),
+    });
   }
 
   /** Ult shockwave — big white ring expanding to 200 px + secondary cyan ring */
@@ -3029,6 +3095,100 @@ export default class MultiPlayScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  /**
+   * In-canvas name entry box, shown before connecting to the arena.
+   * Pre-fills with `defaultName` (the player's saved/default name). The player
+   * types a name (letters/numbers/punctuation, max 16), then ENTER or the JOIN
+   * button confirms → `onConfirm(name)`. ESC cancels back to the menu.
+   *
+   * While open, `this._nameEntryActive` is true so the world-click handlers are
+   * suppressed; skill keys are already inert because `this.room` is still null.
+   */
+  _showNameEntry(defaultName, onConfirm) {
+    const { width: W, height: H } = this.scale;
+    const MAX = 16;
+    this._nameEntryActive = true;
+    let value = String(defaultName || '').slice(0, MAX);
+
+    const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(100);
+
+    // Dim backdrop. Interactive so it visually + functionally caps clicks at
+    // this layer (the world handlers also bail on _nameEntryActive).
+    const dim = this.add.rectangle(0, 0, W, H, 0x05070d, 0.9).setOrigin(0).setInteractive();
+
+    // Panel
+    const panelW = 440, panelH = 250;
+    const px = W / 2 - panelW / 2, py = H / 2 - panelH / 2;
+    const panel = this.add.graphics();
+    panel.fillStyle(0x0a0e16, 1);
+    panel.fillRoundedRect(px, py, panelW, panelH, 16);
+    panel.lineStyle(3, 0x39c2ff, 0.9);
+    panel.strokeRoundedRect(px, py, panelW, panelH, 16);
+
+    const title = this.add.text(W / 2, py + 38, 'ENTER YOUR NAME', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 24, color: '#ffd23f',
+      stroke: '#000', strokeThickness: 5,
+    }).setOrigin(0.5);
+
+    // Input field
+    const fieldW = 340, fieldH = 50;
+    const field = this.add.rectangle(W / 2, H / 2 - 6, fieldW, fieldH, 0x12161f, 1)
+      .setStrokeStyle(2, 0x7ec8ff, 0.85);
+    const valueText = this.add.text(W / 2 - fieldW / 2 + 14, H / 2 - 6, value, {
+      fontFamily: 'Consolas, monospace', fontSize: 22, color: '#ffffff',
+    }).setOrigin(0, 0.5);
+    const cursor = this.add.text(0, H / 2 - 6, '|', {
+      fontFamily: 'Consolas, monospace', fontSize: 22, color: '#7ec8ff',
+    }).setOrigin(0, 0.5);
+    const placeCursor = () => { cursor.x = valueText.x + valueText.width + 1; };
+    placeCursor();
+    const blink = this.time.addEvent({
+      delay: 480, loop: true, callback: () => cursor.setVisible(!cursor.visible),
+    });
+
+    const hint = this.add.text(W / 2, H / 2 + 44, 'type a name · ENTER to join · ESC to cancel', {
+      fontFamily: 'Consolas, monospace', fontSize: 12, color: '#888a99',
+    }).setOrigin(0.5);
+
+    // JOIN button
+    const btn = this.add.rectangle(W / 2, py + panelH - 38, 170, 46, 0x123a1c, 1)
+      .setStrokeStyle(2, 0x7ed957, 0.9).setInteractive({ useHandCursor: true });
+    const btnLabel = this.add.text(W / 2, py + panelH - 38, 'JOIN', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 18, color: '#7ed957',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5);
+
+    overlay.add([dim, panel, title, field, valueText, cursor, hint, btn, btnLabel]);
+
+    const refresh = () => { valueText.setText(value); placeCursor(); };
+
+    const keyHandler = (ev) => {
+      const k = ev.key;
+      if (k === 'Enter')     { finish(); return; }
+      if (k === 'Escape')    return; // global ESC handler leaves to the menu
+      if (k === 'Backspace') { value = value.slice(0, -1); refresh(); return; }
+      // Printable single chars only (space..~), respect max length.
+      if (k.length === 1 && value.length < MAX && /^[\x20-\x7E]$/.test(k)) {
+        value += k; refresh();
+      }
+    };
+    const finish = () => {
+      if (!this._nameEntryActive) return; // guard against double-fire
+      this._nameEntryActive = false;
+      blink.remove();
+      this.input.keyboard.off('keydown', keyHandler);
+      overlay.destroy();
+      const chosen = (value.trim() || String(defaultName || '').trim()
+        || `Guest-${Math.floor(Math.random() * 9000) + 1000}`).slice(0, MAX);
+      onConfirm(chosen);
+    };
+
+    this.input.keyboard.on('keydown', keyHandler);
+    btn.on('pointerup',   () => finish());
+    btn.on('pointerover', () => btn.setFillStyle(0x1a5028, 1));
+    btn.on('pointerout',  () => btn.setFillStyle(0x123a1c, 1));
   }
 
   _leaveAndGoMenu() {
