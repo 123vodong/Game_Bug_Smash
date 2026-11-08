@@ -22,10 +22,10 @@ Goal: get the MP arena to "anyone with the URL can play" status.
 ### Must-have
 
 - [ ] **PvP knockback** if PvP feels too static after first multi-tab playtest
-- [ ] **AI bots** to fill empty rooms (so solo testing isn't a ghost town)
-- [ ] **Render free-tier deploy** of the Colyseus server
+- [x] **AI bots** to fill empty rooms — AI coworkers, 2026-11-06 (see TASK_STATUS § Office Chaos)
+- [ ] **Render free-tier deploy** of the Colyseus server ← the #1 thing between the game and real players
 - [ ] **Update `BugSmashHunter.zip` build** to point at deployed server (or env-var toggle)
-- [ ] **Persist mute + nickname** across sessions via localStorage
+- [x] **Persist nickname** (+ hat, career, daily missions) via localStorage — mute was already persisted
 
 ### Nice-to-have
 
@@ -44,10 +44,10 @@ A non-developer friend can visit a single URL, see other players if any are onli
 Goal: players have names that stick, and there's a leaderboard worth checking.
 
 - [ ] **Lightweight anonymous accounts** (UUID stored in localStorage)
-- [ ] **Display name persistence**
+- [x] **Display name persistence**
 - [ ] **Daily / weekly leaderboard** backed by SQLite or Supabase free tier
-- [ ] **Personal stats** — total smashes, peak combo, longest survival without breaking
-- [ ] **Cosmetic unlock plumbing** — schema for which cosmetics are unlocked per player (visuals come in Phase 6)
+- [x] **Personal stats** — career: bugs, KOs, peak combo, best score/level, bosses, golden bugs (local, 2026-11-06)
+- [x] **Cosmetic unlock plumbing** — 12 hats unlocked by career stats, synced as `Player.hat` (client-side unlocks; server allowlist)
 
 ---
 
@@ -56,10 +56,10 @@ Goal: players have names that stick, and there's a leaderboard worth checking.
 Goal: round-to-round variance via tools, not just numbers.
 
 - [ ] **AI skill pickups in MP** (Sonnet, Opus, Haiku, Cursor, Copilot)
-- [ ] **Bug variety bump** — re-enable `bug-robot` with a unique behavior
-- [ ] **World gimmicks** — a "glitch storm" event that warps bugs every 12 s (port from SP)
+- [x] **Bug variety bump** — `bug-robot` charges (done earlier) + the CEO's golden bug
+- [x] **World gimmicks** — 6 PM world events + the Deadline boss (2026-11-06)
 - [ ] **Room codes** — replace single global room with create/join by 6-char code
-- [ ] **AI bot difficulty levels** — easy / normal / hard for filler bots
+- [x] **AI bot personalities** — 5 archetypes (grinder / brawler / coward / tryhard / chaos)
 
 ---
 
@@ -68,9 +68,10 @@ Goal: round-to-round variance via tools, not just numbers.
 Goal: variety to keep players coming back.
 
 - [ ] **Solo Infinite mode** — survival, leaderboard sync
-- [ ] **Team Battle 2v2** — clear bugs across 3 maps
-- [ ] **Boss Arena** — one Mega Deadline Bug fight at round end
-- [ ] **Cosmetic visuals** — laptop skins, hair styles, aura colors
+- [x] **Team mode** — became a full 5v5 office MOBA, "Office Siege" (2026-11-07): champion select, 6 champions, lanes/towers/jungle/epics, item shop, bots fill every seat. Next: fog of war, more champions, ranked/MMR, real-player matchmaking across rooms.
+- [x] **Boss Arena** — THE DEADLINE is a recurring co-op world boss in Personal Mode (truce, damage-share XP)
+- [~] **Cosmetic visuals** — hats ✅; laptop skins, hair styles, aura colors still open
+- [x] **Daily challenges** — 3 daily missions (same for everyone) + streaks, shown on the menu
 
 ---
 

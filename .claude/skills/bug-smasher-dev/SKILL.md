@@ -5,20 +5,26 @@ description: Game dev helper for "Bug Smash Office: Deadline Panic" — a Phaser
 
 # Bug Smash Office: Deadline Panic — Dev Helper
 
-Arcade chase-and-smash game (Pac-Man + Fruit Ninja + Whack-a-mole) for office/IT humor. Full design lives in [.claude/context/overview_game.md](.claude/context/overview_game.md) — read it before non-trivial work.
+Arcade bug-smashing game for office/IT humor: a 12-level single-player campaign plus a
+Colyseus multiplayer arena (Personal Mode) with AI coworkers, PM world events and the
+Deadline boss. Current design lives in [.claude/context/design/README.md](../../context/design/README.md)
+(start there); live status in [tasks/TASK_STATUS.md](../../context/tasks/TASK_STATUS.md).
+For multi-step features, follow the agent-team pipeline in
+[develop_notes/AGENT_TEAM.md](../../context/develop_notes/AGENT_TEAM.md) (roles in `.claude/agents/`).
 
 ## Stack & layout
 
-- **Engine:** Phaser.js (scenes, physics, input, audio built-in). Do not swap engines.
-- **Structure:**
+- **Engine:** Phaser 3 via CDN, plain ES modules, no build step. Do not swap engines.
+- **Structure (active):**
   ```
-  /assets/{sprites,sounds}
-  /src
-    main.js
-    scenes/   MenuScene.js LevelScene.js SmashScene.js BossScene.js
-    systems/  AIManager.js BugSpawner.js PowerUpSystem.js
-  index.html
+  index.html · src/main.js
+  src/scenes/   MenuScene.js HuntScene.js (SP campaign) MultiPlayScene.js (MP arena) PlatformerScene.js (sealed prototype)
+  src/ui/       HUD.js MPOverlay.js          src/entities/  Hunter.js Bug(s).js SkillPickup.js MPBossView.js
+  src/core/     AudioManager.js SaveManager.js   src/data/  levels bugs skills tips talk cosmetics missions
+  server/       index.js · rooms/ArenaRoom.js · game/{rules,schema,BotDirector,EventDirector}.js · data/*.js
+  tools/playtest/  sim.mjs (headless MP client) · shot.mjs (browser screenshots)
   ```
+  Older Pac-Man-era files (LevelScene, BossScene, Maze, Chaser…) are on disk but unregistered.
 - **Platform:** Web, desktop-first, mobile-friendly. Controls: WASD/arrows + mouse click/swipe; optional touch.
 
 ## Core entities
@@ -42,11 +48,13 @@ Open Office (tutorial) → Meeting Room Maze → Open Space Nightmare → Overti
 2. **Follow the task breakdown** (overview §16) for ordering: base project → movement/maze → bugs → chasers → power-ups → smash scene → score/combo → boss → polish. Each step is independent and testable.
 3. **Tune via data, not code.** Bug speed, spawn rates, power-up durations belong in config/level data.
 4. **Keep visuals simple** — 2D flat/cartoon, bright readable colors. Placeholder sprites are fine; don't block on art.
-5. **Verify in-browser** for gameplay-affecting changes (use the `run` skill or open index.html).
+5. **Verify in-browser** for gameplay-affecting changes: start `server/index.js` (serves the
+   client too, http://localhost:2567), then use `tools/playtest/` — `sim.mjs` for server
+   behavior (can force world events on a dev server), `shot.mjs` for screenshots + console errors.
 
 ## What not to do
 
 - Don't introduce Three.js, React, or a heavy build pipeline — Phaser + plain JS is the choice.
 - Don't make chasers killable or bugs unkillable — that inverts the design.
 - Don't hard-code level content into scene files; keep levels data-driven for expansion (overview §17).
-- Don't write design docs or roadmaps — the overview already exists.
+- Don't start new top-level design docs — extend `design/*.md`; feature breakdowns go in `tasks/`.

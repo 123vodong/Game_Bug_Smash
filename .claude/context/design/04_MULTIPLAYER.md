@@ -89,9 +89,28 @@ Will use a separate room class with: lobby → playing (5 stages) → results lo
 |---|---|---|---|
 | `move` | 20 Hz | C→S | Player position |
 | `action` | event | C→S | Animation broadcast (smash/punch/kick/parry/jump) |
-| `smash` | event | C→S | Damage intent with target id or sid |
-| `setName` | rare | C→S | Display name |
-| schema diff | 20 Hz | S→C | All canonical state via Colyseus |
+| `smash` | event | C→S | Damage intent with target `id` (bug), `targetSid` (player) or `boss` |
+| `castSkill` | event | C→S | `{ slot: q/w/e/r, dirX, dirY }` |
+| `setName` / `setHat` | rare | C→S | Display name / cosmetic hat id (server allowlist) |
+| `hello` | once | C→S | Ready for messages → server replies `welcome` + `chatHistory` |
+| `chat` | event | both | `{ sid, name, text, kind? }` — kind `pm` (the PM), `bot` (AI coworker) |
+| `welcome` | once | S→C | `{ serverNow, events }` — clock offset + event titles/colors |
+| `feed` | event | S→C | Kill-feed line `{ text, color, a?, b? }` (a/b = involved sids) |
+| `announce` | event | S→C | Banner `{ kind: event/eventEnd/banner, title, sub, color, big, id, pm }` |
+| `kill` / `ko` / `pickup` | event | S→C (you) | Your bug kill `{ gain, kind, combo }` / your PvP KO / your pickup |
+| `reward` | event | S→C (you) | `{ kind: boss/golden/bounty, xp, share? }` |
+| `brokenBy` / `crowned` | event | S→C (you) | Who broke your laptop / you became Tech Lead `{ bounty }` |
+| `bossSlam` / `bossSlamHit` | event | S→C | Slam telegraph `{ x, y, r, ms }` / impact `{ x, y, r }` |
+| `debug` | dev only | C→S | `{ cmd: 'event', id }` / `{ cmd: 'endEvent' }` — handler only registered when the server runs with `BUG_SMASH_DEBUG=1` |
+
+**Server-side input validation (2026-11-07):** `move` steps are capped at 384 px/s + 60 px slack and ignored for 200–300 ms after a server teleport (dash / roll / knockback); `smash` ≥ 140 ms apart with a whitelisted `kind`; `castSkill` ≥ 250 ms apart per slot; aim vectors must be finite; `hello` / `getChatHistory` answered once per client; `onUncaughtException` keeps one bad message from taking the room down. Regression test: `tools/playtest/exploits.mjs`.
+| schema diff | 12.5 Hz | S→C | All canonical state via Colyseus (incl. `event`, `eventLeftMs`, `crownSid`, `bounty`, `bosses`) |
+
+## AI coworkers + world events (2026-11-06)
+
+- **Bots** are Player entries with `isBot = true`, driven by [BotDirector](../../../server/game/BotDirector.js) through the same `_do*` handlers as humans — no rule bypass. They fill the room to ~9 total and leave as humans arrive. They don't count as Colyseus clients, so an all-bot room still auto-disposes when the last human leaves.
+- **World events** run from [EventDirector](../../../server/game/EventDirector.js); the room and bots read the active modifiers via `events.mod(key, default)`. Numbers: [09_BALANCE § Office Chaos](./09_BALANCE.md#office-chaos-2026-11-06--bots-events-boss-drama).
+- **`GET /api/stats`** → `{ online, bots, rooms }` for the menu's live badge (CORS-open).
 
 ## Player count & scaling
 

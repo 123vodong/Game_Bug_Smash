@@ -9,6 +9,10 @@
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { StickmanRenderer } from '../render/StickmanRenderer.js';
+import { MPOverlay } from '../ui/MPOverlay.js';
+import { MPBossView } from '../entities/MPBossView.js';
+import { HATS, hatById, isHatUnlocked, newlyUnlockedHats } from '../data/cosmetics.js';
+import { missionsForDay, dayKey } from '../data/missions.js';
 
 // Toggle: use the new procedural skeleton renderer instead of static SVG textures.
 // Set to FALSE — we use the SP-mode SVGs directly. They have correct one-handed
@@ -636,11 +640,26 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (!this.textures.exists('health-pickup')) {
       this.load.svg('health-pickup', 'assets/icons/health_pickup.svg', { width: 56, height: 56 });
     }
+    if (!this.textures.exists('boss-deadline')) {
+      this.load.image('boss-deadline', 'assets/boss/deadline.png');
+    }
     // (Mixamo atlas path removed — we always use the SVG poses now.)
   }
 
   create() {
     const { width: W, height: H } = this.scale;
+
+    // Phaser reuses this scene instance on every visit (menu → MP → menu → MP),
+    // so per-visit flags must be reset here — a stale `_shuttingDown = true`
+    // silently dropped every server callback on the second visit.
+    this._shuttingDown = false;
+    this._sessionCounted = false;
+    this._playClockAt = 0;
+    this._joinedAt = 0;
+    this._truceUntil = 0;
+    this._predictUntil = 0;
+    this.room = null;
+    this.localId = null;
 
     // ----- Camera + world bounds -----
     // World coords go (0,0) → (WORLD_W, WORLD_H). The canvas is a viewport.
@@ -678,7 +697,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._status = this.add.text(12, statusY, 'connecting…', {
       fontFamily: 'Consolas, monospace', fontSize: 13, color: '#7ec8ff',
     }).setScrollFactor(0).setDepth(50);
-    this._hint = this.add.text(12, H - 20, 'move = click/arrows · SPACE smash · Q dash · W shield · E roll · R ult · ENTER chat · ESC menu', {
+    this._hint = this.add.text(12, H - 20, 'move = click/arrows · SPACE smash · Q dash · W shield · E jump · R ult · ENTER chat · ESC menu', {
       fontFamily: 'Consolas, monospace', fontSize: 11, color: '#888a99',
     }).setScrollFactor(0).setDepth(50);
     this._playerListText = this.add.text(W - 12, 10, '', {
@@ -754,6 +773,20 @@ export default class MultiPlayScene extends Phaser.Scene {
       fontFamily: 'Consolas, monospace', fontSize: 14, color: '#7ec8ff',
     }).setOrigin(0.5);
     this._resultsOverlay.add([bg, this._resultsTitle, this._resultsWinner, this._resultsBoard, this._resultsCountdown]);
+
+    // ----- Office Chaos: drama overlay, boss view, career + daily missions -----
+    this._overlay = new MPOverlay(this);
+    this._bossView = new MPBossView(this);
+    this._clockOffset = 0;            // serverNow - Date.now(), from 'welcome'
+    this._eventDefs = {};             // id -> { title, sub, color } (from 'welcome')
+    this._crownSid = '';
+    this._career = SaveManager.getCareer();
+    this._dayKey = dayKey();
+    this._missions = missionsForDay(this._dayKey);
+    this._joinedAt = 0;
+    this._buildObjectiveArrow();
+    const savedHat = SaveManager.getHat();
+    this.playerHat = isHatUnlocked(hatById(savedHat), this._career) ? savedHat : '';
 
     // ----- State -----
     // sessionId -> { container, label, color, x, y, target: {x,y} }
@@ -874,15 +907,22 @@ export default class MultiPlayScene extends Phaser.Scene {
     // (pre-filled with their saved/default name) before joining the arena. We
     // only open the WebSocket once they confirm.
     this._status.setText('enter your name to join…');
-    this._showNameEntry(this.playerName, (chosen) => {
+    this._showNameEntry(this.playerName, (chosen, hat) => {
       this.playerName = chosen;
+      this.playerHat = hat || '';
       SaveManager.setPlayerName?.(chosen);
+      SaveManager.setHat(this.playerHat);
       this._status.setText('connecting…');
       this._connect();
     });
 
-    // Clean up on scene shutdown
-    this.events.once('shutdown', () => this._cleanup());
+    // Clean up on scene shutdown (and keep play time when the tab is closed)
+    this._onPageHide = () => this._flushPlayTime();
+    window.addEventListener('pagehide', this._onPageHide);
+    this.events.once('shutdown', () => {
+      window.removeEventListener('pagehide', this._onPageHide);
+      this._cleanup();
+    });
   }
 
   async _connect() {
@@ -893,8 +933,21 @@ export default class MultiPlayScene extends Phaser.Scene {
     }
     try {
       this.client = new Colyseus.Client(SERVER_URL);
-      this.room = await this.client.joinOrCreate('arena', { name: this.playerName });
+      const room = await this.client.joinOrCreate('arena', { name: this.playerName, hat: this.playerHat });
+      // ESC pressed while "connecting…" — don't leave a ghost player in the arena.
+      if (this._shuttingDown) { try { room.leave(); } catch (_) { /* ignore */ } return; }
+      this.room = room;
       this.localId = this.room.sessionId;
+      this._joinedAt = Date.now();
+      this._playClockAt = Date.now();
+      // A session counts after 20 s in the arena (unlocks the first hat). Uses a
+      // wall-clock timer (Phaser's clock pauses in background tabs), and runs on
+      // a timer because most players close the tab rather than pressing ESC.
+      this._sessionTimer = setTimeout(() => {
+        if (this._shuttingDown || this._sessionCounted) return;
+        this._sessionCounted = true;
+        this._careerAdd('sessions', 1);
+      }, 20000);
       this._status.setText(`connected · room ${this.room.roomId} · you = ${this.playerName}`);
       this._status.setColor('#7ed957');
 
@@ -904,12 +957,13 @@ export default class MultiPlayScene extends Phaser.Scene {
         this._addChatMessage(m);
       });
       // Recent history for late joiners — sent once on request. These predate us,
-      // so sid is null → they render as "others" (cyan).
+      // so sid is null → they render as "others" (cyan) unless PM/bot.
       this.room.onMessage('chatHistory', (arr) => {
         if (this._shuttingDown || !Array.isArray(arr)) return;
-        for (const m of arr) this._addChatMessage({ sid: null, name: m.name, text: m.text });
+        for (const m of arr) this._addChatMessage({ sid: null, name: m.name, text: m.text, kind: m.kind, history: true });
       });
-      this.room.send('getChatHistory');
+      this._registerDramaHandlers();
+      this.room.send('hello'); // → 'welcome' (clock + event table) + 'chatHistory'
 
       // Colyseus 0.16 callback API: get a callback proxy via getStateCallbacks(room),
       // then subscribe through $(room.state).<field> and $(child).onChange(...)
@@ -925,16 +979,39 @@ export default class MultiPlayScene extends Phaser.Scene {
           if (sessionId !== this.localId) {
             r.target.x = player.x;
             r.target.y = player.y;
+          } else if (this.time.now > (this._predictUntil || 0)) {
+            // The server moved us (boss slam / ult knockback / stun) — adopt it.
+            // Normal latency drift is far below the threshold; dash/roll
+            // predictions are exempt while their tween + echo are in flight.
+            if (Math.hypot(player.x - this.localPos.x, player.y - this.localPos.y) > 90) {
+              this.localPos.x = player.x;
+              this.localPos.y = player.y;
+              this._moveTarget = null;
+            }
           }
-          r.label.setText(player.name || '?');
+          r.label.setText(this._nameLabel(player));
         });
         // Refresh leaderboard only when score changes
-        $(player).listen('score', () => this._refreshPlayerList());
+        $(player).listen('score', (score) => {
+          this._refreshPlayerList();
+          if (sessionId === this.localId) this._careerMax('bestScore', score | 0, 'score');
+        });
+        $(player).listen('hat', (hat) => {
+          const r = this.remotePlayers.get(sessionId);
+          if (!r) return;
+          r.hatText.setText(hatById(hat).emoji);
+          r._lastSmoothScale = undefined; // re-layout the label stack around the hat
+        });
+        $(player).listen('invulnUntil', (v) => {
+          const r = this.remotePlayers.get(sessionId);
+          if (r) r.invulnUntil = Number(v) || 0;
+        });
 
         // Local-player combo HUD — only animate when our own combo changes
         if (sessionId === this.localId) {
           $(player).listen('combo', (newCombo, oldCombo) => {
             this._onLocalComboChange(newCombo | 0, oldCombo | 0);
+            if ((newCombo | 0) > 0) this._careerMax('bestCombo', newCombo | 0, 'combo');
           });
         }
 
@@ -952,6 +1029,8 @@ export default class MultiPlayScene extends Phaser.Scene {
               targets: r.sprite, scaleX: r.sprite.scaleX * 1.2, scaleY: r.sprite.scaleY * 1.2,
               duration: 140, yoyo: true,
             });
+            this._overlay.toast(`⭐ PROMOTED to ${levelTitle(lv)}!`, '#ffd23f');
+            this._careerMax('maxLevel', lv | 0, 'level');
           }
         });
         $(player).listen('xp',        (xp) => { const r = this.remotePlayers.get(sessionId); if (r) r.xp = xp | 0; });
@@ -975,7 +1054,7 @@ export default class MultiPlayScene extends Phaser.Scene {
         $(player).listen('maxHealth', (m) => { const r = this.remotePlayers.get(sessionId); if (r) r.maxHealth = m | 0; });
         $(player).listen('stunnedUntil', (v) => {
           const r = this.remotePlayers.get(sessionId);
-          if (r) r.stunnedUntil = v | 0;
+          if (r) r.stunnedUntil = Number(v) || 0; // epoch ms — `| 0` overflowed int32
         });
         $(player).listen('shielded',  (s) => {
           const r = this.remotePlayers.get(sessionId);
@@ -1012,6 +1091,7 @@ export default class MultiPlayScene extends Phaser.Scene {
             r.fixingGroup.setVisible(false);
             AudioManager.skillPickup?.('buff');
           }
+          this._refreshPlayerList(); // 💻✖ tag on/off
         });
 
         // Remote action playback — every time action_seq changes, trigger that
@@ -1033,6 +1113,7 @@ export default class MultiPlayScene extends Phaser.Scene {
         this._refreshPlayerList();
       });
       $(this.room.state).players.onRemove((_player, sessionId) => {
+        if (this._shuttingDown) return;
         this._despawnRemote(sessionId);
         this._refreshPlayerList();
       });
@@ -1040,6 +1121,28 @@ export default class MultiPlayScene extends Phaser.Scene {
       // Round state subscriptions
       $(this.room.state).listen('phase', () => this._onPhaseChange());
       $(this.room.state).listen('round', () => this._onPhaseChange());
+
+      // ----- Office Chaos: world events, crown, boss -----
+      $(this.room.state).listen('event', (id, prev) => {
+        if (this._shuttingDown) return;
+        this._onEventChange(id || '', prev || '');
+      });
+      $(this.room.state).listen('crownSid', (sid) => {
+        if (this._shuttingDown) return;
+        this._crownSid = sid || '';
+        this._refreshPlayerList();
+      });
+      $(this.room.state).bosses.onAdd((boss, id) => {
+        if (this._shuttingDown) return;
+        this._bossView.add(id, boss);
+        $(boss).onChange(() => { if (!this._shuttingDown) this._bossView.sync(boss); });
+        $(boss).listen('hp', (hp, old) => { if (!this._shuttingDown) this._bossView.onHp(hp | 0, old == null ? null : old | 0); });
+        $(boss).listen('phase', (ph) => { if (!this._shuttingDown) this._bossView.onPhase(ph | 0); });
+        $(boss).listen('alive', (alive) => { if (!this._shuttingDown && alive === false) this._bossView.onDeath(); });
+      });
+      $(this.room.state).bosses.onRemove(() => {
+        if (!this._shuttingDown) this._bossView.remove();
+      });
 
       // ----- BUGS -----
       $(this.room.state).bugs.onAdd((bug, id) => {
@@ -1144,6 +1247,8 @@ export default class MultiPlayScene extends Phaser.Scene {
       });
 
       this.room.onLeave(() => {
+        // Fires ~1 RTT after a consented leave — the scene may already be gone.
+        if (this._shuttingDown || !this._status?.scene) return;
         this._status.setText('disconnected');
         this._status.setColor('#ff8a8a');
       });
@@ -1173,10 +1278,14 @@ export default class MultiPlayScene extends Phaser.Scene {
       sprite = this.add.image(0, 0, 'stick-idle')
         .setOrigin(0.5, 0.85).setDisplaySize(78, 100);
     }
-    const label = this.add.text(0, -78, playerState.name || '?', {
-      fontFamily: 'Arial Black, sans-serif', fontSize: 12, color: '#ffffff',
+    const label = this.add.text(0, -78, this._nameLabel(playerState), {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 12,
+      color: playerState.isBot ? '#c9d6e8' : '#ffffff',
       stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
+    // Cosmetic hat (emoji) sitting on the head, and the Tech Lead crown above it all.
+    const hatText = this.add.text(0, -60, hatById(playerState.hat).emoji, { fontSize: 18 }).setOrigin(0.5, 1);
+    const crownText = this.add.text(0, -120, '👑', { fontSize: 22 }).setOrigin(0.5).setVisible(false);
     if (sessionId === this.localId) {
       // Highlight self with a small "YOU" badge
       const you = this.add.text(0, 26, 'YOU', {
@@ -1239,9 +1348,11 @@ export default class MultiPlayScene extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5);
     const fixingGroup = this.add.container(0, 0, [fixingBg, fixingTxt, fixingCountdown]).setVisible(false);
-    c.add([shadow, aura, ring, shieldDisc, sprite, label, title, healthBg, healthFill, energyBg, energyFill, levelRingBg, levelRingArc, levelText, fixingGroup, stunStar]);
+    c.add([shadow, aura, ring, shieldDisc, sprite, hatText, label, title, healthBg, healthFill, energyBg, energyFill, levelRingBg, levelRingArc, levelText, fixingGroup, stunStar, crownText]);
     this.remotePlayers.set(sessionId, {
       container: c, label, sprite, stickman, color: playerState.color,
+      hatText, crownText, isBot: !!playerState.isBot,
+      invulnUntil: Number(playerState.invulnUntil) || 0,
       x: playerState.x, y: playerState.y,
       target: { x: playerState.x, y: playerState.y },
       facing: 1, state: 'idle', smashUntil: 0,
@@ -1259,7 +1370,7 @@ export default class MultiPlayScene extends Phaser.Scene {
       maxHealth: playerState.maxHealth | 0,
       broken: !!playerState.broken,
       shielded: !!playerState.shielded,
-      stunnedUntil: playerState.stunnedUntil | 0,
+      stunnedUntil: Number(playerState.stunnedUntil) || 0,
     });
   }
 
@@ -1623,7 +1734,14 @@ export default class MultiPlayScene extends Phaser.Scene {
   _spawnBugHitFlash(r) {
     if (!r || !r.sprite) return;
     const body = r.sprite._body;
-    if (body && body.setFillStyle) {
+    if (body && body.setTint) {
+      // Image body (all PNG bugs): flash red, then restore (gold for the CEO's bug)
+      body.setTint(0xff5252);
+      this.time.delayedCall(110, () => {
+        if (!body.scene) return;
+        if (r.golden) body.setTint(0xffd700); else body.clearTint();
+      });
+    } else if (body && body.setFillStyle) {
       const origColor = body.fillColor;
       body.setFillStyle(0xff5252, 1);
       this.time.delayedCall(110, () => {
@@ -1809,7 +1927,18 @@ export default class MultiPlayScene extends Phaser.Scene {
     const shadow = this.add.ellipse(0, 14, 36, 10, 0x000000, 0.45);
     // Use the actual bug PNG if loaded, else a colored circle fallback
     let body;
-    if (this.textures.exists(bugState.kind)) {
+    const golden = bugState.kind === 'bug-golden';
+    if (golden) {
+      // The CEO's bug — a gilded ladybug with a halo. Worth a promotion.
+      const glow = this.add.circle(0, 0, 40, 0xffd700, 0.28);
+      this.tweens.add({ targets: glow, scale: { from: 0.85, to: 1.25 }, alpha: { from: 0.35, to: 0.12 },
+        duration: 520, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      body = this.add.image(0, 0, 'bug-ladybug').setDisplaySize(64, 64).setTint(0xffd700);
+      const tag = this.add.text(0, -44, "✨ CEO's BUG", {
+        fontFamily: 'Arial Black, sans-serif', fontSize: 12, color: '#ffd700', stroke: '#000', strokeThickness: 3,
+      }).setOrigin(0.5);
+      c.add([glow, tag]);
+    } else if (this.textures.exists(bugState.kind)) {
       body = this.add.image(0, 0, bugState.kind).setDisplaySize(48, 48);
     } else {
       const tint = ({
@@ -1829,7 +1958,7 @@ export default class MultiPlayScene extends Phaser.Scene {
       sprite: c,
       x: bugState.x, y: bugState.y,
       target: { x: bugState.x, y: bugState.y },
-      alive: true, hidden: false, kind: bugState.kind,
+      alive: true, hidden: false, kind: bugState.kind, golden,
     });
   }
 
@@ -1842,6 +1971,8 @@ export default class MultiPlayScene extends Phaser.Scene {
     const now = this.time.now;
     if (now < this._smashCooldownUntil) return;
     if (!this.room) return;
+    const meS = this.room.state?.players?.get(this.localId);
+    if (meS && (Number(meS.stunnedUntil) || 0) > this._srvNow()) return; // stunned
 
     // Broadcast the visual action so other clients see our pose
     this.room.send('action', { kind });
@@ -1904,6 +2035,21 @@ export default class MultiPlayScene extends Phaser.Scene {
       return;
     }
 
+    // The Deadline boss — explicit lock-on, or auto when it's the closest thing in reach.
+    const bossPos = this._bossView?.pos();
+    const bossReach = reach + 64;
+    const bossD = bossPos ? Math.hypot(bossPos.x - this.localPos.x, bossPos.y - this.localPos.y) : Infinity;
+    const swingBoss = () => {
+      this.room.send('smash', { boss: this._bossView.id, kind });
+      this._smashCooldownUntil = now + 220;
+      AudioManager.smashHit?.();
+      if (me) this.tweens.add({ targets: me.container, scaleX: 1.18, scaleY: 0.9, duration: 90, yoyo: true });
+    };
+    if (opts.boss) {
+      if (bossD < bossReach) swingBoss();
+      return;
+    }
+
     let bestId = null, bestD = Infinity;
     if (opts.targetId != null) {
       const b = this.remoteBugs.get(opts.targetId);
@@ -1917,10 +2063,12 @@ export default class MultiPlayScene extends Phaser.Scene {
         const d = Math.hypot(b.x - this.localPos.x, b.y - this.localPos.y);
         if (d < reach && d < bestD) { bestD = d; bestId = id; }
       });
+      if (bossD < bossReach && (bestId == null || bossD - 64 < bestD)) { swingBoss(); return; }
     }
     // Also consider enemy players for the swing — pick the closer of bug vs player.
+    // (Skipped during the boss truce — PvP does no damage then.)
     let bestPlayerSid = null, bestPlayerD = Infinity;
-    if (opts.targetId == null) {
+    if (opts.targetId == null && !this._isTruce()) {
       this.remotePlayers.forEach((r, sid) => {
         if (sid === this.localId) return;
         const d = Math.hypot(r.container.x - this.localPos.x, r.container.y - this.localPos.y);
@@ -1959,7 +2107,8 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (!this.room) return;
     const meState = this.room.state.players?.get(this.localId);
     if (!meState || meState.broken) return;
-    const cost = ({ q: 10, w: 15, e: 8, r: 25 })[slot] || 0;
+    if ((Number(meState.stunnedUntil) || 0) > this._srvNow()) return; // stunned
+    const cost = this._skillCost(slot);
     if ((meState.energy | 0) < cost) {
       AudioManager.uiClick?.();
       return;
@@ -1991,11 +2140,18 @@ export default class MultiPlayScene extends Phaser.Scene {
         const d = Math.hypot(b.x - lx, b.y - ly);
         if (d < SEARCH_RANGE && d < bestD) { bestD = d; bestX = b.x; bestY = b.y; }
       });
-      this.remotePlayers.forEach((r, sid) => {
-        if (sid === this.localId) return;
-        const d = Math.hypot(r.container.x - lx, r.container.y - ly);
-        if (d < SEARCH_RANGE && d < bestD) { bestD = d; bestX = r.container.x; bestY = r.container.y; }
-      });
+      if (!this._isTruce()) {
+        this.remotePlayers.forEach((r, sid) => {
+          if (sid === this.localId) return;
+          const d = Math.hypot(r.container.x - lx, r.container.y - ly);
+          if (d < SEARCH_RANGE && d < bestD) { bestD = d; bestX = r.container.x; bestY = r.container.y; }
+        });
+      }
+      const bp = this._bossView?.pos();
+      if (bp) {
+        const d = Math.hypot(bp.x - lx, bp.y - ly) - 60; // big target — count from its edge
+        if (d < SEARCH_RANGE && d < bestD) { bestD = d; bestX = bp.x; bestY = bp.y; }
+      }
       if (bestX == null) {
         // No enemy in range — refund the energy intent and whiff
         AudioManager.uiClick?.();
@@ -2008,6 +2164,10 @@ export default class MultiPlayScene extends Phaser.Scene {
       payload.dirY = dirY;
       const destX = Phaser.Math.Clamp(lx + dirX * 140, 0, WORLD_W);
       const destY = Phaser.Math.Clamp(ly + dirY * 140, 0, WORLD_H);
+      // Predicting a server teleport: don't adopt server corrections or clamp
+      // against obstacles until the tween + the server echo have landed.
+      this._predictUntil = this.time.now + 180 + 320;
+      this._passThroughUntil = this.time.now + 350;
       const moveAnim = { x: lx, y: ly };
       this.tweens.add({
         targets: moveAnim, x: destX, y: destY,
@@ -2032,6 +2192,8 @@ export default class MultiPlayScene extends Phaser.Scene {
       payload.dirY = dirY;
       const destX = Phaser.Math.Clamp(this.localPos.x + dirX * 180, 0, WORLD_W);
       const destY = Phaser.Math.Clamp(this.localPos.y + dirY * 180, 0, WORLD_H);
+      this._predictUntil = this.time.now + 250 + 320;
+      this._passThroughUntil = this.time.now + 350;
       const moveAnim = { x: this.localPos.x, y: this.localPos.y };
       this.tweens.add({
         targets: moveAnim, x: destX, y: destY,
@@ -2060,7 +2222,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (r.sprite.setTint) {
       r.sprite.setTint(0xff5252);
       this.time.delayedCall(120, () => {
-        if (!r.broken && !(r.stunnedUntil && r.stunnedUntil > Date.now())) {
+        if (!r.broken && !(r.stunnedUntil && r.stunnedUntil > this._srvNow())) {
           r.sprite.clearTint();
         }
       });
@@ -2320,6 +2482,8 @@ export default class MultiPlayScene extends Phaser.Scene {
         this.tweens.add({ targets: btn, scaleX: 0.9, scaleY: 0.9, duration: 80, yoyo: true });
       });
       btn._hit = hit;
+      btn._kbd = kbd;
+      btn._kbdLabel = s.key;
       btn._color = s.color;
       btn._slot  = s.slot;
       btn._radius = r;
@@ -2337,13 +2501,18 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (!me) return;
     const energy = me.energy | 0;
     const broken = !!me.broken;
-    const costs = { q: 10, w: 15, e: 8, r: 25 };
+    const free = this.room?.state?.event === 'hackathon';
     for (const slot of ['q', 'w', 'e', 'r']) {
       const btn = this._skillButtons[slot];
       if (!btn) continue;
-      const affordable = !broken && energy >= costs[slot];
-      const wantAlpha = affordable ? 1 : 0.4;
+      const affordable = !broken && energy >= this._skillCost(slot);
+      // Hackathon: skills are free — make the buttons breathe so people spam them.
+      const wantAlpha = !affordable ? 0.4 : (free ? 0.75 + 0.25 * Math.sin(this.time.now / 120) : 1);
       if (btn.alpha !== wantAlpha) btn.alpha = wantAlpha;
+      if (btn._kbd) {
+        const label = free ? 'FREE' : btn._kbdLabel;
+        if (btn._kbd.text !== label) btn._kbd.setText(label).setColor(free ? '#ff66ff' : '#aab0c0');
+      }
       // Hide the legacy CD overlay/text (kept on object but never shown)
       if (btn._cdOverlay && btn._cdOverlay.visible) btn._cdOverlay.setVisible(false);
       if (btn._cdText && btn._cdText.visible) btn._cdText.setVisible(false);
@@ -2383,6 +2552,15 @@ export default class MultiPlayScene extends Phaser.Scene {
    */
   _onWorldClick(wx, wy) {
     const TARGET_TOL = 44;
+    // The Deadline is big — clicking anywhere on it locks on.
+    const bp = this._bossView?.pos();
+    if (bp && Math.hypot(bp.x - wx, (bp.y - 20) - wy) < 95) {
+      this._attackTarget = { type: 'boss' };
+      this._moveTarget = null;
+      this._flashTargetMarker(wx, wy, 0xff5252);
+      this._showSelectionRing(0xff5252);
+      return;
+    }
     let bugId = null, bugD = Infinity;
     this.remoteBugs.forEach((b, id) => {
       if (!b.alive || b.hidden) return;
@@ -2456,6 +2634,12 @@ export default class MultiPlayScene extends Phaser.Scene {
   /** Resolve current attack target → live world position (or null if gone). */
   _resolveAttackTargetPos() {
     if (!this._attackTarget) return null;
+    if (this._attackTarget.type === 'boss') {
+      const bp = this._bossView?.pos();
+      if (!bp) { this._attackTarget = null; return null; }
+      // Stand at its edge (hug 110) and swing from further out (big hitbox).
+      return { x: bp.x, y: bp.y, isBug: true, boss: true, reach: SMASH_REACH + 60, hug: 110 };
+    }
     if (this._attackTarget.type === 'bug') {
       const b = this.remoteBugs.get(this._attackTarget.id);
       if (!b || !b.alive || b.hidden) { this._attackTarget = null; return null; }
@@ -2620,7 +2804,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     g.lineStyle(1, 0xffffff, 0.35);
     g.strokeRect(ox + vx, oy + vy, vw, vh);
 
-    // Players (colored dots; bigger + white outline for self)
+    // Players (colored dots; bigger + white outline for self; gold ring = Tech Lead)
     this.remotePlayers.forEach((r, sid) => {
       const isMe = (sid === this.localId);
       const wx = r.container.x, wy = r.container.y;
@@ -2630,7 +2814,28 @@ export default class MultiPlayScene extends Phaser.Scene {
         g.lineStyle(1, 0xffffff, 1);
         g.strokeCircle(ox + wx * sx, oy + wy * sy, 4);
       }
+      if (sid === this._crownSid) {
+        g.lineStyle(1.5, 0xffd700, 1);
+        g.strokeCircle(ox + wx * sx, oy + wy * sy, 5.5);
+      }
     });
+
+    // Objectives on top: the CEO's golden bug + the Deadline boss (pulsing)
+    const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 160);
+    this.remoteBugs.forEach((b) => {
+      if (!b.alive || !b.golden) return;
+      g.fillStyle(0xffd700, 1);
+      g.fillCircle(ox + b.x * sx, oy + b.y * sy, 3.5);
+      g.lineStyle(1.5, 0xffd700, 0.4 + 0.6 * pulse);
+      g.strokeCircle(ox + b.x * sx, oy + b.y * sy, 5 + 3 * pulse);
+    });
+    const bp = this._bossView?.pos();
+    if (bp) {
+      g.fillStyle(0xff3b3b, 1);
+      g.fillCircle(ox + bp.x * sx, oy + bp.y * sy, 4.5);
+      g.lineStyle(1.5, 0xff3b3b, 0.4 + 0.6 * pulse);
+      g.strokeCircle(ox + bp.x * sx, oy + bp.y * sy, 6 + 3 * pulse);
+    }
   }
 
   _onLocalComboChange(newCombo, oldCombo) {
@@ -2690,17 +2895,25 @@ export default class MultiPlayScene extends Phaser.Scene {
 
   _refreshPlayerList() {
     const lines = [];
-    if (this.room?.state?.players) {
+    const st = this.room?.state;
+    if (st?.players) {
       const arr = [];
-      this.room.state.players.forEach((p, sid) => arr.push({
-        sid, name: p.name, score: p.score | 0, level: p.level | 0,
+      st.players.forEach((p, sid) => arr.push({
+        sid, name: p.name, score: p.score | 0, level: p.level | 0, bot: !!p.isBot, broken: !!p.broken,
       }));
       arr.sort((a, b) => b.score - a.score);
-      arr.forEach(({ sid, name, score, level }) => {
-        const me = (sid === this.localId) ? ' ← you' : '';
-        const tag = `Lv${level || 1} ${levelTitle(level || 1)}`;
-        lines.push(`${String(score).padStart(4, ' ')}  ${name} · ${tag}${me}`);
-      });
+      const TOP = 8;
+      const row = (e, rank) => {
+        const me = (e.sid === this.localId) ? ' ← you' : '';
+        const crown = (e.sid === this._crownSid) ? '👑 ' : '';
+        const bot = e.bot ? '🤖' : '';
+        const tag = e.broken ? '💻✖' : `Lv${e.level || 1}`;
+        return `${rank}. ${crown}${bot}${e.name} · ${tag} · ${e.score}${me}`;
+      };
+      lines.push(st.bounty > 0 ? `LEADERBOARD · 👑 bounty ${st.bounty}` : 'LEADERBOARD');
+      arr.slice(0, TOP).forEach((e, i) => lines.push(row(e, i + 1)));
+      const myIdx = arr.findIndex((e) => e.sid === this.localId);
+      if (myIdx >= TOP) lines.push('…', row(arr[myIdx], myIdx + 1));
     }
     this._playerListText.setText(lines.join('\n'));
   }
@@ -2711,6 +2924,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     // ----- Move local player (arrows → joystick → attack target → move target) -----
     if (this.localId) {
       let dx = 0, dy = 0;
+      const me0 = this.remotePlayers.get(this.localId);
 
       // Arrow-key direction (highest priority for laptop play). Suppressed while
       // typing in chat so WASD/arrows go to the text field, not movement.
@@ -2741,11 +2955,14 @@ export default class MultiPlayScene extends Phaser.Scene {
           const tx = attackPos.x - this.localPos.x;
           const ty = attackPos.y - this.localPos.y;
           const dist = Math.hypot(tx, ty);
-          const HUG = 28;
-          if (attackPos.isBug && dist < SMASH_REACH) {
+          const HUG = attackPos.hug ?? 28;
+          const reachA = attackPos.reach ?? SMASH_REACH;
+          if (attackPos.boss && dist < reachA) {
+            this._triggerAction('smash', { boss: true });
+          } else if (attackPos.isBug && dist < reachA) {
             this._triggerAction('smash', { targetId: this._attackTarget.id });
-          } else if (!attackPos.isBug && dist < SMASH_REACH) {
-            // PvP — locked onto another player, auto-smash them
+          } else if (!attackPos.isBug && dist < SMASH_REACH && !this._isTruce()) {
+            // PvP — locked onto another player, auto-smash them (not during a truce)
             this._triggerAction('smash', { targetSid: this._attackTarget.sid });
           }
           if (attackPos.isBug && dist > HUG) {
@@ -2770,11 +2987,19 @@ export default class MultiPlayScene extends Phaser.Scene {
           }
         }
       }
+      // Stunned (ult hit / missed deadline): the server ignores our moves, so
+      // stand still instead of drifting away from where everyone else sees us.
+      const stunned = !!me0 && (me0.stunnedUntil || 0) > this._srvNow();
+      if (stunned) { dx = 0; dy = 0; }
       if (dx !== 0 || dy !== 0) {
-        this.localPos.x += dx * MOVE_SPEED * dt;
-        this.localPos.y += dy * MOVE_SPEED * dt;
-        this.localPos.x = Phaser.Math.Clamp(this.localPos.x, 0, WORLD_W);
-        this.localPos.y = Phaser.Math.Clamp(this.localPos.y, 0, WORLD_H);
+        const fromX = this.localPos.x, fromY = this.localPos.y;
+        const toX = Phaser.Math.Clamp(fromX + dx * MOVE_SPEED * dt, 0, WORLD_W);
+        const toY = Phaser.Math.Clamp(fromY + dy * MOVE_SPEED * dt, 0, WORLD_H);
+        // Same slide-along obstacle collision as the server, so local and
+        // server positions agree (and server corrections don't rubber-band).
+        const out = this._clampLocalMove(fromX, fromY, toX, toY);
+        this.localPos.x = out.x;
+        this.localPos.y = out.y;
         // Remember last non-zero movement direction for skill aiming (dash, etc.)
         this._lastDirX = dx;
         this._lastDirY = dy;
@@ -2789,9 +3014,9 @@ export default class MultiPlayScene extends Phaser.Scene {
         me.target.y = this.localPos.y;
       }
 
-      // Send move to server at ~20 Hz
+      // Send move to server at ~20 Hz (not while stunned — it would be rejected)
       const now = this.time.now;
-      if (this.room && now - this._lastSentAt > 50) {
+      if (this.room && !stunned && now - this._lastSentAt > 50) {
         this._lastSentAt = now;
         this.room.send('move', { x: this.localPos.x, y: this.localPos.y });
       }
@@ -2934,19 +3159,39 @@ export default class MultiPlayScene extends Phaser.Scene {
         r.shadow.setPosition(0, FEET_Y).setScale(s);
         r.ring.setPosition(0, FEET_Y).setScale(s);
         r.aura.setPosition(0, FEET_Y);
+        // Hat sits ON the head (the drawn head's top is ~74% of the way up the
+        // sprite); the label stack shifts up to make room when one is worn.
+        const hasHat = !!(r.hatText && r.hatText.text);
+        const STACK = HEAD_TOP - (hasHat ? 10 * s + 6 : 0);
+        if (r.hatText) {
+          r.hatText.setFontSize(Math.round(14 + 8 * s));
+          r.hatText.y = -74 * s + 5 * s;
+        }
         // Float labels with the growing head
-        r.label.y      = HEAD_TOP - 16;
-        r.title.y      = HEAD_TOP - 2;
-        r.healthBg.y   = HEAD_TOP - 34;
-        r.healthFill.y = HEAD_TOP - 34;
-        r.energyBg.y   = HEAD_TOP - 29;
-        r.energyFill.y = HEAD_TOP - 29;
+        r.label.y      = STACK - 16;
+        r.title.y      = STACK - 2;
+        r.healthBg.y   = STACK - 34;
+        r.healthFill.y = STACK - 34;
+        r.energyBg.y   = STACK - 29;
+        r.energyFill.y = STACK - 29;
         // Level badge midpoint between health + energy bars
-        const badgeY = HEAD_TOP - 31;
+        const badgeY = STACK - 31;
         r.levelRingBg.y = badgeY;
         r.levelText.y   = badgeY;
+        r._stackTop = STACK;
+        if (r.crownText) r.crownText.y = STACK - 52;
         // Force redraw of the arc next frame at the new Y
         r._lastBadgeXp = -1;
+      }
+
+      // Tech Lead crown — bob above everything
+      if (r.crownText) {
+        const crowned = sid === this._crownSid;
+        if (crowned !== r.crownText.visible) r.crownText.setVisible(crowned);
+        if (crowned) {
+          r.crownText.y = (r._stackTop ?? -85) - 52 + Math.sin(now / 240) * 3;
+          r.crownText.angle = Math.sin(now / 400) * 8;
+        }
       }
       // Whole-level transition: refresh the title text + reset aura
       if (lv !== r._lastLv) {
@@ -2964,7 +3209,9 @@ export default class MultiPlayScene extends Phaser.Scene {
       }
 
       // Stun ⭐ — spin above head while stunned; hide after server window ends
-      const stunMs = (r.stunnedUntil || 0) - Date.now();
+      // (server timestamps → compare against the synced server clock)
+      const srvNow = this._srvNow();
+      const stunMs = (r.stunnedUntil || 0) - srvNow;
       if (stunMs > 0) {
         if (!r.stunStar.visible) {
           r.stunStar.setVisible(true);
@@ -2976,6 +3223,19 @@ export default class MultiPlayScene extends Phaser.Scene {
       } else if (r.stunStar.visible) {
         r.stunStar.setVisible(false);
         if (!r.broken && r.sprite.clearTint) r.sprite.clearTint();
+      }
+
+      // Spawn protection / roll i-frames — quick blink (skipped while broken,
+      // which has its own alpha pulse below)
+      if (!r.broken) {
+        const inv = (r.invulnUntil || 0) - srvNow;
+        if (inv > 0) {
+          r._invBlink = true;
+          r.sprite.setAlpha(Math.floor(now / 110) % 2 ? 0.45 : 1);
+        } else if (r._invBlink) {
+          r._invBlink = false;
+          r.sprite.setAlpha(1);
+        }
       }
 
       // Aura pulse — only at Lv5+ and only the per-frame work that has to run
@@ -3075,7 +3335,20 @@ export default class MultiPlayScene extends Phaser.Scene {
       r.sprite.x = Phaser.Math.Linear(r.sprite.x, r.target.x, bugLerp);
       r.sprite.y = Phaser.Math.Linear(r.sprite.y, r.target.y, bugLerp);
       r.x = r.sprite.x; r.y = r.sprite.y;
+      // The CEO's bug leaves a trail of sparkles
+      if (r.golden && (!r._sparkAt || now - r._sparkAt > 110)) {
+        r._sparkAt = now;
+        const sp = this.add.text(r.x + (Math.random() - 0.5) * 40, r.y + (Math.random() - 0.5) * 30, '✦', {
+          fontFamily: 'Arial Black, sans-serif', fontSize: 10 + Math.random() * 8, color: '#ffe680',
+        }).setOrigin(0.5).setDepth(7);
+        this.tweens.add({ targets: sp, y: sp.y - 26, alpha: 0, duration: 600, onComplete: () => sp.destroy() });
+      }
     });
+
+    // ----- Office Chaos overlays -----
+    this._overlay.update(now, this.room?.state);
+    this._bossView.update(dtMs);
+    this._updateObjectiveArrow(now);
 
     // ----- Local health + energy + level HUD -----
     if (this._localEnergyFill && this.localId) {
@@ -3118,8 +3391,11 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (this.room?.state) {
       const ms = this.room.state.timeLeftMs | 0;
       if (ms < 0) {
-        const players = this.room.state.players?.size ?? 0;
-        const phaseStr = `PERSONAL MODE  ·  ${players} online`;
+        let humans = 0, bots = 0;
+        this.room.state.players?.forEach((p) => { if (p.isBot) bots++; else humans++; });
+        const phaseStr = bots
+          ? `PERSONAL MODE  ·  ${humans} online  ·  ${bots} AI coworkers`
+          : `PERSONAL MODE  ·  ${humans} online`;
         if (this._timerText.text !== '∞') {
           this._timerText.setText('∞').setColor('#7ec8ff');
         }
@@ -3290,8 +3566,12 @@ export default class MultiPlayScene extends Phaser.Scene {
     const text = String(m.text || '').slice(0, 140);
     if (!text) return;
     const isMe = m.sid === this.localId;
-    const color = isMe ? '#ffd23f' : '#9ad0ff'; // you = gold, others = cyan
-    this._chatHistory.push({ str: `${name}: ${text}`, color });
+    // you = gold · PM = orange (louder) · AI coworkers = soft gray-blue · others = cyan
+    const kind = m.kind || '';
+    const color = isMe ? '#ffd23f' : kind === 'pm' ? '#ffb347' : kind === 'bot' ? '#c3cfe0' : '#9ad0ff';
+    const alpha = kind === 'pm' ? 0.85 : 0.55;
+    this._chatHistory.push({ str: `${name}: ${text}`, color, alpha });
+    if (kind === 'pm' && !m.history && !this._shuttingDown) AudioManager.paChime?.();
     if (this._chatHistory.length > this._chatHistMax) this._chatHistory.shift();
     // If the player is reading older history (scrolled up), keep their view
     // anchored on the same messages instead of yanking them to the bottom.
@@ -3323,7 +3603,7 @@ export default class MultiPlayScene extends Phaser.Scene {
         fontFamily: 'Consolas, monospace', fontSize: 13, color: m.color, align: 'right',
         stroke: '#000000', strokeThickness: 2,
         wordWrap: { width: Math.min(420, this.scale.width * 0.5) },
-      }).setOrigin(1, 1).setScrollFactor(0).setDepth(54).setAlpha(0.55);
+      }).setOrigin(1, 1).setScrollFactor(0).setDepth(54).setAlpha(m.alpha ?? 0.55);
       this._chatLineObjs.push(t);
       y -= t.height + 3;
     }
@@ -3364,7 +3644,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     const dim = this.add.rectangle(0, 0, W, H, 0x05070d, 0.9).setOrigin(0).setInteractive();
 
     // Panel
-    const panelW = 440, panelH = 250;
+    const panelW = 460, panelH = 340;
     const px = W / 2 - panelW / 2, py = H / 2 - panelH / 2;
     const panel = this.add.graphics();
     panel.fillStyle(0x0a0e16, 1);
@@ -3372,19 +3652,20 @@ export default class MultiPlayScene extends Phaser.Scene {
     panel.lineStyle(3, 0x39c2ff, 0.9);
     panel.strokeRoundedRect(px, py, panelW, panelH, 16);
 
-    const title = this.add.text(W / 2, py + 38, 'ENTER YOUR NAME', {
+    const title = this.add.text(W / 2, py + 36, 'ENTER YOUR NAME', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 24, color: '#ffd23f',
       stroke: '#000', strokeThickness: 5,
     }).setOrigin(0.5);
 
     // Input field
     const fieldW = 340, fieldH = 50;
-    const field = this.add.rectangle(W / 2, H / 2 - 6, fieldW, fieldH, 0x12161f, 1)
+    const fieldY = py + 92;
+    const field = this.add.rectangle(W / 2, fieldY, fieldW, fieldH, 0x12161f, 1)
       .setStrokeStyle(2, 0x7ec8ff, 0.85);
-    const valueText = this.add.text(W / 2 - fieldW / 2 + 14, H / 2 - 6, value, {
+    const valueText = this.add.text(W / 2 - fieldW / 2 + 14, fieldY, value, {
       fontFamily: 'Consolas, monospace', fontSize: 22, color: '#ffffff',
     }).setOrigin(0, 0.5);
-    const cursor = this.add.text(0, H / 2 - 6, '|', {
+    const cursor = this.add.text(0, fieldY, '|', {
       fontFamily: 'Consolas, monospace', fontSize: 22, color: '#7ec8ff',
     }).setOrigin(0, 0.5);
     const placeCursor = () => { cursor.x = valueText.x + valueText.width + 1; };
@@ -3393,19 +3674,60 @@ export default class MultiPlayScene extends Phaser.Scene {
       delay: 480, loop: true, callback: () => cursor.setVisible(!cursor.visible),
     });
 
-    const hint = this.add.text(W / 2, H / 2 + 44, 'type a name · ENTER to join · ESC to cancel', {
+    const hint = this.add.text(W / 2, fieldY + 42, 'type a name · ENTER to join · ESC to cancel', {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#888a99',
     }).setOrigin(0.5);
 
+    // ── Hat picker (cosmetic, unlocked by career stats) ──
+    const career = this._career || SaveManager.getCareer();
+    const unlockedCount = HATS.filter((h) => h.unlock && isHatUnlocked(h, career)).length;
+    const hatHeader = this.add.text(W / 2, fieldY + 80, `HAT · ${unlockedCount}/${HATS.length - 1} unlocked · ◀ ▶ to browse`, {
+      fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff',
+    }).setOrigin(0.5);
+    let hatIdx = Math.max(0, HATS.findIndex((h) => h.id === (this.playerHat || '')));
+    const hatRowY = fieldY + 112;
+    const hatEmoji = this.add.text(W / 2 - 70, hatRowY, '', { fontSize: 30 }).setOrigin(0.5);
+    const hatName = this.add.text(W / 2 - 44, hatRowY - 8, '', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffffff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0, 0.5);
+    const hatInfo = this.add.text(W / 2 - 44, hatRowY + 11, '', {
+      fontFamily: 'Consolas, monospace', fontSize: 11, color: '#888a99',
+    }).setOrigin(0, 0.5);
+    const mkArrow = (x, dir) => {
+      const t = this.add.text(x, hatRowY, dir < 0 ? '◀' : '▶', {
+        fontFamily: 'Arial Black, sans-serif', fontSize: 22, color: '#39c2ff', stroke: '#000', strokeThickness: 3,
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      t.on('pointerup', () => cycleHat(dir));
+      return t;
+    };
+    const leftArrow = mkArrow(px + 34, -1);
+    const rightArrow = mkArrow(px + panelW - 34, 1);
+    const renderHat = () => {
+      const h = HATS[hatIdx];
+      const ok = isHatUnlocked(h, career);
+      hatEmoji.setText(h.emoji || '—').setAlpha(ok ? 1 : 0.35);
+      hatName.setText(ok ? h.name : `🔒 ${h.name}`).setColor(ok ? '#ffffff' : '#888a99');
+      hatInfo.setText(h.unlock
+        ? (ok ? 'unlocked ✓' : `${h.unlock.label} (${Math.min(career[h.unlock.stat] || 0, h.unlock.at)}/${h.unlock.at})`)
+        : 'classic look');
+    };
+    const cycleHat = (dir) => {
+      hatIdx = (hatIdx + dir + HATS.length) % HATS.length;
+      renderHat();
+      AudioManager.uiClick?.();
+    };
+    renderHat();
+
     // JOIN button
-    const btn = this.add.rectangle(W / 2, py + panelH - 38, 170, 46, 0x123a1c, 1)
+    const btn = this.add.rectangle(W / 2, py + panelH - 36, 170, 46, 0x123a1c, 1)
       .setStrokeStyle(2, 0x7ed957, 0.9).setInteractive({ useHandCursor: true });
-    const btnLabel = this.add.text(W / 2, py + panelH - 38, 'JOIN', {
+    const btnLabel = this.add.text(W / 2, py + panelH - 36, 'JOIN', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 18, color: '#7ed957',
       stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5);
 
-    overlay.add([dim, panel, title, field, valueText, cursor, hint, btn, btnLabel]);
+    overlay.add([dim, panel, title, field, valueText, cursor, hint,
+      hatHeader, hatEmoji, hatName, hatInfo, leftArrow, rightArrow, btn, btnLabel]);
 
     const refresh = () => { valueText.setText(value); placeCursor(); };
 
@@ -3413,6 +3735,8 @@ export default class MultiPlayScene extends Phaser.Scene {
       const k = ev.key;
       if (k === 'Enter')     { finish(); return; }
       if (k === 'Escape')    return; // global ESC handler leaves to the menu
+      if (k === 'ArrowLeft')  { cycleHat(-1); return; }
+      if (k === 'ArrowRight') { cycleHat(1); return; }
       if (k === 'Backspace') { value = value.slice(0, -1); refresh(); return; }
       // Printable single chars only (space..~), respect max length.
       if (k.length === 1 && value.length < MAX && /^[\x20-\x7E]$/.test(k)) {
@@ -3427,13 +3751,237 @@ export default class MultiPlayScene extends Phaser.Scene {
       overlay.destroy();
       const chosen = (value.trim() || String(defaultName || '').trim()
         || `Guest-${Math.floor(Math.random() * 9000) + 1000}`).slice(0, MAX);
-      onConfirm(chosen);
+      // A locked hat can be previewed but not worn.
+      const h = HATS[hatIdx];
+      onConfirm(chosen, isHatUnlocked(h, career) ? h.id : '');
     };
 
     this.input.keyboard.on('keydown', keyHandler);
     btn.on('pointerup',   () => finish());
     btn.on('pointerover', () => btn.setFillStyle(0x1a5028, 1));
     btn.on('pointerout',  () => btn.setFillStyle(0x123a1c, 1));
+  }
+
+  // ───────────────────────── Office Chaos helpers ─────────────────────────
+
+  /** Client mirror of the server's slide-along obstacle clamp (rules.js
+   *  clampToFreeSpace) so the predicted local position matches the server's.
+   *  Skipped during the Q/E pass-through window, and when we're already inside
+   *  an obstacle (landed there via dash/jump) so we can walk out. */
+  _clampLocalMove(fromX, fromY, toX, toY) {
+    if (this.time.now < (this._passThroughUntil || 0)) return { x: toX, y: toY };
+    const inOb = (x, y) => {
+      for (const o of this.remoteObstacles.values()) {
+        if (x >= o.x && x <= o.x + o.w && y >= o.y && y <= o.y + o.h) return true;
+      }
+      return false;
+    };
+    if (inOb(fromX, fromY)) return { x: toX, y: toY };
+    let x = toX;
+    if (inOb(x, fromY)) x = fromX;
+    let y = toY;
+    if (inOb(x, y)) y = fromY;
+    return { x, y };
+  }
+
+  _nameLabel(p) { return p?.isBot ? `🤖 ${p.name || '?'}` : (p?.name || '?'); }
+  /** Server-clock "now" (server timestamps like stunnedUntil/invulnUntil). */
+  _srvNow() { return Date.now() + (this._clockOffset || 0); }
+  /** Boss truce: during the fight + the server's 4 s grace after it ends. */
+  _isTruce() {
+    return this.room?.state?.event === 'deadline_boss' || Date.now() < (this._truceUntil || 0);
+  }
+  _skillCost(slot) {
+    const base = ({ q: 10, w: 15, e: 8, r: 25 })[slot] || 0;
+    return this.room?.state?.event === 'hackathon' ? 0 : base;
+  }
+
+  /** Server → client drama messages (feed, banners, rewards, boss telegraphs). */
+  _registerDramaHandlers() {
+    const room = this.room;
+    const on = (type, fn) => room.onMessage(type, (m) => { if (!this._shuttingDown) fn(m || {}); });
+    on('welcome', (m) => {
+      if (Number.isFinite(m.serverNow)) this._clockOffset = m.serverNow - Date.now();
+      if (m.events) this._eventDefs = m.events;
+      const cur = this.room?.state?.event;
+      if (cur) this._overlay.setEvent(this._eventDefs[cur] || { title: cur });
+    });
+    on('feed', (m) => this._overlay.feed({
+      text: m.text, color: m.color, mine: !!this.localId && (m.a === this.localId || m.b === this.localId),
+    }));
+    on('announce', (m) => {
+      if (m.kind === 'eventEnd') {
+        // Mirror the server's post-boss grace (EventDirector: truce +4 s).
+        if (m.id === 'deadline_boss') this._truceUntil = Date.now() + 4000;
+        return;
+      }
+      // Event starts carry safety info ("dodge the red circles") — jump the queue.
+      this._overlay.banner({
+        title: m.title, sub: m.sub, color: m.color,
+        big: !!m.big || m.kind === 'event', urgent: m.kind === 'event',
+      });
+      if (m.kind === 'event') {
+        if (m.id === 'prod_down') AudioManager.alarm?.();      // (PM chat line plays the PA chime)
+      } else if (m.big) AudioManager.reward?.();
+      else AudioManager.combo?.(2);
+    });
+    on('kill', (m) => {
+      const gain = m.gain | 0;
+      // (The golden bug's XP pops via its 'reward' message instead.)
+      if (gain > 0 && m.kind !== 'bug-golden') this._spawnXpPopup(`+${gain}`, '#ffe680', gain >= 50);
+      this._careerAdd('bugs', 1, 'bugs');
+    });
+    on('ko', () => {
+      this._spawnXpPopup('💻 KO!', '#ff8a8a', true);
+      this._careerAdd('kos', 1, 'kos');
+    });
+    on('reward', (m) => {
+      const xp = m.xp | 0;
+      if (m.kind === 'boss') {
+        this._overlay.toast(`🚀 Deadline shipped! +${xp} XP (${m.share | 0}% of the damage)`, '#7ed957', 3400);
+        this._careerAdd('bosses', 1, 'bosses');
+      } else if (m.kind === 'golden') {
+        this._overlay.toast(`✨ You fixed the CEO's bug! +${xp} XP`, '#ffd700', 3400);
+        this._careerAdd('goldens', 1, 'goldens');
+      } else if (m.kind === 'bounty') {
+        this._overlay.toast(`💰 Bounty claimed! +${xp} XP`, '#ffd700', 3000);
+      }
+      if (xp > 0) this._spawnXpPopup(`+${xp}`, '#ffd700', true);
+      AudioManager.reward?.();
+    });
+    on('brokenBy', (m) => {
+      this._overlay.toast(`💻 Laptop broken by ${m.by || 'something'} — fixing for 20s…`, '#ff8a8a', 3400);
+      this._careerAdd('deaths', 1);
+    });
+    on('crowned', (m) => {
+      this._overlay.banner({
+        title: "👑 YOU'RE THE TECH LEAD", color: '#ffd700',
+        sub: `Everyone wants your ${m.bounty | 0} XP bounty — watch your back`,
+      });
+    });
+    on('pickup', () => this._careerAdd('pickups', 1, 'pickups'));
+    on('bossSlam', (m) => this._bossView.slam(m));
+    on('bossSlamHit', (m) => this._bossView.slamHit(m));
+
+    // First sessions: a few onboarding tips
+    if ((this._career.sessions | 0) < 2) {
+      this._overlay.startTips([
+        '🐞 Click a bug — or press SPACE next to it — to smash it',
+        '💚 Green + pickups heal you and refill energy',
+        '⚡ Q dash · W shield · E jump · R ult — skills cost energy',
+        '📢 Listen to the PM: world events change the rules',
+        '👑 Break the Tech Lead\'s laptop to claim their bounty',
+        '💻 Health 0 = broken laptop: back to Intern for 20s',
+      ]);
+    }
+  }
+
+  _onEventChange(id, prev) {
+    if (id) this._overlay.setEvent(this._eventDefs[id] || { title: id.replace(/_/g, ' ').toUpperCase() });
+    else this._overlay.clearEvent();
+    // An event that ended while you were here counts as "survived" for dailies.
+    if (prev && prev !== id && this._joinedAt) this._dailyTrack('events', 1);
+  }
+
+  _careerAdd(key, n = 1, daily = null) {
+    const before = this._career;
+    this._career = SaveManager.addCareer(key, n);
+    this._announceUnlocks(before, this._career);
+    if (daily) this._dailyTrack(daily, n);
+  }
+
+  _careerMax(key, value, daily = null) {
+    const before = this._career;
+    if (value > (before[key] || 0)) {
+      this._career = SaveManager.maxCareer(key, value);
+      this._announceUnlocks(before, this._career);
+    }
+    if (daily) this._dailyTrack(daily, value);
+  }
+
+  _dailyTrack(metric, value) {
+    // A session can run past midnight — switch to the new day's missions.
+    const k = dayKey();
+    if (k !== this._dayKey) { this._dayKey = k; this._missions = missionsForDay(k); }
+    const done = SaveManager.trackDaily(this._dayKey, this._missions, metric, value);
+    for (const m of done) {
+      this._overlay.toast(`✅ Daily mission complete: ${m.text}`, '#7ed957', 3400);
+      AudioManager.reward?.();
+    }
+  }
+
+  _announceUnlocks(before, after) {
+    for (const h of newlyUnlockedHats(before, after)) {
+      this._overlay.toast(`🎉 New hat unlocked: ${h.emoji} ${h.name} — wear it next time you join`, '#ffd23f', 3800);
+      AudioManager.reward?.();
+    }
+  }
+
+  /** Floating "+XP" above the local player (world-space). */
+  _spawnXpPopup(text, color = '#ffe680', big = false) {
+    const me = this.remotePlayers.get(this.localId);
+    if (!me) return;
+    const x = me.container.x + (Math.random() - 0.5) * 30;
+    const y = me.container.y + (me._stackTop ?? -85) - 18;
+    const t = this.add.text(x, y, text, {
+      fontFamily: 'Arial Black, sans-serif', fontSize: big ? 22 : 16, color,
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(41).setScale(0.6);
+    this.tweens.add({ targets: t, scale: 1, duration: 120, ease: 'Back.easeOut' });
+    this.tweens.add({
+      targets: t, y: y - 44, alpha: { from: 1, to: 0 }, duration: 820, delay: 120, ease: 'Cubic.easeIn',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /** Screen-edge arrow pointing at an off-screen objective (boss / golden bug). */
+  _buildObjectiveArrow() {
+    const c = this.add.container(0, 0).setScrollFactor(0).setDepth(52).setVisible(false);
+    const g = this.add.graphics();
+    const label = this.add.text(0, 24, '', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 11, color: '#ffd700', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    c.add([g, label]);
+    this._objArrow = { c, g, label, color: null };
+  }
+
+  _updateObjectiveArrow(now) {
+    const a = this._objArrow;
+    if (!a) return;
+    let tx = null, ty = null, color = 0xffd700, name = '';
+    const bp = this._bossView?.pos();
+    if (bp) { tx = bp.x; ty = bp.y; color = 0xff3b3b; name = 'DEADLINE'; }
+    else {
+      this.remoteBugs.forEach((b) => {
+        if (tx == null && b.alive && b.golden) { tx = b.x; ty = b.y; name = "CEO's BUG"; }
+      });
+    }
+    if (tx == null || !this.localId) { if (a.c.visible) a.c.setVisible(false); return; }
+    const view = this.cameras.main.worldView;
+    if (tx > view.x + 30 && tx < view.right - 30 && ty > view.y + 30 && ty < view.bottom - 30) {
+      if (a.c.visible) a.c.setVisible(false);
+      return;
+    }
+    const W = this.scale.width, H = this.scale.height;
+    const cx = W / 2, cy = H / 2;
+    const ang = Math.atan2((ty - view.y) - cy, (tx - view.x) - cx);
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const k = Math.min((W / 2 - 70) / Math.max(1e-6, Math.abs(cos)), (H / 2 - 70) / Math.max(1e-6, Math.abs(sin)));
+    a.c.setPosition(cx + cos * k, cy + sin * k).setVisible(true);
+    if (a.color !== color) {
+      a.color = color;
+      a.g.clear();
+      a.g.fillStyle(color, 1);
+      a.g.lineStyle(2, 0x000000, 0.9);
+      a.g.fillTriangle(18, 0, -10, -12, -10, 12);
+      a.g.strokeTriangle(18, 0, -10, -12, -10, 12);
+      a.label.setColor(this._cssColor(color));
+    }
+    a.g.setRotation(ang);
+    const meters = Math.round(Math.hypot(tx - this.localPos.x, ty - this.localPos.y) / 50);
+    const str = `${name} ${meters}m`;
+    if (a.label.text !== str) a.label.setText(str);
+    a.c.setScale(1 + 0.12 * Math.sin(now / 150));
   }
 
   _leaveAndGoMenu() {
@@ -3445,7 +3993,17 @@ export default class MultiPlayScene extends Phaser.Scene {
     // Set the shutdown flag FIRST so any Colyseus callbacks firing during
     // the async room.leave() disconnect window become no-ops.
     this._shuttingDown = true;
+    clearTimeout(this._sessionTimer);
+    this._flushPlayTime();
     try { this.room?.leave(); } catch (_) { /* ignore */ }
     this.room = null;
+  }
+
+  /** Add time played since the last flush to the career (on leave / tab close). */
+  _flushPlayTime() {
+    if (!this._playClockAt) return;
+    const ms = Date.now() - this._playClockAt;
+    this._playClockAt = Date.now();
+    if (ms > 0) SaveManager.addCareer('playMs', ms);
   }
 }

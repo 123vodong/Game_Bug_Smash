@@ -6,6 +6,15 @@ import { SaveManager } from '../core/SaveManager.js';
 import { TOTAL_LEVELS } from '../data/levels.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { TIPS_DEFAULT } from '../data/tips.js';
+import { missionsForDay, dayKey } from '../data/missions.js';
+import { HATS, isHatUnlocked } from '../data/cosmetics.js';
+
+// Same host logic as MultiPlayScene's SERVER_URL, but HTTP for the stats API.
+const STATS_URL = (() => {
+  const loc = window.location;
+  if (loc.protocol === 'https:') return `${loc.origin}/api/stats`;
+  return `http://${loc.hostname || 'localhost'}:2567/api/stats`;
+})();
 
 const NEON_GREEN  = 0x39ff14;
 const NEON_TEAL   = 0x00d9c2;
@@ -91,16 +100,32 @@ export default class MenuScene extends Phaser.Scene {
     });
     personal.on('pointerup', () => this.scene.start('MultiPlayScene'));
 
-    // TEAM MODE — upcoming, dim purple, with crossed-swords icon
+    // Live "who's online" badge — social proof that the arena is alive.
+    this._onlineText = this.add.text(W / 2, mpY + mpFrameH / 2 + 14, '● checking who\'s online…', {
+      fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(11);
+    this._refreshOnline();
+    this.time.addEvent({ delay: 10000, loop: true, callback: () => this._refreshOnline() });
+
+    // TEAM MODE — "Office Siege" 5v5 MOBA (champion select → match; bots fill seats)
     const team = this._roundedNeonButton({
       x: W / 2 + 100, y: mpY + 4, w: 190, h: 46, radius: 12,
-      label: 'TEAM · SOON', fontSize: 13,
+      label: 'TEAM 5v5', fontSize: 14,
       color: NEON_PURPLE, iconKind: 'swords',
     });
-    team.alpha = 0.55;
-    team.on('pointerup', () => {
-      this.tweens.add({ targets: team, x: '+=5', duration: 50, yoyo: true, repeat: 2 });
-      this._toast('Team Mode is coming soon');
+    team.on('pointerup', () => this.scene.start('TeamLobbyScene'));
+    // Small "NEW" sticker on the button's top-right corner.
+    const newTag = this.add.container(W / 2 + 100 + 82, mpY + 4 - 22).setDepth(12).setAngle(8);
+    const newBg = this.add.graphics();
+    newBg.fillStyle(NEON_PINK, 1);
+    newBg.fillRoundedRect(-19, -8, 38, 16, 8);
+    newTag.add([newBg, this.add.text(0, 0, 'NEW', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 10, color: '#ffffff',
+    }).setOrigin(0.5)]);
+    this.tweens.add({
+      targets: newTag, scale: { from: 1, to: 1.12 },
+      duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
     // SETTINGS — smaller, neon teal (moved lower to make room for MP row)
@@ -138,6 +163,28 @@ export default class MenuScene extends Phaser.Scene {
     this._nameDisplay.on('pointerout',  () => this._nameDisplay.setColor('#aab0c0'));
     this._nameDisplay.on('pointerup',   () => this._promptForName());
 
+  }
+
+  async _refreshOnline() {
+    const t = this._onlineText;
+    if (!t) return;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      const res = await fetch(STATS_URL, { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      const s = await res.json();
+      if (!t.scene) return;
+      const n = s.online | 0;
+      if (n > 0) {
+        const devs = n === 1 ? '1 dev' : `${n} devs`;
+        t.setText(`● ${devs} online now · AI coworkers on duty`).setColor('#7ed957');
+      } else {
+        t.setText('● arena is open · AI coworkers waiting for you').setColor('#7ec8ff');
+      }
+    } catch (_) {
+      if (t.scene) t.setText('● multiplayer server offline (start: node server/index.js)').setColor('#ff8a8a');
+    }
   }
 
   _nameLabelText(name) {
@@ -323,61 +370,67 @@ export default class MenuScene extends Phaser.Scene {
   // ============================================================ HOLOGRAM PANELS
   /** Floating DAILY MISSION hologram card (right side, mid). */
   _drawDailyMission(W, H) {
-    const panelW = 230, panelH = 165;
-    const x = W - panelW / 2 - 28;
+    // Real daily missions (same 3 for everyone today), progress from SaveManager.
+    const day = dayKey();
+    const missions = missionsForDay(day);
+    const daily = SaveManager.getDaily(day);
+    const { streak, day: streakDay } = SaveManager.getStreak();
+
+    const panelW = 240, panelH = 172;  // left edge stays clear of the title art
+    const x = W - panelW / 2 - 14;
     const y = H * 0.42;
     const c = this.add.container(x, y).setDepth(8);
 
-    // Shadow
     c.add(this.add.rectangle(4, 6, panelW, panelH, 0x000000, 0.55));
-    // Outer cyan glow halo
     const halo = this.add.rectangle(0, 0, panelW + 16, panelH + 16, NEON_CYAN, 0.20);
     c.add(halo);
-    // Dark navy panel
     c.add(this.add.rectangle(0, 0, panelW, panelH, 0x05101e, 0.92).setStrokeStyle(2, NEON_CYAN));
-    // Inner faint border
     c.add(this.add.rectangle(0, 0, panelW - 8, panelH - 8, 0, 0).setStrokeStyle(1, NEON_CYAN, 0.4));
-    // Top hologram bar
     c.add(this.add.rectangle(0, -panelH / 2 + 14, panelW - 16, 18, NEON_CYAN, 0.18));
 
-    // Title
-    const title = this.add.text(0, -panelH / 2 + 14, 'DAILY MISSION', {
-      fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 14, color: '#ffd23f',
+    const title = this.add.text(0, -panelH / 2 + 14, 'DAILY MISSIONS · ONLINE', {
+      fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 13, color: '#ffd23f',
       stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
     title.setShadow(0, 0, '#ffd23f', 6, true, true);
     c.add(title);
 
-    // Checklist
-    const items = [
-      'Smash 100 bugs',
-      'No bug escapes',
-      'Commit & Push the fix',
-    ];
+    let doneCount = 0;
     const startY = -panelH / 2 + 44;
-    items.forEach((it, i) => {
-      const yy = startY + i * 28;
-      const bullet = this.add.text(-panelW / 2 + 12, yy, '> ', {
-        fontFamily: 'Consolas, monospace', fontSize: 12, color: '#00cfff',
+    missions.forEach((m, i) => {
+      const yy = startY + i * 30;
+      const done = !!daily.done[m.id];
+      if (done) doneCount++;
+      const prog = Math.min(m.goal, daily.progress[m.id] || 0);
+      const check = this.add.text(-panelW / 2 + 10, yy, done ? '✓' : '○', {
+        fontFamily: 'Arial Black, sans-serif', fontSize: done ? 16 : 13,
+        color: done ? '#7ed957' : '#5a7a90', stroke: '#000', strokeThickness: 2,
       }).setOrigin(0, 0.5);
-      const check = this.add.text(-panelW / 2 + 26, yy, '✓', {
-        fontFamily: 'Arial Black, sans-serif', fontSize: 16, color: '#7ed957',
-        stroke: '#000', strokeThickness: 2,
+      if (done) check.setShadow(0, 0, '#39ff14', 6, true, true);
+      const text = this.add.text(-panelW / 2 + 28, yy, m.text, {
+        fontFamily: 'Consolas, monospace', fontSize: 11, color: done ? '#8fa8b8' : '#ffffff',
       }).setOrigin(0, 0.5);
-      check.setShadow(0, 0, '#39ff14', 6, true, true);
-      const text = this.add.text(-panelW / 2 + 46, yy, it, {
-        fontFamily: 'Consolas, monospace', fontSize: 12, color: '#ffffff',
-      }).setOrigin(0, 0.5);
-      c.add([bullet, check, text]);
+      const pr = this.add.text(panelW / 2 - 10, yy, done ? 'done' : `${prog}/${m.goal}`, {
+        fontFamily: 'Consolas, monospace', fontSize: 11, color: done ? '#7ed957' : '#00cfff',
+      }).setOrigin(1, 0.5);
+      c.add([check, text, pr]);
     });
 
-    // Mini progress bar
+    // Progress bar = missions completed today; streak = consecutive full days.
     const barW = panelW - 30;
-    c.add(this.add.rectangle(0, panelH / 2 - 14, barW, 4, 0x002535, 1));
-    c.add(this.add.rectangle(-barW / 2, panelH / 2 - 14, barW * 0.65, 4, NEON_CYAN, 1).setOrigin(0, 0.5));
-    c.add(this.add.text(panelW / 2 - 14, panelH / 2 - 16, '65%', {
+    const frac = missions.length ? doneCount / missions.length : 0;
+    c.add(this.add.rectangle(0, panelH / 2 - 26, barW, 4, 0x002535, 1));
+    if (frac > 0) {
+      c.add(this.add.rectangle(-barW / 2, panelH / 2 - 26, barW * frac, 4, NEON_CYAN, 1).setOrigin(0, 0.5));
+    }
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+    const live = streak > 0 && (streakDay === day || streakDay === dayKey(yesterday));
+    c.add(this.add.text(-panelW / 2 + 14, panelH / 2 - 13, live ? `🔥 ${streak}-day streak` : 'finish all 3 to start a streak', {
+      fontFamily: 'Consolas, monospace', fontSize: 10, color: live ? '#ffb347' : '#5a7a90',
+    }).setOrigin(0, 0.5));
+    c.add(this.add.text(panelW / 2 - 14, panelH / 2 - 13, `${doneCount}/${missions.length}`, {
       fontFamily: 'Consolas, monospace', fontSize: 10, color: '#00cfff',
-    }).setOrigin(1, 1));
+    }).setOrigin(1, 0.5));
 
     this.tweens.add({
       targets: halo, alpha: { from: 0.20, to: 0.42 },
@@ -481,6 +534,20 @@ export default class MenuScene extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0, 0.5).setDepth(46);
     txt.setAlpha(0.7);
+
+    // Online career — lifetime MP stats + hat collection (cosmetics only).
+    const c = SaveManager.getCareer();
+    const hats = HATS.filter((h) => h.unlock && isHatUnlocked(h, c)).length;
+    const total = HATS.length - 1;
+    // Kept short: it shares the bottom-left with the SETTINGS button's glow (x ≥ 430).
+    const line = (c.bugs > 0 || c.sessions > 0)
+      ? `career · ${c.bugs} bugs · ${c.kos} KOs · Lv${c.maxLevel} · ${c.bosses} bosses · hats ${hats}/${total}`
+      : `online: AI coworkers + ${total} hats to unlock 🎩`;
+    const career = this.add.text(28, H - 42, line, {
+      fontFamily: 'Consolas, monospace', fontSize: 11, color: '#ffd23f',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0, 0.5).setDepth(46);
+    career.setAlpha(0.8);
   }
 
   // ============================================================ ACTIONS

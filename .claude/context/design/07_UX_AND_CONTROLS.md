@@ -95,6 +95,19 @@ Pinned regions (`scrollFactor 0`):
 - **Bottom-center** — Local energy bar (fat, 280 px) + Lv+Title badge above it
 - **Bottom-right** — Action buttons in MOBA **fan** layout: big yellow SMASH (40 px radius) in the corner; 4 skill buttons (28 px) on a 90° arc, 130 px arc distance, at angles 180°/210°/240°/270° → DASH (Q), SHIELD (W), JUMP (E), ULT (R)
 
+### Office Chaos additions (2026-11-06) — [MPOverlay.js](../../../src/ui/MPOverlay.js), [MPBossView.js](../../../src/entities/MPBossView.js)
+
+- **Kill feed** — left, under the minimap status line: 6 lines, 9 s each; lines involving you get a gold highlight.
+- **Center banners** — streaks, shutdowns, bounties, event starts, boss results; queued one at a time (max 3 waiting).
+- **Event HUD** — top-center under the mode text: event title + countdown bar; the screen edges tint in the event's color.
+- **Boss bar** — 440 px HP bar under the event HUD while THE DEADLINE is out ("ENRAGED" in phase 2); red slam circles fill up on the ground before they land.
+- **Objective arrow** — screen-edge arrow + distance to the off-screen boss or golden bug.
+- **Toasts** — bottom-center, above the bars: promotions, daily mission done, hat unlocked, who broke your laptop.
+- **Tips** — first two sessions only: six onboarding hints, one every 9 s.
+- **Leaderboard** — top 8 + your rank, 👑 crown + bounty, 🤖 bot tag, 💻✖ while broken. Mode text: "N online · M AI coworkers".
+- **Above heads** — hat emoji sits on the head (label stack shifts up), 👑 floats over the Tech Lead, spawn protection blinks.
+- **Join box** — name + hat picker (◀ ▶ / arrow keys; locked hats show their unlock goal).
+
 ### Above each character (in world space, scales with sprite)
 
 ```

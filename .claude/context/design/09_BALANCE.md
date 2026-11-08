@@ -3,10 +3,70 @@
 Every tunable number, in one place. Change here first, propagate to code second. When a number in code differs from this doc, **trust the code** — and fix this doc.
 
 Sources of truth in code:
-- Server: [server/rooms/ArenaRoom.js](../../../server/rooms/ArenaRoom.js)
+- Server rules (every MP number): [server/game/rules.js](../../../server/game/rules.js)
+- Server content: [server/data/events.js](../../../server/data/events.js) (world events, golden bug, boss) · [server/data/bots.js](../../../server/data/bots.js) (bot population + personalities)
+- Server logic: [server/rooms/ArenaRoom.js](../../../server/rooms/ArenaRoom.js) · [server/game/](../../../server/game/)
 - Client: [src/scenes/MultiPlayScene.js](../../../src/scenes/MultiPlayScene.js)
 - SP levels: [src/data/levels.js](../../../src/data/levels.js)
 - SP bugs: [src/data/bugs.js](../../../src/data/bugs.js)
+
+---
+
+## Office Chaos (2026-11-06) — bots, events, boss, drama
+
+### Bug spawning (replaces the fixed 600/850 ms cadence)
+| Constant | Value |
+|---|---|
+| `spawnIntervalFor(players)` | `clamp(1000 / (1.2 + 0.3 × players), 200, 650)` ms → 650 ms solo · 256 ms with 9 · 200 ms cap |
+| `SPAWN_NEAR_HUMAN_CHANCE` | 0.45 — share of spawns placed 500–1100 px from a random human |
+| `HARD_MAX_BUGS` | 150 — ceiling across every spawn path (nests, drops, minions, surges); golden bug exempt |
+| `EAT_PAUSE_ABOVE_BUGS` | 110 — bugs stop eating obstacles while the field is this crowded |
+| `WELCOME_BUGS` | 5 ladybug/null bugs 180–460 px around a joining human (no empty first seconds) |
+| `SPAWN_PROTECT_MS` | 3000 — invulnerable after joining and after the laptop is repaired |
+
+### AI coworkers (`server/data/bots.js`)
+| Constant | Value |
+|---|---|
+| `BOT_FILL_TARGET` / `BOT_MAX` | humans + bots ≈ 9, at most 8 bots; 0 bots at 9+ humans |
+| Seed | first human finds 4 "warm" bots (start XP 0 – ~450, mostly low) |
+| Join/leave cadence | 0.5–0.9 s while under half full, else 1.8–4.2 s; churn: one bot heads home every 2.5–5 min and is replaced |
+| Bot speed / swing | 200–234 px/s (humans 240) · swing every 285–430 ms (humans 220) |
+| PvP start roll | `aggression-score × 0.07` per think (~3/s), targets ≤ 400 px, own HP ≥ 60% |
+| Fairness | never start fights with human Lv1, or humans > 1 level below (unless crowned) · ≤ 2 bots per human · forgive a Lv≤2 human's first 2 hits in 6 s · no R ult or Q dash that would clip a bystander human |
+
+### World events (`server/data/events.js`)
+| Event | Duration | Modifiers |
+|---|---|---|
+| 🚨 Prod Down | 24 s | spawn every 150 ms, max 130 bugs, ×1.5 XP, +16 bugs around humans |
+| ☕ Coffee Break | 18 s | bugs ×0.6 speed, pickup pool 14 (refill 0.9 s near humans), +10 pickups |
+| 🧊 Code Freeze | 14 s | bugs ×0 speed, no bites, no obstacle eating |
+| 🚀 Friday Deploy | 24 s | ×2 XP, bugs ×1.35 speed |
+| 🍕 Hackathon | 15 s | skill cost ×0 |
+| ✨ Golden bug | ≤ 45 s | 240 HP, 175 px/s, flees within 300 px (zig-zag); spawns 700–1300 px from a human and ≥ 700 px from everyone else; bots ignore it for the first 10 s; **+400 XP to whoever dealt the most damage** (not the last hit) |
+| ⏰ The Deadline | ≤ 80 s | every 3rd event; truce (no PvP, +4 s after); spawn every 800 ms, max 80 |
+
+Cadence: first event 25 s after the room opens, then a 38–55 s gap; PM nags every 30–55 s between events.
+
+### The Deadline boss
+| Constant | Value |
+|---|---|
+| HP | `min(30000, 1200 + 950 × players)` → 9750 with 9 players (measured 27–36 s with a full raid; was ~20 s at 520/player) |
+| Hit radius | 70 px added to every attack's reach |
+| Speed | 72 → 105 px/s in phase 2 (≤ 50% HP) |
+| Slam | first after 4.2 s, then every 4.2 s → 3.0 s; 1.1 s telegraph; 150 px; **16% of the victim's max HP** (min 8) so every level needs ~6 slams; 150 px knockback; phase-2 double slam with ≥ 3 players near |
+| Minions | 2 per 8 s (ladybug/null) → 3 per 6 s (+beetle) |
+| Pizza | 2 heal pickups 260–460 px from the boss every 9 s |
+| Rewards | 1500 XP split by damage share + 100 participation (≥ 1% share) + 300 to the last hitter (always); MVP banner |
+| Fail (timeout) | 1.6 s stun on everyone + 14 bugs |
+
+### Drama
+| Constant | Value |
+|---|---|
+| Streak tiers | 3 ON FIRE · 5 10x ENGINEER · 8 DEPLOYING TO PROD · 12 PRINCIPAL ENGINEER · every 4 after |
+| Shutdown | ending a ≥ 3 streak pays 40 XP × streak |
+| Crown | top scorer with ≥ 200 score; a challenger must lead the holder by `max(25, 10%)` to take it; bounty `round((100 + 0.25 × score) / 10) × 10` paid to whoever breaks them; personal "you're Tech Lead" banner ≤ 1 per 30 s |
+| Combo feed | ×15 / ×25 / ×40 |
+| Ult vs defenses | Shield or roll i-frames block the **whole** ult — damage, 120 px knockback and 1 s stun (before 2026-11 they blocked only the damage) |
 
 ---
 
@@ -317,6 +377,9 @@ Detailed table in [../overview_levels.md](../overview_levels.md). Summary:
 | Pickups too easy | Drop `PICKUP_ENERGY_GAIN` 40→25, or raise `PICKUP_RESPAWN_MS` 5 s → 8 s |
 | Bug drops overwhelming | Drop formula to flat `1 bug per defeat`, or disable entirely |
 | Arena feels crowded | Bump `ARENA_W/H` proportionally |
-| Arena feels empty | Add AI bots (planned) |
+| Arena feels empty | Raise `BOT_FILL_TARGET` / `SPAWN_NEAR_HUMAN_CHANCE` |
+| Bots too aggressive | Lower `aggression` per archetype or the `× 0.07` PvP roll in `BotDirector._findPvpTarget` |
+| Boss too slow / fast | `DEADLINE_BOSS.hpBase` / `hpPerPlayer` |
+| Events too frequent | `EVENT_GAP_MS` |
 
 Always change the **server** constant first, then mirror to the client. Never edit one without the other.

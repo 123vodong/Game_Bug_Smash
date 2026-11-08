@@ -1,0 +1,10 @@
+{
+  "name": "bug-smash-playtest",
+  "private": true,
+  "type": "module",
+  "description": "Playtest harness for the MP arena: a headless Colyseus client (sim.mjs) and a headless-browser driver (shot.mjs). Dev-only; not part of the game build.",
+  "devDependencies": {
+    "colyseus.js": "0.16.19",
+    "playwright-core": "1.48.2"
+  }
+}

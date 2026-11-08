@@ -1,0 +1,159 @@
+// tools/playtest/nav_check.mjs — validate Team Mode walls (shared/moba/map.js WALLS)
+// against lanes, river, structures, camps, epics and fountains; check that
+// everything important is reachable; time the pathfinder; print an ASCII map.
+//   node tools/playtest/nav_check.mjs [--map]
+import {
+  WALLS, LANES, STRUCTURES, CAMPS, EPIC_SPOTS, FOUNTAIN, RIVER, MAP_W, MAP_H,
+  STRUCTURE_RADIUS, distToSeg, CHAMP_RADIUS,
+} from '../../shared/moba/map.js';
+import { wallDist, findPath, pathLength, isBlocked, nearestFree, segmentClear, clipMove, pushOut } from '../../shared/moba/nav.js';
+
+const problems = [];
+// v3 edge walls sit right at the lane / river border: lane + river clearance is
+// measured from the wall SURFACE to the lane center line / river axis.
+const CLEAR = { lane: 225, river: 240, struct: 240, camp: 200, epic: 260, fountain: 900, gap: 150 };
+
+// Distance from a wall's surface to a point / polyline.
+const wPoint = (w, p) => wallDist(p.x, p.y, w);
+function wPolyline(w, pts) {
+  // sample the polyline densely (walls are small vs lanes)
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 10);
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      best = Math.min(best, wallDist(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, w));
+    }
+  }
+  return best;
+}
+
+for (const w of WALLS) {
+  const tag = w.kind === 'seg' ? `${w.id}(${w.look} seg ${Math.round(w.x1)},${Math.round(w.y1)}→${Math.round(w.x2)},${Math.round(w.y2)})` : `${w.id}(${w.look} ${w.kind} @${Math.round(w.x)},${Math.round(w.y)})`;
+  for (const [lane, pts] of Object.entries(LANES)) {
+    const d = wPolyline(w, pts);
+    if (d < CLEAR.lane) problems.push(`${tag} too close to ${lane} lane: ${d.toFixed(0)} < ${CLEAR.lane}`);
+  }
+  const dr = wPolyline(w, [RIVER.from, RIVER.to]);
+  if (dr < CLEAR.river) problems.push(`${tag} too close to river axis: ${dr.toFixed(0)} < ${CLEAR.river}`);
+  for (const s of STRUCTURES) {
+    const d = wPoint(w, s) - STRUCTURE_RADIUS[s.kind];
+    if (d < CLEAR.struct - 70) problems.push(`${tag} too close to ${s.id}: ${d.toFixed(0)}`);
+  }
+  for (const c of CAMPS) {
+    const d = wPoint(w, c);
+    if (d < CLEAR.camp) problems.push(`${tag} too close to camp ${c.id}: ${d.toFixed(0)} < ${CLEAR.camp}`);
+  }
+  for (const [k, e] of Object.entries(EPIC_SPOTS)) {
+    const d = wPoint(w, e);
+    if (d < CLEAR.epic) problems.push(`${tag} too close to epic ${k}: ${d.toFixed(0)} < ${CLEAR.epic}`);
+  }
+  for (const [t, f] of Object.entries(FOUNTAIN)) {
+    const d = wPoint(w, f);
+    if (d < CLEAR.fountain) problems.push(`${tag} too close to ${t} fountain: ${d.toFixed(0)}`);
+  }
+  const pts = w.kind === 'seg' ? [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }] : [{ x: w.x, y: w.y }];
+  if (pts.some((q) => q.x < 0 || q.y < 0 || q.x > MAP_W || q.y > MAP_H)) problems.push(`${tag} outside the map`);
+}
+// Narrow gaps between walls (units would snag): gaps must be 0 (touching) or ≥ CLEAR.gap.
+for (let i = 0; i < WALLS.length; i++) {
+  for (let j = i + 1; j < WALLS.length; j++) {
+    const a = WALLS[i], b = WALLS[j];
+    // approximate surface gap by sampling b's boundary
+    let gap = Infinity;
+    const samples = b.kind === 'seg'
+      ? (() => { const s2 = []; const L = Math.hypot(b.x2 - b.x1, b.y2 - b.y1) || 1, nx = -(b.y2 - b.y1) / L, ny = (b.x2 - b.x1) / L; for (let k = 0; k <= 40; k++) { const t = k / 40, cx = b.x1 + (b.x2 - b.x1) * t, cy = b.y1 + (b.y2 - b.y1) * t; s2.push({ x: cx + nx * b.w / 2, y: cy + ny * b.w / 2 }, { x: cx - nx * b.w / 2, y: cy - ny * b.w / 2 }); } return s2; })()
+      : b.kind === 'circle'
+      ? Array.from({ length: 32 }, (_, k) => ({ x: b.x + Math.cos(k / 32 * 6.283) * b.r, y: b.y + Math.sin(k / 32 * 6.283) * b.r }))
+      : (() => { const s = []; for (let k = 0; k <= 20; k++) { const t = k / 20; s.push({ x: b.x + b.w * t, y: b.y }, { x: b.x + b.w * t, y: b.y + b.h }, { x: b.x, y: b.y + b.h * t }, { x: b.x + b.w, y: b.y + b.h * t }); } return s; })();
+    for (const p of samples) gap = Math.min(gap, wallDist(p.x, p.y, a));
+    if (gap > 1 && gap < CLEAR.gap) problems.push(`gap ${a.id}↔${b.id} = ${gap.toFixed(0)} (< ${CLEAR.gap}, units would snag)`);
+  }
+}
+
+// Mirror fairness: every wall has a mirrored twin.
+const key = (w) => w.kind === 'seg' ? `s${[Math.round(w.x1), Math.round(w.y1), Math.round(w.x2), Math.round(w.y2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(w.x)},${Math.round(w.y)},${w.r}` : `r${Math.round(w.x)},${Math.round(w.y)},${w.w},${w.h}`;
+const mkey = (w) => w.kind === 'seg' ? `s${[Math.round(w.y1), Math.round(w.x1), Math.round(w.y2), Math.round(w.x2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(w.y)},${Math.round(w.x)},${w.r}` : `r${Math.round(w.y)},${Math.round(w.x)},${w.h},${w.w}`;
+const keys = new Set(WALLS.map(key));
+for (const w of WALLS) if (!keys.has(mkey(w))) problems.push(`${w.id} has no mirrored twin`);
+
+// Reachability from each fountain (grid path ends where asked, within a radius).
+const r = CHAMP_RADIUS;
+const targets = [
+  ...STRUCTURES.map((s) => ({ name: s.id, x: s.x + (s.team === 'blue' ? 140 : -140), y: s.y })),
+  ...CAMPS.map((c) => ({ name: c.id, x: c.x, y: c.y })),
+  ...Object.entries(EPIC_SPOTS).map(([k, e]) => ({ name: k, x: e.x, y: e.y })),
+  ...Object.entries(FOUNTAIN).map(([k, f]) => ({ name: `${k}_fountain`, x: f.x, y: f.y })),
+];
+let slow = 0, total = 0, n = 0;
+for (const [team, f] of Object.entries(FOUNTAIN)) {
+  for (const t of targets) {
+    const goal = nearestFree(t.x, t.y, r);
+    const t0 = performance.now();
+    const path = findPath(f.x, f.y, t.x, t.y, r);
+    const ms = performance.now() - t0;
+    total += ms; n++; slow = Math.max(slow, ms);
+    const end = path[path.length - 1];
+    if (Math.hypot(end.x - goal.x, end.y - goal.y) > 2) problems.push(`${team} fountain → ${t.name}: path ends off-goal`);
+    // every leg must be clear (smoothing correctness)
+    let ax = f.x, ay = f.y, bad = 0;
+    for (const p of path) { if (!segmentClear(ax, ay, p.x, p.y, r - 3)) bad++; ax = p.x; ay = p.y; }
+    if (bad) problems.push(`${team} fountain → ${t.name}: ${bad} leg(s) clip a wall`);
+    const straight = Math.hypot(t.x - f.x, t.y - f.y);
+    if (pathLength(f.x, f.y, path) > straight * 1.6 + 400) problems.push(`${team} → ${t.name}: big detour (${pathLength(f.x, f.y, path).toFixed(0)} vs ${straight.toFixed(0)})`);
+  }
+}
+
+// Random stress: 2000 random queries, all must produce clear legs.
+let rnd = 12345;
+const rand = () => ((rnd = (rnd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+let rTotal = 0, rMax = 0, rBad = 0;
+for (let i = 0; i < 2000; i++) {
+  const a = nearestFree(rand() * MAP_W, rand() * MAP_H, r), b = { x: rand() * MAP_W, y: rand() * MAP_H };
+  const t0 = performance.now();
+  const path = findPath(a.x, a.y, b.x, b.y, r);
+  const ms = performance.now() - t0;
+  rTotal += ms; rMax = Math.max(rMax, ms);
+  let ax = a.x, ay = a.y;
+  for (const p of path) { if (!segmentClear(ax, ay, p.x, p.y, r - 3)) { rBad++; break; } ax = p.x; ay = p.y; }
+}
+if (rBad) problems.push(`${rBad}/2000 random paths have a leg clipping a wall`);
+
+// Sanity of the other helpers.
+const w0 = WALLS[0];
+const inside = w0.kind === 'seg' ? { x: (w0.x1 + w0.x2) / 2, y: (w0.y1 + w0.y2) / 2 } : w0.kind === 'circle' ? { x: w0.x, y: w0.y } : { x: w0.x + w0.w / 2, y: w0.y + w0.h / 2 };
+const po = pushOut(inside.x, inside.y, r);
+if (isBlocked(po.x, po.y, r - 0.01)) problems.push('pushOut left a circle inside a wall');
+const cm = clipMove(inside.x - 600, inside.y, inside.x, inside.y, r);
+if (!cm.hit || isBlocked(cm.x, cm.y, r - 0.01)) problems.push('clipMove did not stop before a wall');
+
+console.log(`walls: ${WALLS.length} · fountain paths: ${n} avg ${(total / n).toFixed(2)} ms max ${slow.toFixed(2)} ms · random: avg ${(rTotal / 2000).toFixed(3)} ms max ${rMax.toFixed(2)} ms`);
+
+if (process.argv.includes('--map')) {
+  const S = 100; // px per char
+  const lines = [];
+  for (let y = 0; y < MAP_H; y += S) {
+    let row = '';
+    for (let x = 0; x < MAP_W; x += S) {
+      const cx = x + S / 2, cy = y + S / 2;
+      let ch = ' ';
+      if (Math.abs(cx - cy) / Math.SQRT2 < RIVER.width / 2) ch = '~';
+      for (const pts of Object.values(LANES)) for (let i = 0; i < pts.length - 1; i++) if (distToSeg(cx, cy, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < 80) ch = '.';
+      if (isBlocked(cx, cy, 0) || isBlocked(cx, cy, 35)) ch = '#';
+      for (const c of CAMPS) if (Math.hypot(c.x - cx, c.y - cy) < 70) ch = c.type[0];
+      for (const s of STRUCTURES) if (Math.hypot(s.x - cx, s.y - cy) < 70) ch = s.kind === 'core' ? 'C' : 'T';
+      for (const [k, e] of Object.entries(EPIC_SPOTS)) if (Math.hypot(e.x - cx, e.y - cy) < 90) ch = k === 'golden' ? 'G' : 'D';
+      for (const f of Object.values(FOUNTAIN)) if (Math.hypot(f.x - cx, f.y - cy) < 90) ch = 'F';
+      row += ch;
+    }
+    lines.push(row);
+  }
+  console.log(lines.join('\n'));
+}
+
+if (problems.length) {
+  console.log(`\n❌ ${problems.length} problem(s):\n - ` + problems.join('\n - '));
+  process.exit(1);
+}
+console.log('✅ walls + nav OK');
