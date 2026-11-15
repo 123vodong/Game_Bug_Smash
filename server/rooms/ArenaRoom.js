@@ -1,464 +1,67 @@
-// ArenaRoom — Phase 2 slice 2: bug AI (flee + wander) + round flow.
+// ArenaRoom — Personal Mode: one persistent, server-authoritative FFA world.
 //
-// State machine:
-//   playing  — bugs spawn + roam, players smash, timer counts down
-//   results  — short pause showing the winner, then auto-restart
+// Clients send intent (move / smash / castSkill / action / chat); the server
+// validates, simulates bugs + combat, and syncs state via schema diffs.
 //
-// Bugs that detect a player within FLEE_RADIUS run away; otherwise they
-// wander idly. The whole world is server-authoritative; clients are visual.
+// Office Chaos update (2026-11):
+//   • BotDirector   — AI coworkers fill the room when few humans are online.
+//                     They act through the SAME _do* handlers as humans.
+//   • EventDirector — PM world events (Prod Down, Coffee Break, Code Freeze,
+//                     Friday Deploy, Hackathon, Golden Bug) + the Deadline boss.
+//   • Drama         — kill feed, PvP streaks + shutdowns, Tech Lead crown with
+//                     a bounty, spawn protection.
+// Tunables live in server/game/rules.js and server/data/*.js.
 import { Room } from '@colyseus/core';
-import { Schema, MapSchema, type } from '@colyseus/schema';
+import {
+  ARENA_W, ARENA_H, SMASH_RADIUS, MAX_BUGS, BUG_LIFETIME_MS,
+  FLEE_RADIUS_PX, FLEE_SPEED_MUL, TURN_LERP, BUG_ATTACK,
+  BUG_EAT_INTERVAL_MS, BUG_EAT_RADIUS, LADYBUG_EAT_BONUS, MAX_EAT_PER_TICK,
+  TOXIC_CLOUD_RADIUS, TOXIC_CLOUD_LIFETIME, TOXIC_CLOUD_TICK_MS, TOXIC_CLOUD_DAMAGE,
+  COMBO_TIMEOUT_MS, comboMult, PHASE_PLAYING_MS, PHASE_RESULTS_MS,
+  LEVEL_MAX_ENERGY, LEVEL_MAX_HEALTH, LEVEL_TITLES, ENERGY_COST, SKILL_ENERGY, ENERGY_REGEN_PER_SEC,
+  DASH_DISTANCE, DASH_HIT_RADIUS, SHIELD_DURATION_MS, ROLL_DISTANCE, ROLL_INVULN_MS,
+  ULT_RADIUS, ULT_KNOCKBACK, ULT_STUN_MS, distToSegment, bugDamage, pvpDamage,
+  BROKEN_DURATION_MS, SPAWN_PROTECT_MS,
+  PICKUP_TARGET_COUNT, PICKUP_RESPAWN_MS, PICKUP_ENERGY_GAIN, PICKUP_ENERGY_REFILL,
+  PICKUP_RADIUS, PLAYER_PICKUP_RADIUS,
+  levelFromXP, maxEnergyForLevel, maxHealthForLevel, levelTitle,
+  PALETTE, BUG_KIND_SCORE, BUG_DISPLAY_NAME, rollBugKind,
+  OBSTACLE_LAYOUT, OBSTACLE_TARGET, OBSTACLE_RESPAWN_MS, OBSTACLE_VARIANTS,
+  OBSTACLE_MIN_DIST_FROM_PLAYER, OBSTACLE_PADDING, firstObstacleAt, clampToFreeSpace,
+  spawnIntervalFor, SPAWN_NEAR_HUMAN_CHANCE, SPAWN_NEAR_HUMAN_RING,
+  HARD_MAX_BUGS, EAT_PAUSE_ABOVE_BUGS, WELCOME_BUGS, WELCOME_BUG_RING,
+  STREAK_TIERS, SHUTDOWN_MIN_STREAK, SHUTDOWN_XP_PER_KO,
+  CROWN_MIN_SCORE, CROWN_CHECK_MS, CROWN_SWAP_MARGIN_ABS, CROWN_SWAP_MARGIN_PCT,
+  CROWNED_NOTICE_COOLDOWN_MS, bountyForScore, COMBO_FEED_AT, BUG_KINDS,
+} from '../game/rules.js';
+import { Player, Bug, HealthPickup, ToxicCloud, Obstacle, ArenaState } from '../game/schema.js';
+import { BotDirector } from '../game/BotDirector.js';
+import { EventDirector } from '../game/EventDirector.js';
+import { GOLDEN_BUG, WORLD_EVENTS } from '../data/events.js';
+import { sanitizeHat } from '../data/cosmetics.js';
+import {
+  KO_LINES, BUG_KO_LINES, CLOUD_KO_LINES, BOSS_KO_LINES, JOIN_LINES, LEAVE_LINES, pickLine,
+} from '../data/feed.js';
 
-// Large arena tuned to feel uncrowded with 20-32 simultaneous players.
-// 6000×3375 = 16:9. ~2.25× the previous area, so per-player space roughly doubles.
-const ARENA_W = 6000;
-const ARENA_H = 3375;
-// Server smash range includes a latency buffer (~32px) so that fast-fleeing
-// bugs don't drift out of range during the ~100ms message round-trip.
-const SMASH_RADIUS  = 96;
-const TICK_MS  = 50;          // 20 Hz simulation + broadcast
-// Tuned 2026-05-30 — was 160/450ms. 160 bugs × 20Hz patch broadcast was the
-// dominant client-side cost (~3200 onChange callbacks/sec + binary deserialize).
-// Cutting to 100 ~halves the schema sync work while keeping the arena dense.
-const SPAWN_EVERY_MS = 600;
-const MAX_BUGS = 100;
-const BUG_LIFETIME_MS = 30000;
+// Dev-only hooks (force world events) are OPT-IN: start the server with
+// BUG_SMASH_DEBUG=1. Fail-closed so a LAN/prod server never exposes them.
+const DEBUG_HOOKS = process.env.BUG_SMASH_DEBUG === '1';
+// Per-player minimum intervals between intents (anti-script; humans/bots never hit them).
+const SMASH_MIN_INTERVAL_MS = 140;  // client swings every 220 ms (room for network jitter)
+const CAST_MIN_INTERVAL_MS  = 250;  // per slot — Q→R combos stay possible; Hackathon isn't a machine gun
+const ACTION_MIN_INTERVAL_MS = 90;
+const MOVE_SPEED_CAP = 240 * 1.6;   // px/s allowed for `move` (client speed 240 + slack)
+const MOVE_SLACK_PX = 60;
+const SMASH_KINDS = new Set(['smash', 'punch', 'kick']);
 
-const FLEE_RADIUS_PX = 220;
-const WANDER_SPEED   = 35;    // px/s when not panicked
-const FLEE_SPEED_MUL = 2.2;
-const TURN_LERP      = 6;     // how fast bug heading lerps to target
-
-// Aggressive bugs (Phase B 2026-05-31 — bumped 2026-05-31 difficulty pass)
-const BUG_ATTACK = {
-  'bug-beetle': { aggro: 320, reach: 42, dmg: 6,  cooldownMs: 900,  chaseMul: 1.25 },
-  'bug-robot':  { aggro: 420, reach: 48, dmg: 12, cooldownMs: 1800, chaseMul: 1.4 },
-};
-
-// Bugs eat code-obstacles over time
-const BUG_EAT_INTERVAL_MS = 1500;  // every 1.5 s, scan + chew (was 2500)
-const BUG_EAT_RADIUS      = 80;    // bug within this distance of obstacle = it eats
-const LADYBUG_EAT_BONUS   = 2;     // ladybugs munch 2 HP per tick (others = 1)
-const MAX_EAT_PER_TICK    = 4;     // cap so a single tick can't fully break an obstacle
-
-// Toxic death cloud (Phase C 2026-05-31 — bumped 2026-05-31 difficulty pass)
-const TOXIC_CLOUD_RADIUS    = 70;
-const TOXIC_CLOUD_LIFETIME  = 1800;  // ms (was 1500)
-const TOXIC_CLOUD_TICK_MS   = 600;   // damage interval per cloud
-const TOXIC_CLOUD_DAMAGE    = 6;     // HP per tick — TTD ~5s for intern, fair
-
-// Combo
-const COMBO_TIMEOUT_MS = 1500;
-function comboMult(c) {
-  if (c >= 10) return 3;
-  if (c >= 5)  return 2;
-  if (c >= 3)  return 1.5;
-  return 1;
-}
-
-// Pick a random point at least MIN_DIST from (x,y) for the "dive away" hide
-function pickFarPoint(x, y) {
-  const MIN_DIST = 600;
-  for (let i = 0; i < 12; i++) {
-    const nx = 80 + Math.random() * (ARENA_W - 160);
-    const ny = 100 + Math.random() * (ARENA_H - 200);
-    if (Math.hypot(nx - x, ny - y) >= MIN_DIST) return { x: nx, y: ny };
-  }
-  return { x: 80 + Math.random() * (ARENA_W - 160), y: 100 + Math.random() * (ARENA_H - 200) };
-}
-
-// Round flow
-const PHASE_PLAYING_MS = 90_000;  // 90s rounds
-const PHASE_RESULTS_MS = 8_000;   // 8s end screen
-
-// ---- Stickyman Growth System (see develop_notes/STICKYMAN_GROWTH_BREAKDOWN.md) ----
-// Cumulative XP per level. Curve is intentionally steep at the top end so
-// that Lv5–6 (Senior / Super Senior) feel earned. Each tier costs roughly
-// 2× the previous. Lv6 ≈ 50 kills at base XP (or ~17 with a sustained ×3 combo).
-// Harder progression — XP curve is steeper at every step. Intern is fragile.
-const LEVEL_XP_THRESHOLDS = [0, 150, 600, 1800, 4500, 10000];
-const LEVEL_MAX_ENERGY     = [50,  90, 120, 150, 180, 220];
-const LEVEL_MAX_HEALTH     = [50,  90, 130, 180, 230, 290];
-// (Damage to bugs is now the unified `bugDamage()` — see the damage model
-// below. The old per-level LEVEL_BUG_DAMAGE table was removed in the unify pass.)
-// Basic smash is FREE — it's the main attack. Energy only fuels MOBA skills.
-// Energy does NOT passively regen; only health pickups restore it.
-// Effect: players spam basic smash for combat, save energy for tactical skills.
-const ENERGY_COST = { smash: 0, punch: 0, kick: 0, parry: 0, jump: 0 };
-const SKILL_ENERGY = {
-  q: 10, // Bug Dash      (was 20)
-  w: 15, // Laptop Shield (was 25)
-  e: 8,  // Debug Roll    (was 15)
-  r: 25, // Deadline Break (was 40)
-};
-const ENERGY_REGEN_PER_SEC = 0;  // disabled — pickups are the only refill
-
-// Bug Dash tuning — short directional strike, requires an enemy target (client-side)
-const DASH_DISTANCE = 140;     // shorter than ROLL (180) — dash is for closing the gap, not fleeing
-const DASH_HIT_RADIUS = 50;    // bugs within this distance from dash line are hit
-// (Dash/ult bug-damage multipliers now come from PVP_SKILL_MUL — see the
-// unified damage model below — so bugs and players share dash ×1.5 / ult ×2.0.)
-
-// Laptop Shield tuning
-const SHIELD_DURATION_MS = 3000; // shield expires after this if not consumed
-
-// Debug Roll tuning
-const ROLL_DISTANCE = 180;       // px traveled (shorter than dash)
-const ROLL_INVULN_MS = 600;      // invulnerability window after rolling
-
-// Deadline Break ult tuning
-// Ult — re-balanced 2026-06-01. With harsher leveling + smaller intern HP,
-// the old numbers made R a one-shot-KO button. Trimmed across the board:
-// smaller radius, lower per-level damage, lower cap, shorter stun, costlier
-// energy. Still feels devastating, but no longer auto-wins a fight.
-const ULT_RADIUS = 160;          // damage + knockback circle (was 200)
-// Ult damage (bugs AND players) now flows through the shared model via
-// PVP_SKILL_MUL.ult (×2.0) — no separate bug multiplier or per-level cap.
-// Ult PvP damage now flows through the shared PvP model (PVP_SKILL_MUL.ult +
-// matchup scaling) instead of its own per-level/cap constants — see below.
-const ULT_KNOCKBACK = 120;       // px push away from caster (unchanged)
-const ULT_STUN_MS = 1000;        // enemy stun window (was 1500)
-
-/** Shortest distance from point (px,py) to line segment (ax,ay)-(bx,by). */
-function distToSegment(px, py, ax, ay, bx, by) {
-  const dx = bx - ax, dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  if (len2 === 0) return Math.hypot(px - ax, py - ay);
-  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-}
-// (ENERGY_REGEN_PER_SEC redefined to 0 above — passive regen disabled)
-
-// ───── Unified damage model (rebalanced 2026-06-06; unified bugs+players 2026-06-06b) ─────
-// ONE base damage drives every attack, against bugs AND players alike:
-//
-//     base = PVP_BASE_BY_LEVEL[attackerLv] × PVP_SKILL_MUL[source]
-//
-//   • PVP_BASE_BY_LEVEL ≈ player maxHealth / ~4.8 per tier, so a SAME-level PvP
-//     fight is a consistent ~5 smash hits at every level.
-//   • PVP_SKILL_MUL rewards energy spent: smash < dash < ult (same for bugs).
-//
-// Players additionally take a level-gap MATCHUP modifier (bugs don't — they
-// have no level): bonus when an underdog hits UP, penalty when stomping DOWN,
-// clamped so neither extreme is degenerate. This fixes the old problems where
-// (a) energy skills did the same damage as a free smash, and (b) a Lv6 one-shot
-// a Lv1 while a Lv1 needed ~25 hits on a Lv6.
-//
-// Bug HP is scaled into this same domain (×12 vs the old 1–6) so bug TTK is
-// unchanged AND the floating damage numbers read on the same scale as PvP.
-const PVP_BASE_BY_LEVEL    = [12, 20, 28, 38, 48, 60]; // attacker level → base
-const PVP_SKILL_MUL        = { smash: 1.0, dash: 1.5, ult: 2.0 };
-const PVP_MATCHUP_PER_LEVEL = 0.20; // ± per level of (defenderLv − attackerLv)
-const PVP_MATCHUP_MIN      = 0.35;  // floor when stomping far-lower levels
-const PVP_MATCHUP_MAX      = 1.80;  // cap when an underdog hits far-higher levels
-
-function pvpBaseForLevel(lv) {
-  return PVP_BASE_BY_LEVEL[Math.max(0, Math.min(PVP_BASE_BY_LEVEL.length - 1, lv - 1))];
-}
-function pvpMatchupMul(attackerLv, defenderLv) {
-  const m = 1 + PVP_MATCHUP_PER_LEVEL * (defenderLv - attackerLv);
-  return Math.max(PVP_MATCHUP_MIN, Math.min(PVP_MATCHUP_MAX, m));
-}
-/** Shared base damage (no matchup). `source` ∈ {'smash','dash','ult'}. */
-function attackBase(attackerLv, source) {
-  const skillMul = PVP_SKILL_MUL[source] ?? PVP_SKILL_MUL.smash;
-  return pvpBaseForLevel(attackerLv) * skillMul;
-}
-/** Damage to a BUG — unified base, no level-gap modifier (bugs have no level). */
-function bugDamage(attacker, source) {
-  return Math.round(attackBase(attacker.level, source));
-}
-/** Damage to a PLAYER — same base, plus the level-gap matchup modifier. */
-function pvpDamage(attacker, defender, source) {
-  return Math.round(attackBase(attacker.level, source)
-    * pvpMatchupMul(attacker.level, defender.level));
-}
-
-const BROKEN_DURATION_MS   = 20000; // 20s — broken players take real time to recover
-
-// Health pickups (Personal Mode only — Phase B)
-const PICKUP_TARGET_COUNT  = 5;     // keep this many alive on the map
-const PICKUP_RESPAWN_MS    = 5000;  // spawn cadence when below target
-const PICKUP_ENERGY_GAIN   = 40;    // restored per pickup
-const PICKUP_RADIUS        = 26;    // collision radius
-const PLAYER_PICKUP_RADIUS = 28;    // player half-width for overlap
-
-function levelFromXP(xp) {
-  let lv = 1;
-  for (let i = 0; i < LEVEL_XP_THRESHOLDS.length; i++) {
-    if (xp >= LEVEL_XP_THRESHOLDS[i]) lv = i + 1;
-  }
-  return lv;
-}
-function maxEnergyForLevel(lv) {
-  return LEVEL_MAX_ENERGY[Math.max(0, Math.min(LEVEL_MAX_ENERGY.length - 1, lv - 1))];
-}
-function maxHealthForLevel(lv) {
-  return LEVEL_MAX_HEALTH[Math.max(0, Math.min(LEVEL_MAX_HEALTH.length - 1, lv - 1))];
-}
-
-// ---------------- schema ----------------
-class Player extends Schema {
-  constructor() {
-    super();
-    this.x = ARENA_W / 2;
-    this.y = ARENA_H / 2;
-    this.name = '';
-    this.color = 0xffffff;
-    this.score = 0;
-    this.combo = 0;
-    this.action = 'idle';
-    this.action_seq = 0;
-    // Growth system
-    this.level = 1;
-    this.xp = 0;
-    this.energy = LEVEL_MAX_ENERGY[0];
-    this.maxEnergy = LEVEL_MAX_ENERGY[0];
-    // Health = damage receiver; defeat (broken) triggers at 0
-    this.health = LEVEL_MAX_HEALTH[0];
-    this.maxHealth = LEVEL_MAX_HEALTH[0];
-    this.broken = false;
-    this.broken_seq = 0; // bumps every time broken state flips; clients use this to play VFX
-    // MOBA skill cooldowns (Date.now() timestamps; 0 = ready)
-    this.cdQ = 0;
-    this.cdW = 0;
-    this.cdE = 0;
-    this.cdR = 0;
-    // Skill effect flags (used by Phases 3-5)
-    this.shielded = false;
-    this.invulnUntil = 0;
-    this.stunnedUntil = 0;
-  }
-}
-type('number')(Player.prototype, 'x');
-type('number')(Player.prototype, 'y');
-type('string')(Player.prototype, 'name');
-type('uint32')(Player.prototype, 'color');
-type('uint32')(Player.prototype, 'score');
-type('uint16')(Player.prototype, 'combo');
-type('string')(Player.prototype, 'action');
-type('uint32')(Player.prototype, 'action_seq');
-type('uint8')(Player.prototype, 'level');
-type('uint32')(Player.prototype, 'xp');
-type('uint16')(Player.prototype, 'energy');
-type('uint16')(Player.prototype, 'maxEnergy');
-type('uint16')(Player.prototype, 'health');
-type('uint16')(Player.prototype, 'maxHealth');
-type('boolean')(Player.prototype, 'broken');
-type('uint32')(Player.prototype, 'broken_seq');
-type('number')(Player.prototype, 'cdQ');
-type('number')(Player.prototype, 'cdW');
-type('number')(Player.prototype, 'cdE');
-type('number')(Player.prototype, 'cdR');
-type('boolean')(Player.prototype, 'shielded');
-type('number')(Player.prototype, 'invulnUntil');
-type('number')(Player.prototype, 'stunnedUntil');
-
-class Bug extends Schema {
-  constructor() {
-    super();
-    this.x = 0;
-    this.y = 0;
-    this.kind = 'bug-null';
-    this.hp = 1;
-    this.alive = true;
-    this.hidden = false;
-    this.hit_seq = 0; // bumped on every non-fatal hit so client can flash
-  }
-}
-type('number')(Bug.prototype, 'x');
-type('number')(Bug.prototype, 'y');
-type('string')(Bug.prototype, 'kind');
-type('uint8')(Bug.prototype, 'hp');
-type('boolean')(Bug.prototype, 'alive');
-type('uint32')(Bug.prototype, 'hit_seq');
-type('boolean')(Bug.prototype, 'hidden');
-
-class HealthPickup extends Schema {
-  constructor() {
-    super();
-    this.x = 0;
-    this.y = 0;
-    this.alive = true;
-  }
-}
-type('number')(HealthPickup.prototype, 'x');
-type('number')(HealthPickup.prototype, 'y');
-type('boolean')(HealthPickup.prototype, 'alive');
-
-class ToxicCloud extends Schema {
-  constructor() {
-    super();
-    this.x = 0;
-    this.y = 0;
-    this.expiresAt = 0; // Date.now() ms
-  }
-}
-type('number')(ToxicCloud.prototype, 'x');
-type('number')(ToxicCloud.prototype, 'y');
-type('number')(ToxicCloud.prototype, 'expiresAt');
-
-class Obstacle extends Schema {
-  constructor() {
-    super();
-    this.x = 0; this.y = 0; this.w = 0; this.h = 0;
-    this.kind = 'code-block';
-    this.hp = 4;
-    this.maxHp = 4;
-    this.hit_seq = 0; // bumped each time the obstacle takes damage (client flash trigger)
-  }
-}
-type('number')(Obstacle.prototype, 'x');
-type('number')(Obstacle.prototype, 'y');
-type('number')(Obstacle.prototype, 'w');
-type('number')(Obstacle.prototype, 'h');
-type('string')(Obstacle.prototype, 'kind');
-type('uint8')(Obstacle.prototype, 'hp');
-type('uint8')(Obstacle.prototype, 'maxHp');
-type('uint32')(Obstacle.prototype, 'hit_seq');
-
-class ArenaState extends Schema {
-  constructor() {
-    super();
-    this.players = new MapSchema();
-    this.bugs = new MapSchema();
-    this.pickups = new MapSchema(); // health pickups (Personal Mode)
-    this.clouds  = new MapSchema(); // toxic death clouds (Phase C)
-    this.obstacles = new MapSchema(); // static map obstacles (collision rects)
-    // Personal Mode is a persistent online world — no round timer, no results
-    // screen, no auto-restart. `phase` stays at 'playing' forever; `timeLeftMs`
-    // = -1 is the sentinel telling clients to show "infinite" instead of a
-    // countdown. (Future Team Mode will live in its own room class with
-    // real rounds + stages.)
-    this.phase = 'playing';
-    this.timeLeftMs = -1;
-    this.round = 1; // session-counter; never increments in Personal Mode
-    this.winnerName = '';  // unused in Personal Mode
-    this.winnerScore = 0;  // unused in Personal Mode
-    this.friendlyFire = true; // Personal Mode = FFA
-  }
-}
-type({ map: Player })(ArenaState.prototype, 'players');
-type({ map: Bug })(ArenaState.prototype, 'bugs');
-type({ map: HealthPickup })(ArenaState.prototype, 'pickups');
-type({ map: ToxicCloud })(ArenaState.prototype, 'clouds');
-type({ map: Obstacle })(ArenaState.prototype, 'obstacles');
-type('string')(ArenaState.prototype, 'phase');
-type('int32')(ArenaState.prototype, 'timeLeftMs');
-type('uint16')(ArenaState.prototype, 'round');
-type('string')(ArenaState.prototype, 'winnerName');
-type('uint32')(ArenaState.prototype, 'winnerScore');
-type('boolean')(ArenaState.prototype, 'friendlyFire');
-
-// 16-color palette so up to 32 players still get visually distinct hues
-// (colors cycle after 16 — acceptable for a chaotic 32-player free-for-all).
-const PALETTE = [
-  0xff6b6b, 0x4ecdc4, 0xffd23f, 0x7ed957, 0x7ec8ff, 0xff8a3d, 0xff66ff, 0x39c2ff,
-  0xb084ff, 0xff5e94, 0x00d4aa, 0xffa84a, 0x6cffb6, 0xff9bd1, 0x8aff52, 0x52d0ff,
-];
-// Bug catalog — distinct personalities per kind. HP / speed / spawn weight
-// tuned 2026-05-31 so harder kinds are rarer + reward more score on kill.
-// Phase B/C/D will layer on unique behaviors (beetle attacks, toxic cloud, robot charge).
-// HP is in the UNIFIED damage domain (×12 vs the old 1–6) so a player's smash
-// deals the same numbers to bugs as to players, while bug TTK is unchanged: a
-// fresh Lv1 (smash 12) still needs ~1 hit on a ladybug … ~6 on a robot.
-const BUG_KINDS = [
-  { kind: 'bug-ladybug', hp: 12, weight: 7, speed: 35  }, // basic — most common
-  { kind: 'bug-null',    hp: 24, weight: 4, speed: 45  }, // common, slightly tougher
-  { kind: 'bug-race',    hp: 24, weight: 2, speed: 130 }, // speedster
-  { kind: 'bug-beetle',  hp: 36, weight: 2, speed: 55  }, // tanky aggressor
-  { kind: 'bug-toxic',   hp: 48, weight: 1, speed: 60  }, // tanky, faster
-  { kind: 'bug-scarab',  hp: 60, weight: 1, speed: 35  }, // armored
-  { kind: 'bug-robot',   hp: 72, weight: 1, speed: 75  }, // boss-tier
-];
-const BUG_KIND_SCORE = {
-  'bug-ladybug': 5,
-  'bug-null':    8,
-  'bug-race':    15,
-  'bug-beetle':  20,
-  'bug-toxic':   25,
-  'bug-scarab':  30,
-  'bug-robot':   50,
-};
-
-function rollBugKind() {
-  const total = BUG_KINDS.reduce((s, b) => s + b.weight, 0);
-  let r = Math.random() * total;
-  for (const b of BUG_KINDS) { r -= b.weight; if (r <= 0) return b; }
-  return BUG_KINDS[0];
-}
-
-// ── Map obstacles ─────────────────────────────────────────────────────────
-// Initial fixed layout + dynamic respawn that maintains a target count.
-const OBSTACLE_LAYOUT = [
-  // Corner clusters
-  { x:  400, y:  300, w: 220, h:  80, kind: 'code-block' },
-  { x:  720, y:  500, w: 160, h: 160, kind: 'desk' },
-  { x: 1100, y:  340, w: 180, h: 100, kind: 'whiteboard' },
-  { x: 4900, y:  300, w: 220, h:  80, kind: 'code-block' },
-  { x: 5200, y:  500, w: 160, h: 160, kind: 'desk' },
-  { x: 4700, y:  720, w: 180, h: 100, kind: 'whiteboard' },
-  { x:  400, y: 2900, w: 220, h:  80, kind: 'code-block' },
-  { x:  720, y: 2700, w: 160, h: 160, kind: 'desk' },
-  { x: 1100, y: 2900, w: 180, h: 100, kind: 'whiteboard' },
-  { x: 4900, y: 2900, w: 220, h:  80, kind: 'code-block' },
-  { x: 5200, y: 2700, w: 160, h: 160, kind: 'desk' },
-  { x: 4700, y: 2800, w: 180, h: 100, kind: 'whiteboard' },
-  // Mid-map walls
-  { x: 2400, y: 1100, w: 320, h:  60, kind: 'code-block' },
-  { x: 3280, y: 1100, w: 320, h:  60, kind: 'code-block' },
-  { x: 2400, y: 2240, w: 320, h:  60, kind: 'code-block' },
-  { x: 3280, y: 2240, w: 320, h:  60, kind: 'code-block' },
-  { x: 1900, y: 1600, w: 180, h: 100, kind: 'whiteboard' },
-  { x: 3920, y: 1600, w: 180, h: 100, kind: 'whiteboard' },
-  // Mid-edge structures
-  { x: 1700, y:  900, w: 160, h: 130, kind: 'desk' },
-  { x: 4140, y:  900, w: 160, h: 130, kind: 'desk' },
-  { x: 1700, y: 2400, w: 160, h: 130, kind: 'desk' },
-  { x: 4140, y: 2400, w: 160, h: 130, kind: 'desk' },
-];
-
-// Dynamic respawn: keeps the map populated as obstacles are destroyed.
-const OBSTACLE_TARGET = 26;       // maintain ~this many at all times
-const OBSTACLE_RESPAWN_MS = 3500; // check + spawn cadence
-const OBSTACLE_VARIANTS = [
-  { w: 220, h:  80, kind: 'code-block' },
-  { w: 320, h:  60, kind: 'code-block' },
-  { w: 160, h: 100, kind: 'code-block' },
-  { w: 160, h: 160, kind: 'desk' },
-  { w: 200, h: 120, kind: 'desk' },
-  { w: 140, h: 140, kind: 'desk' },
-  { w: 180, h: 100, kind: 'whiteboard' },
-  { w: 240, h:  90, kind: 'whiteboard' },
-];
-const OBSTACLE_MIN_DIST_FROM_PLAYER = 220; // px — don't spawn on top of someone
-const OBSTACLE_PADDING = 30;               // px between obstacles
-
-/** Does point (x, y) sit inside the given obstacle? */
-function pointInRect(x, y, ob) {
-  return x >= ob.x && x <= ob.x + ob.w && y >= ob.y && y <= ob.y + ob.h;
-}
-
-/** Return the first obstacle the point sits inside, or null. */
-function firstObstacleAt(state, x, y) {
-  let hit = null;
-  state.obstacles.forEach((ob) => { if (!hit && pointInRect(x, y, ob)) hit = ob; });
-  return hit;
-}
-
-/** Slide-along clamp: given a desired movement from (fromX, fromY) to (toX, toY),
- *  resolve obstacle collisions by attempting the move axis-by-axis. Returns the
- *  final position. Skips clamping entirely if `passThrough` is true. */
-function clampToFreeSpace(state, fromX, fromY, toX, toY, passThrough) {
-  if (passThrough) return { x: toX, y: toY };
-  // Try X movement first; if it lands inside an obstacle, revert X.
-  let x = toX, y = fromY;
-  if (firstObstacleAt(state, x, y)) x = fromX;
-  // Then try Y movement from the (possibly reverted) X.
-  let y2 = toY;
-  if (firstObstacleAt(state, x, y2)) y2 = fromY;
-  return { x, y: y2 };
+/** Finite unit vector from untrusted (dirX, dirY); falls back to (1, 0). */
+function unitDir(rawX, rawY) {
+  const fx = Number(rawX), fy = Number(rawY);
+  let dx = Number.isFinite(fx) ? fx : 0;
+  let dy = Number.isFinite(fy) ? fy : 0;
+  const len = Math.hypot(dx, dy);
+  if (!Number.isFinite(len) || len < 0.01) return { dx: 1, dy: 0 };
+  return { dx: dx / len, dy: dy / len };
 }
 
 // ---------------- room ----------------
@@ -467,9 +70,8 @@ export class ArenaRoom extends Room {
     this.maxClients = 32;
     this.setState(new ArenaState());
     this._seedObstacles();
-    // Patch rate (12.5 Hz) is intentionally slower than the AI sim tick (50 ms / 20 Hz).
+    // Patch rate (12.5 Hz) is intentionally slower than the AI sim tick.
     // Server simulates bug movement smoothly; client lerps between snapshots.
-    // Halves network traffic + client deserialize cost. Bumped from 50 → 80 ms 2026-05-30.
     this.setPatchRate(80);
 
     this._nextBugId = 1;
@@ -478,238 +80,40 @@ export class ArenaRoom extends Room {
     this._nextPickupId = 1;
     this._lastPickupSpawnAt = 0;
     this._nextCloudId = 1;
+    this._nextColorIdx = 0;
     // Off-schema: id -> nextDamageAt (so cloud doesn't damage every server tick)
     this._cloudDamageAt = new Map();
     // Off-schema bug AI bookkeeping: id -> { vx, vy, spawnedAt, headingX, headingY, hideUntil }
     this._bugAI = new Map();
     // Off-schema per-bug contact-attack cooldown: id -> nextAttackAllowed ms
     this._bugAttackCD = new Map();
-    // Off-schema player bookkeeping: sessionId -> { lastKillAt }
+    // Off-schema player bookkeeping: sessionId -> { lastKillAt, koStreak, kos }
     this._playerState = new Map();
     // Off-schema chat rate-limit: sessionId -> last chat timestamp (ms)
     this._lastChatAt = new Map();
     // Recent chat buffer so players who join later see the conversation so far.
     this._chatLog = [];
     this._chatLogMax = 30;
+    this._crownCheckAt = 0;
+    this._lastCrownFeedAt = 0;
+    this._crownedNoticeAt = new Map(); // sid -> last personal "you're Tech Lead" ms
 
-    this.onMessage('move', (client, msg) => {
-      if (this.state.phase !== 'playing') return;
-      const p = this.state.players.get(client.sessionId);
-      if (!p) return;
-      if (Date.now() < (p.stunnedUntil || 0)) return; // stunned — can't move
-      if (typeof msg?.x === 'number' && typeof msg?.y === 'number') {
-        const toX = Math.max(0, Math.min(ARENA_W, msg.x));
-        const toY = Math.max(0, Math.min(ARENA_H, msg.y));
-        // Slide-along obstacle collision (Phase A — map obstacles).
-        // Q dash + E jump get a 350 ms pass-through window after cast.
-        const passThrough = Date.now() < (p._passThroughUntil || 0);
-        const out = clampToFreeSpace(this.state, p.x, p.y, toX, toY, passThrough);
-        p.x = out.x;
-        p.y = out.y;
-      }
-    });
+    this.bots = new BotDirector(this);
+    this.events = new EventDirector(this);
 
-    // ───── MOBA skill cast — energy-gated, broken-gated ─────
-    this.onMessage('castSkill', (client, msg) => {
-      if (this.state.phase !== 'playing') return;
-      const p = this.state.players.get(client.sessionId);
-      if (!p || p.broken) return;
-      if (Date.now() < (p.stunnedUntil || 0)) return; // stunned — can't cast
-      const slot = msg?.slot;
-      if (slot !== 'q' && slot !== 'w' && slot !== 'e' && slot !== 'r') return;
-      const cost = SKILL_ENERGY[slot];
-      if (p.energy < cost) return;
-      p.energy -= cost;
-
-      // Animation broadcast — each slot reuses a matching pose
-      const kindForAnim = (slot === 'q') ? 'punch'
-                       :  (slot === 'w') ? 'parry'
-                       :  (slot === 'e') ? 'jump'
-                       :                   'kick';
-      p.action = kindForAnim;
-      p.action_seq = (p.action_seq + 1) >>> 0;
-      // Q dash + E jump pass through obstacles — open a brief server-side window
-      // during which 'move' handler skips the obstacle clamp.
-      if (slot === 'q' || slot === 'e') {
-        p._passThroughUntil = Date.now() + 350;
-      }
-      const animMs = (slot === 'r') ? 500 : (slot === 'w' ? 620 : 320);
-      this.clock.setTimeout(() => {
-        const cur = this.state.players.get(client.sessionId);
-        if (cur && cur.action === kindForAnim) cur.action = 'idle';
-      }, animMs);
-
-      // ───── Phase 5: Deadline Break ult mechanic ─────
-      if (slot === 'r') {
-        const cx = p.x, cy = p.y;
-        const r2 = ULT_RADIUS * ULT_RADIUS;
-        const bugDmg = bugDamage(p, 'ult');
-        const nowMs = Date.now();
-        // 1. Bugs in range — damage + knockback (instant teleport)
-        this.state.bugs.forEach((bug, id) => {
-          if (!bug.alive || bug.hidden) return;
-          const dx = bug.x - cx, dy = bug.y - cy;
-          if (dx * dx + dy * dy <= r2) {
-            this._applyDashHit(p, bug, id, bugDmg);
-            if (bug.alive) { // only knock back survivors
-              const d = Math.hypot(dx, dy) || 1;
-              bug.x = Math.max(20, Math.min(ARENA_W - 20, bug.x + (dx / d) * ULT_KNOCKBACK));
-              bug.y = Math.max(40, Math.min(ARENA_H - 40, bug.y + (dy / d) * ULT_KNOCKBACK));
-            }
-          }
-        });
-        // 2. Enemy players in range — damage + knockback + stun
-        this.state.players.forEach((other, sid) => {
-          if (sid === client.sessionId || other.broken) return;
-          const dx = other.x - cx, dy = other.y - cy;
-          if (dx * dx + dy * dy <= r2) {
-            this._applyPvpHit(p, other, sid, 'ult');
-            if (!other.broken) {
-              const d = Math.hypot(dx, dy) || 1;
-              other.x = Math.max(20, Math.min(ARENA_W - 20, other.x + (dx / d) * ULT_KNOCKBACK));
-              other.y = Math.max(40, Math.min(ARENA_H - 40, other.y + (dy / d) * ULT_KNOCKBACK));
-              other.stunnedUntil = nowMs + ULT_STUN_MS;
-            }
-          }
-        });
-      }
-
-      // ───── Phase 4: Debug Roll mechanic ─────
-      if (slot === 'e') {
-        let dx = Number(msg?.dirX) || 0;
-        let dy = Number(msg?.dirY) || 0;
-        const dlen = Math.hypot(dx, dy);
-        if (dlen < 0.01) { dx = 1; dy = 0; } else { dx /= dlen; dy /= dlen; }
-        p.x = Math.max(20, Math.min(ARENA_W - 20, p.x + dx * ROLL_DISTANCE));
-        p.y = Math.max(40, Math.min(ARENA_H - 40, p.y + dy * ROLL_DISTANCE));
-        p.invulnUntil = Date.now() + ROLL_INVULN_MS;
-      }
-
-      // ───── Phase 3: Laptop Shield mechanic ─────
-      if (slot === 'w') {
-        p.shielded = true;
-        const sid = client.sessionId;
-        this.clock.setTimeout(() => {
-          const cur = this.state.players.get(sid);
-          if (cur && cur.shielded) cur.shielded = false; // natural expiry
-        }, SHIELD_DURATION_MS);
-      }
-
-      // ───── Phase 2: Bug Dash mechanic — bugs + PvP along the line ─────
-      if (slot === 'q') {
-        let dx = Number(msg?.dirX) || 0;
-        let dy = Number(msg?.dirY) || 0;
-        const dlen = Math.hypot(dx, dy);
-        if (dlen < 0.01) { dx = 1; dy = 0; } else { dx /= dlen; dy /= dlen; }
-        const startX = p.x, startY = p.y;
-        const endX = Math.max(20, Math.min(ARENA_W - 20, p.x + dx * DASH_DISTANCE));
-        const endY = Math.max(40, Math.min(ARENA_H - 40, p.y + dy * DASH_DISTANCE));
-        p.x = endX;
-        p.y = endY;
-        // Bugs in line: dash-tier unified damage (×1.5 base)
-        const bugDmg = bugDamage(p, 'dash');
-        this.state.bugs.forEach((bug, id) => {
-          if (!bug.alive || bug.hidden) return;
-          if (distToSegment(bug.x, bug.y, startX, startY, endX, endY) <= DASH_HIT_RADIUS) {
-            this._applyDashHit(p, bug, id, bugDmg);
-          }
-        });
-        // Enemy players in line: dash-tier PvP damage (rewards the energy spend)
-        this.state.players.forEach((other, sid) => {
-          if (sid === client.sessionId || other.broken) return;
-          if (distToSegment(other.x, other.y, startX, startY, endX, endY) <= DASH_HIT_RADIUS) {
-            this._applyPvpHit(p, other, sid, 'dash');
-          }
-        });
-      }
-    });
-
-    // Action message — broadcasts a transient animation state (no target required).
-    // Used for jump (movement-only) and for triggering attack poses.
-    this.onMessage('action', (client, msg) => {
-      if (this.state.phase !== 'playing') return;
-      const p = this.state.players.get(client.sessionId);
-      if (!p) return;
-      const a = msg?.kind;
-      if (a !== 'jump' && a !== 'punch' && a !== 'kick' && a !== 'smash' && a !== 'parry') return;
-      p.action = a;
-      p.action_seq = (p.action_seq + 1) >>> 0;
-      // Auto-clear the action after a short window so other clients return to idle
-      const ms = (a === 'parry') ? 620 : (a === 'jump' ? 420 : 260);
-      this.clock.setTimeout(() => {
-        // Only clear if no newer action has come in
-        const cur = this.state.players.get(client.sessionId);
-        if (cur && cur.action === a) cur.action = 'idle';
-      }, ms);
-    });
-
-    this.onMessage('smash', (client, msg) => {
-      if (this.state.phase !== 'playing') return;
-      const p = this.state.players.get(client.sessionId);
-      if (!p) return;
-      // Broken or stunned stickymen can't attack
-      if (p.broken) return;
-      if (Date.now() < (p.stunnedUntil || 0)) return;
-      const kind = msg?.kind || 'smash';
-
-      // Every smash also damages any obstacles within reach. Breaks open
-      // "bug nests" — destroyed obstacles spawn 2–4 bugs at the rubble.
-      this._trySmashObstacles(p);
-
-      // Energy gate
-      const cost = ENERGY_COST[kind] ?? 0;
-      if (p.energy < cost) return;
-
-      // Kick is an AOE spin — damages every bug within reach on both sides.
-      if (kind === 'kick') {
-        p.energy = Math.max(0, p.energy - cost);
-        const reach = 88;
-        const reach2 = reach * reach;
-        const targets = [];
-        this.state.bugs.forEach((bug, id) => {
-          if (!bug.alive || bug.hidden) return;
-          const dx = p.x - bug.x, dy = p.y - bug.y;
-          if (dx * dx + dy * dy <= reach2) targets.push({ id, bug });
-        });
-        for (const { id, bug } of targets) {
-          this._applyHit(client.sessionId, p, id, bug);
-        }
-        // Kick also nicks any other player within range (PvP AOE)
-        this.state.players.forEach((other, sid) => {
-          if (sid === client.sessionId || other.broken) return;
-          const dx = p.x - other.x, dy = p.y - other.y;
-          if (dx * dx + dy * dy <= reach2) this._applyPvpHit(p, other, sid);
-        });
-        // Energy depletion no longer triggers broken — health does. Self-attacks
-        // just leave the attacker temporarily without resources to swing again.
-        return;
-      }
-
-      if (msg?.targetSid) {
-        const other = this.state.players.get(msg.targetSid);
-        if (!other || other.broken) return;
-        const dx = p.x - other.x, dy = p.y - other.y;
-        const reach = (kind === 'punch') ? 112 : SMASH_RADIUS;
-        if (Math.hypot(dx, dy) > reach) return;
-        p.energy = Math.max(0, p.energy - cost);
-        this._applyPvpHit(p, other, msg.targetSid);
-        return;
-      }
-
-      const bug = this.state.bugs.get(msg?.id);
-      if (!bug || !bug.alive || bug.hidden) return;
-      const dx = p.x - bug.x, dy = p.y - bug.y;
-      const d = Math.hypot(dx, dy);
-      const reach = (kind === 'punch') ? 112 : SMASH_RADIUS;
-      if (d > reach) return;
-
-      p.energy = Math.max(0, p.energy - cost);
-      this._applyHit(client.sessionId, p, msg.id, bug);
-    });
+    // ── Client intent → shared handlers (bots call the same _do* methods) ──
+    this.onMessage('move',      (client, msg) => this._doMove(client.sessionId, msg));
+    this.onMessage('castSkill', (client, msg) => this._doCastSkill(client.sessionId, msg));
+    this.onMessage('action',    (client, msg) => this._doAction(client.sessionId, msg));
+    this.onMessage('smash',     (client, msg) => this._doSmash(client.sessionId, msg));
 
     this.onMessage('setName', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
       if (p && typeof msg?.name === 'string') p.name = msg.name.slice(0, 16);
+    });
+    this.onMessage('setHat', (client, msg) => {
+      const p = this.state.players.get(client.sessionId);
+      if (p) p.hat = sanitizeHat(msg?.hat);
     });
 
     // Chat — sanitize, rate-limit, broadcast, and buffer for late joiners.
@@ -723,261 +127,829 @@ export class ArenaRoom extends Room {
       const last = this._lastChatAt.get(client.sessionId) || 0;
       if (now - last < 600) return; // ~1.6 msgs/sec max — basic spam guard
       this._lastChatAt.set(client.sessionId, now);
-      const name = p.name || 'anon';
-      this.broadcast('chat', { sid: client.sessionId, name, text });
-      this._chatLog.push({ name, text });
-      if (this._chatLog.length > this._chatLogMax) this._chatLog.shift();
+      this._broadcastChat({ sid: client.sessionId, name: p.name || 'anon', text });
+      this.bots.onHumanChat(client.sessionId, text);
     });
 
-    // A freshly-joined client requests the recent history once its handlers are
-    // wired up (requesting avoids a race with onJoin message delivery).
-    this.onMessage('getChatHistory', (client) => {
+    // A freshly-joined client sends this once its handlers are wired up
+    // (requesting avoids a race with onJoin message delivery). Answered ONCE
+    // per client — each reply is ~6 KB, so an unthrottled loop is a memory DoS.
+    const eventTable = Object.fromEntries(Object.entries(WORLD_EVENTS)
+      .map(([id, d]) => [id, { title: d.title, sub: d.sub, color: d.color }]));
+    this.onMessage('hello', (client) => {
+      client.userData = client.userData || {};
+      if (client.userData.helloed) return;
+      client.userData.helloed = true;
+      client.send('welcome', { serverNow: Date.now(), events: eventTable });
       if (this._chatLog.length) client.send('chatHistory', this._chatLog);
     });
+    this.onMessage('getChatHistory', (client) => {  // legacy clients — once per client
+      client.userData = client.userData || {};
+      if (client.userData.historySent) return;
+      client.userData.historySent = true;
+      if (this._chatLog.length) client.send('chatHistory', this._chatLog);
+    });
+
+    // Dev-only: force a world event (requires BUG_SMASH_DEBUG=1; own keys only —
+    // an inherited key like 'constructor' used to crash the whole process).
+    if (DEBUG_HOOKS) {
+      this.onMessage('debug', (_client, msg) => {
+        if (msg?.cmd === 'event' && Object.hasOwn(WORLD_EVENTS, msg.id)) this.events.start(msg.id);
+        if (msg?.cmd === 'endEvent') this.events.end('timeout');
+      });
+      console.log('[ArenaRoom] debug hooks ENABLED (BUG_SMASH_DEBUG=1)');
+    } else {
+      // Colyseus drops a client that sends an unregistered type — ignore `debug` quietly instead.
+      this.onMessage('debug', () => {});
+    }
 
     this.setSimulationInterval((dt) => this._tick(dt));
     console.log('[ArenaRoom] created', this.roomId);
   }
 
-  // -------- simulation tick --------
-  _tick(dtMs) {
-    // Personal Mode: never decrement timeLeftMs (stays at -1 sentinel) and
-    // never leave 'playing' phase. Tick always runs the playing-phase code.
-    if (this.state.phase === 'playing') {
-      // Spawn cadence — slows when many players are around (because their
-      // bug-drops on defeat are seeding the map for us).
-      this._lastSpawnAt += dtMs;
-      const aliveBugs = this._countAliveBugs();
-      const playerCount = this.state.players.size;
-      const spawnDelay = playerCount > 4 ? 850 : SPAWN_EVERY_MS;
-      if (aliveBugs < MAX_BUGS && this._lastSpawnAt > spawnDelay) {
-        this._lastSpawnAt = 0;
-        this._spawnBug();
-      }
+  // ───────────────────────── population helpers ─────────────────────────
+  humanCount() { return Math.max(0, this.state.players.size - this.bots.count); }
 
-      // Per-player ticks: combo decay + energy regen + pickup collection
-      const now = Date.now();
-      const dtSec = dtMs / 1000;
-      this.state.players.forEach((p, sid) => {
-        const ps = this._playerState.get(sid);
-        if (p.combo > 0 && ps && (now - ps.lastKillAt) > COMBO_TIMEOUT_MS) {
-          p.combo = 0;
-        }
-        if (!p.broken && p.energy < p.maxEnergy) {
-          p.energy = Math.min(p.maxEnergy, p.energy + ENERGY_REGEN_PER_SEC * dtSec);
-        }
-        // Pickup overlap (broken players skip — proposal §Recovery Restrictions)
-        if (!p.broken) this._tryCollectPickups(p);
-      });
-
-      // Health pickup spawn cadence — maintain PICKUP_TARGET_COUNT alive
-      this._lastPickupSpawnAt += dtMs;
-      if (this.state.pickups.size < PICKUP_TARGET_COUNT && this._lastPickupSpawnAt > PICKUP_RESPAWN_MS) {
-        this._lastPickupSpawnAt = 0;
-        this._spawnPickup();
-      }
-
-      // Bug AI + movement
-      const dt = dtMs / 1000;
-      const players = [];
-      this.state.players.forEach((p, sid) => players.push({ p, sid }));
-      const wallNow = Date.now();
-
-      this.state.bugs.forEach((bug, id) => {
-        if (!bug.alive) return;
-        const ai = this._bugAI.get(id);
-        if (!ai) return;
-
-        // Expire 'hidden' state — bug pops back into play
-        if (bug.hidden && ai.hideUntil && now > ai.hideUntil) {
-          bug.hidden = false;
-          ai.hideUntil = 0;
-        }
-        // Hidden bugs don't move + can't be hit
-        if (bug.hidden) return;
-
-        // Find nearest non-broken player (target for pursuit + flee reference)
-        let nearest = null, nearestSid = null, nearestD2 = Infinity;
-        for (const { p, sid } of players) {
-          if (p.broken) continue;
-          const dx = p.x - bug.x, dy = p.y - bug.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < nearestD2) { nearestD2 = d2; nearest = p; nearestSid = sid; }
-        }
-
-        const attackCfg = BUG_ATTACK[bug.kind];
-        const nearestD = Math.sqrt(nearestD2);
-
-        // ───── Aggressive AI (beetle, robot) ─────
-        if (attackCfg && nearest && nearestD < attackCfg.aggro) {
-          // Contact damage when in reach + cooldown elapsed
-          if (nearestD < attackCfg.reach) {
-            const cdAt = this._bugAttackCD.get(id) || 0;
-            if (wallNow >= cdAt) {
-              this._bugAttackCD.set(id, wallNow + attackCfg.cooldownMs);
-              this._applyBugContactDamage(nearest, nearestSid, attackCfg.dmg);
-            }
-          }
-          // Pursue: head straight at the target (robot skips lerp for relentless feel)
-          const px = nearest.x - bug.x, py = nearest.y - bug.y;
-          const pl = Math.hypot(px, py) || 1;
-          const tx = px / pl, ty = py / pl;
-          if (bug.kind === 'bug-robot') {
-            ai.headingX = tx; ai.headingY = ty;
-          } else {
-            ai.headingX += (tx - ai.headingX) * Math.min(1, TURN_LERP * dt);
-            ai.headingY += (ty - ai.headingY) * Math.min(1, TURN_LERP * dt);
-          }
-          const hl = Math.hypot(ai.headingX, ai.headingY) || 1;
-          ai.headingX /= hl; ai.headingY /= hl;
-          const chaseSpeed = ai.baseSpeed * attackCfg.chaseMul;
-          const _ox = bug.x, _oy = bug.y;
-          const _nx = bug.x + ai.headingX * chaseSpeed * dt;
-          const _ny = bug.y + ai.headingY * chaseSpeed * dt;
-          const _c = clampToFreeSpace(this.state, _ox, _oy, _nx, _ny, false);
-          bug.x = _c.x; bug.y = _c.y;
-          // Wall clamp + age check still apply below
-          if (bug.x < 30)         { bug.x = 30; ai.headingX = Math.abs(ai.headingX); }
-          if (bug.x > ARENA_W-30) { bug.x = ARENA_W - 30; ai.headingX = -Math.abs(ai.headingX); }
-          if (bug.y < 60)         { bug.y = 60; ai.headingY = Math.abs(ai.headingY); }
-          if (bug.y > ARENA_H-60) { bug.y = ARENA_H - 60; ai.headingY = -Math.abs(ai.headingY); }
-          if (Date.now() - ai.spawnedAt > BUG_LIFETIME_MS) {
-            this.state.bugs.delete(id);
-            this._bugAI.delete(id);
-            this._bugAttackCD.delete(id);
-            this._bugAttackCD.delete(id);
-          }
-          return; // skip the flee/wander block below
-        }
-
-        // ───── Default flee/wander ─────
-        const fleeR2 = FLEE_RADIUS_PX * FLEE_RADIUS_PX;
-        let tx, ty, speed;
-        if (nearest && nearestD2 < fleeR2) {
-          const dx = bug.x - nearest.x, dy = bug.y - nearest.y;
-          const d = Math.sqrt(dx * dx + dy * dy) || 1;
-          tx = dx / d; ty = dy / d;
-          speed = ai.baseSpeed * FLEE_SPEED_MUL;
-        } else {
-          ai.nextWanderAt -= dtMs;
-          if (ai.nextWanderAt <= 0) {
-            const a = Math.random() * Math.PI * 2;
-            ai.wanderX = Math.cos(a);
-            ai.wanderY = Math.sin(a);
-            ai.nextWanderAt = 1500 + Math.random() * 1500;
-          }
-          tx = ai.wanderX; ty = ai.wanderY;
-          speed = ai.baseSpeed * 0.6;
-        }
-
-        // Lerp heading toward target dir for smoother motion
-        ai.headingX = ai.headingX + (tx - ai.headingX) * Math.min(1, TURN_LERP * dt);
-        ai.headingY = ai.headingY + (ty - ai.headingY) * Math.min(1, TURN_LERP * dt);
-        const hl = Math.hypot(ai.headingX, ai.headingY) || 1;
-        ai.headingX /= hl; ai.headingY /= hl;
-
-        // Apply movement (obstacle-clamped)
-        const _ox = bug.x, _oy = bug.y;
-        const _nx = bug.x + ai.headingX * speed * dt;
-        const _ny = bug.y + ai.headingY * speed * dt;
-        const _c = clampToFreeSpace(this.state, _ox, _oy, _nx, _ny, false);
-        bug.x = _c.x; bug.y = _c.y;
-        // Bounce off arena walls
-        if (bug.x < 30)         { bug.x = 30; ai.headingX = Math.abs(ai.headingX); }
-        if (bug.x > ARENA_W-30) { bug.x = ARENA_W - 30; ai.headingX = -Math.abs(ai.headingX); }
-        if (bug.y < 60)         { bug.y = 60; ai.headingY = Math.abs(ai.headingY); }
-        if (bug.y > ARENA_H-60) { bug.y = ARENA_H - 60; ai.headingY = -Math.abs(ai.headingY); }
-
-        // Aging
-        if (Date.now() - ai.spawnedAt > BUG_LIFETIME_MS) {
-          this.state.bugs.delete(id);
-          this._bugAI.delete(id);
-          this._bugAttackCD.delete(id);
-        }
-      });
-
-      // ───── Toxic clouds (Phase C) ─────
-      const r2Cloud = TOXIC_CLOUD_RADIUS * TOXIC_CLOUD_RADIUS;
-      this.state.clouds.forEach((cloud, cid) => {
-        if (wallNow >= cloud.expiresAt) {
-          this.state.clouds.delete(cid);
-          this._cloudDamageAt.delete(cid);
-          return;
-        }
-        const nextAt = this._cloudDamageAt.get(cid) || 0;
-        if (wallNow >= nextAt) {
-          this._cloudDamageAt.set(cid, wallNow + TOXIC_CLOUD_TICK_MS);
-          this.state.players.forEach((p, sid) => {
-            if (p.broken) return;
-            const dx = p.x - cloud.x, dy = p.y - cloud.y;
-            if (dx * dx + dy * dy <= r2Cloud) {
-              this._applyBugContactDamage(p, sid, TOXIC_CLOUD_DAMAGE);
-            }
-          });
-        }
-      });
-
-      // ───── Obstacle respawn — keep at OBSTACLE_TARGET ─────
-      this._obstacleRespawnTimer = (this._obstacleRespawnTimer || 0) + dtMs;
-      if (this._obstacleRespawnTimer >= OBSTACLE_RESPAWN_MS) {
-        this._obstacleRespawnTimer = 0;
-        if (this.state.obstacles.size < OBSTACLE_TARGET) {
-          this._spawnRandomObstacle();
-        }
-      }
-
-      // ───── Bugs eat nearby obstacles ─────
-      // Each bug in range contributes per-kind eat-rate. Ladybugs munch 2x
-      // (they're the swarm-eater). Damage capped per tick so a single chomp
-      // can't fully break a heavy obstacle on its own.
-      this._bugEatTimer = (this._bugEatTimer || 0) + dtMs;
-      if (this._bugEatTimer >= BUG_EAT_INTERVAL_MS) {
-        this._bugEatTimer = 0;
-        const eatR2 = BUG_EAT_RADIUS * BUG_EAT_RADIUS;
-        const toBreak = [];
-        this.state.obstacles.forEach((ob, id) => {
-          let dmg = 0;
-          this.state.bugs.forEach((bug) => {
-            if (!bug.alive || bug.hidden) return;
-            const cx = Math.max(ob.x, Math.min(bug.x, ob.x + ob.w));
-            const cy = Math.max(ob.y, Math.min(bug.y, ob.y + ob.h));
-            const dx = bug.x - cx, dy = bug.y - cy;
-            if (dx * dx + dy * dy <= eatR2) {
-              dmg += (bug.kind === 'bug-ladybug') ? LADYBUG_EAT_BONUS : 1;
-            }
-          });
-          if (dmg > 0) {
-            dmg = Math.min(MAX_EAT_PER_TICK, dmg);
-            ob.hp = Math.max(0, ob.hp - dmg);
-            ob.hit_seq = (ob.hit_seq + 1) >>> 0;
-            if (ob.hp <= 0) toBreak.push({ id, x: ob.x + ob.w / 2, y: ob.y + ob.h / 2 });
-          }
-        });
-        for (const t of toBreak) {
-          this.state.obstacles.delete(t.id);
-          const count = 2 + Math.floor(Math.random() * 3);
-          for (let n = 0; n < count; n++) {
-            const a = Math.random() * Math.PI * 2;
-            const r = 24 + Math.random() * 36;
-            this._spawnBugAt(t.x + Math.cos(a) * r, t.y + Math.sin(a) * r);
-          }
-        }
-      }
-
-      // Personal Mode: no round-end check. World runs forever.
-    }
-    // (no 'results' branch — Personal Mode never reaches that phase)
+  humanPlayers() {
+    const out = [];
+    this.state.players.forEach((p, sid) => { if (!this.bots.isBot(sid)) out.push(p); });
+    return out;
   }
 
-  /** Spawn one new obstacle at a randomly-chosen safe position.
-   *  Tries up to N times to avoid overlapping other obstacles + players. */
+  /** Create + register a player (human or bot). Returns the Player schema. */
+  _addPlayer(sid, { name, hat, isBot = false, x, y, startXp = 0 } = {}) {
+    const p = new Player();
+    p.name  = String(name || 'guest').slice(0, 16);
+    p.hat   = sanitizeHat(hat);
+    p.isBot = !!isBot;
+    p.color = PALETTE[this._nextColorIdx++ % PALETTE.length];
+    const jitter = 80;
+    p.x = (typeof x === 'number') ? x : ARENA_W / 2 + (Math.random() - 0.5) * jitter * 2;
+    p.y = (typeof y === 'number') ? y : ARENA_H / 2 + (Math.random() - 0.5) * jitter * 2;
+    if (startXp > 0) {
+      p.xp = startXp;
+      p.score = startXp;
+      p.level = levelFromXP(startXp);
+      p.maxEnergy = maxEnergyForLevel(p.level);
+      p.maxHealth = maxHealthForLevel(p.level);
+      p.energy = p.maxEnergy;
+      p.health = p.maxHealth;
+    }
+    p.invulnUntil = Date.now() + SPAWN_PROTECT_MS;
+    this.state.players.set(sid, p);
+    this._playerState.set(sid, { lastKillAt: 0, koStreak: 0, kos: 0 });
+    return p;
+  }
+
+  _removePlayer(sid) {
+    this.state.players.delete(sid);
+    this._playerState.delete(sid);
+    this._lastChatAt.delete(sid);
+    this._crownedNoticeAt.delete(sid);
+    if (this.state.crownSid === sid) { this.state.crownSid = ''; this.state.bounty = 0; }
+  }
+
+  _onBotsChanged() {
+    try { this.setMetadata({ bots: this.bots.count })?.catch?.(() => {}); } catch (_) { /* ignore */ }
+  }
+
+  // ───────────────────────── messaging helpers ─────────────────────────
+  _sendTo(sid, type, payload) {
+    const c = this.clients.find((cl) => cl.sessionId === sid);
+    if (c) c.send(type, payload);
+  }
+  /** Kill-feed line for everyone. { text, color?, a?, b? } (a/b = involved sids). */
+  _feed(entry) { this.broadcast('feed', entry); }
+  /** Big center-screen banner for everyone. { title, sub?, color?, big? } */
+  _announce(entry) { this.broadcast('announce', { kind: 'banner', ...entry }); }
+  _broadcastChat(m) {
+    this.broadcast('chat', m);
+    this._chatLog.push(m);
+    if (this._chatLog.length > this._chatLogMax) this._chatLog.shift();
+  }
+  _pmSay(text) { this._broadcastChat({ sid: 'pm', name: '📢 PM', text, kind: 'pm' }); }
+
+  // ───────────────────────── intent handlers ─────────────────────────
+  _doMove(sid, msg) {
+    if (this.state.phase !== 'playing') return;
+    const p = this.state.players.get(sid);
+    if (!p) return;
+    const now = Date.now();
+    if (now < (p.stunnedUntil || 0)) return; // stunned — can't move
+    // Right after a server-side teleport (dash, roll, knockback) the client is
+    // still sending pre-teleport positions — ignore them until it catches up.
+    if (now < (p._ignoreMovesUntil || 0)) return;
+    if (Number.isFinite(msg?.x) && Number.isFinite(msg?.y)) {
+      let toX = Math.max(0, Math.min(ARENA_W, msg.x));
+      let toY = Math.max(0, Math.min(ARENA_H, msg.y));
+      // Max step: a `move` can't teleport across the map (it used to — two
+      // messages beat every range check, incl. the boss / golden bug).
+      const elapsed = Math.min(1000, now - (p._lastMoveAt || 0));
+      p._lastMoveAt = now;
+      const maxStep = MOVE_SPEED_CAP * (elapsed / 1000) + MOVE_SLACK_PX;
+      const sx = toX - p.x, sy = toY - p.y;
+      const step = Math.hypot(sx, sy);
+      if (step > maxStep) {
+        toX = p.x + (sx / step) * maxStep;
+        toY = p.y + (sy / step) * maxStep;
+      }
+      // Slide-along obstacle collision. Q dash + E jump get a 350 ms
+      // pass-through window after cast.
+      const passThrough = Date.now() < (p._passThroughUntil || 0);
+      const out = clampToFreeSpace(this.state, p.x, p.y, toX, toY, passThrough);
+      p.x = out.x;
+      p.y = out.y;
+    }
+  }
+
+  // ───── MOBA skill cast — energy-gated, broken-gated ─────
+  _doCastSkill(sid, msg) {
+    if (this.state.phase !== 'playing') return;
+    const p = this.state.players.get(sid);
+    if (!p || p.broken) return;
+    if (Date.now() < (p.stunnedUntil || 0)) return; // stunned — can't cast
+    const slot = msg?.slot;
+    if (slot !== 'q' && slot !== 'w' && slot !== 'e' && slot !== 'r') return;
+    const nowCast = Date.now();
+    p._castAt = p._castAt || {};
+    if (nowCast - (p._castAt[slot] || 0) < CAST_MIN_INTERVAL_MS) return; // per-slot rate limit
+    // Hackathon makes skills free (skillCostMul = 0).
+    const cost = Math.round(SKILL_ENERGY[slot] * this.events.mod('skillCostMul', 1));
+    if (!(p.energy >= cost)) return; // also rejects a NaN energy
+    p._castAt[slot] = nowCast;
+    p.energy -= cost;
+
+    // Animation broadcast — each slot reuses a matching pose
+    const kindForAnim = (slot === 'q') ? 'punch'
+                     :  (slot === 'w') ? 'parry'
+                     :  (slot === 'e') ? 'jump'
+                     :                   'kick';
+    p.action = kindForAnim;
+    p.action_seq = (p.action_seq + 1) >>> 0;
+    // Q dash + E jump pass through obstacles — brief server-side window
+    // during which the move handler skips the obstacle clamp.
+    if (slot === 'q' || slot === 'e') {
+      p._passThroughUntil = Date.now() + 350;
+    }
+    const animMs = (slot === 'r') ? 500 : (slot === 'w' ? 620 : 320);
+    this.clock.setTimeout(() => {
+      const cur = this.state.players.get(sid);
+      if (cur && cur.action === kindForAnim) cur.action = 'idle';
+    }, animMs);
+
+    // ───── R: Deadline Break ult ─────
+    if (slot === 'r') {
+      const cx = p.x, cy = p.y;
+      const r2 = ULT_RADIUS * ULT_RADIUS;
+      const bugDmg = bugDamage(p, 'ult');
+      const nowMs = Date.now();
+      // 1. Bugs in range — damage + knockback (instant teleport)
+      this.state.bugs.forEach((bug, id) => {
+        if (!bug.alive || bug.hidden) return;
+        const dx = bug.x - cx, dy = bug.y - cy;
+        if (dx * dx + dy * dy <= r2) {
+          this._damageBug(sid, p, id, bug, bugDmg);
+          if (bug.alive) { // only knock back survivors
+            const d = Math.hypot(dx, dy) || 1;
+            bug.x = Math.max(20, Math.min(ARENA_W - 20, bug.x + (dx / d) * ULT_KNOCKBACK));
+            bug.y = Math.max(40, Math.min(ARENA_H - 40, bug.y + (dy / d) * ULT_KNOCKBACK));
+          }
+        }
+      });
+      // 2. Enemy players in range — damage + knockback + stun
+      this.state.players.forEach((other, osid) => {
+        if (osid === sid || other.broken) return;
+        const dx = other.x - cx, dy = other.y - cy;
+        if (dx * dx + dy * dy <= r2) {
+          // Shield / roll i-frames / truce block the WHOLE ult (damage, knockback,
+          // stun) — a deliberate rule since 2026-11 (see 09_BALANCE § Ult).
+          const landed = this._applyPvpHit(sid, p, other, osid, 'ult');
+          if (landed && !other.broken) {
+            const d = Math.hypot(dx, dy) || 1;
+            other.x = Math.max(20, Math.min(ARENA_W - 20, other.x + (dx / d) * ULT_KNOCKBACK));
+            other.y = Math.max(40, Math.min(ARENA_H - 40, other.y + (dy / d) * ULT_KNOCKBACK));
+            other.stunnedUntil = nowMs + ULT_STUN_MS;
+            other._ignoreMovesUntil = nowMs + 300; // let the knockback stick
+          }
+        }
+      });
+      // 3. The Deadline boss
+      if (this.events.bossInReach(cx, cy, ULT_RADIUS)) this.events.damageBoss(sid, p, bugDmg);
+    }
+
+    // ───── E: Debug Roll ─────
+    if (slot === 'e') {
+      const { dx, dy } = unitDir(msg?.dirX, msg?.dirY); // finite or (1,0) — never NaN
+      p.x = Math.max(20, Math.min(ARENA_W - 20, p.x + dx * ROLL_DISTANCE));
+      p.y = Math.max(40, Math.min(ARENA_H - 40, p.y + dy * ROLL_DISTANCE));
+      p.invulnUntil = Math.max(p.invulnUntil || 0, Date.now() + ROLL_INVULN_MS);
+      p._ignoreMovesUntil = Date.now() + 270; // client is still tweening there
+    }
+
+    // ───── W: Laptop Shield ─────
+    if (slot === 'w') {
+      p.shielded = true;
+      // Each cast gets a sequence number so an OLD cast's expiry timer can't
+      // strip a newer shield (re-casts are common for bots / during Hackathon).
+      const seq = (p._shieldSeq = (p._shieldSeq || 0) + 1);
+      this.clock.setTimeout(() => {
+        const cur = this.state.players.get(sid);
+        if (cur && cur.shielded && cur._shieldSeq === seq) cur.shielded = false; // natural expiry
+      }, SHIELD_DURATION_MS);
+    }
+
+    // ───── Q: Bug Dash — bugs + PvP + boss along the line ─────
+    if (slot === 'q') {
+      const { dx, dy } = unitDir(msg?.dirX, msg?.dirY); // finite or (1,0) — never NaN
+      p._ignoreMovesUntil = Date.now() + 200;             // client is still tweening there
+      const startX = p.x, startY = p.y;
+      const endX = Math.max(20, Math.min(ARENA_W - 20, p.x + dx * DASH_DISTANCE));
+      const endY = Math.max(40, Math.min(ARENA_H - 40, p.y + dy * DASH_DISTANCE));
+      p.x = endX;
+      p.y = endY;
+      const bugDmg = bugDamage(p, 'dash');
+      this.state.bugs.forEach((bug, id) => {
+        if (!bug.alive || bug.hidden) return;
+        if (distToSegment(bug.x, bug.y, startX, startY, endX, endY) <= DASH_HIT_RADIUS) {
+          this._damageBug(sid, p, id, bug, bugDmg);
+        }
+      });
+      this.state.players.forEach((other, osid) => {
+        if (osid === sid || other.broken) return;
+        if (distToSegment(other.x, other.y, startX, startY, endX, endY) <= DASH_HIT_RADIUS) {
+          this._applyPvpHit(sid, p, other, osid, 'dash');
+        }
+      });
+      if (this.events.bossOnSegment(distToSegment, startX, startY, endX, endY, DASH_HIT_RADIUS)) {
+        this.events.damageBoss(sid, p, bugDmg);
+      }
+    }
+  }
+
+  // Action — broadcasts a transient animation state (no target required).
+  _doAction(sid, msg) {
+    if (this.state.phase !== 'playing') return;
+    const p = this.state.players.get(sid);
+    if (!p) return;
+    const a = msg?.kind;
+    if (a !== 'jump' && a !== 'punch' && a !== 'kick' && a !== 'smash' && a !== 'parry') return;
+    const nowA = Date.now();
+    if (nowA - (p._lastActionAt || 0) < ACTION_MIN_INTERVAL_MS) return; // rate limit
+    p._lastActionAt = nowA;
+    p.action = a;
+    p.action_seq = (p.action_seq + 1) >>> 0;
+    const ms = (a === 'parry') ? 620 : (a === 'jump' ? 420 : 260);
+    this.clock.setTimeout(() => {
+      const cur = this.state.players.get(sid);
+      if (cur && cur.action === a) cur.action = 'idle';
+    }, ms);
+  }
+
+  _doSmash(sid, msg) {
+    if (this.state.phase !== 'playing') return;
+    const p = this.state.players.get(sid);
+    if (!p) return;
+    // Broken or stunned stickymen can't attack
+    if (p.broken) return;
+    const nowS = Date.now();
+    if (nowS < (p.stunnedUntil || 0)) return;
+    // Server-side swing cooldown (the 220 ms one was client-only → scriptable).
+    if (nowS - (p._lastSmashAt || 0) < SMASH_MIN_INTERVAL_MS) return;
+    p._lastSmashAt = nowS;
+    // Whitelist: an inherited key like 'constructor' used to turn energy into NaN.
+    const kind = SMASH_KINDS.has(msg?.kind) ? msg.kind : 'smash';
+
+    // Every smash also damages any obstacles within reach. Breaks open
+    // "bug nests" — destroyed obstacles spawn 2–4 bugs at the rubble.
+    this._trySmashObstacles(p);
+
+    const cost = ENERGY_COST[kind] ?? 0;
+    if (p.energy < cost) return;
+
+    // Kick is an AOE spin — damages every bug within reach on both sides.
+    if (kind === 'kick') {
+      p.energy = Math.max(0, p.energy - cost);
+      const reach = 88;
+      const reach2 = reach * reach;
+      const targets = [];
+      this.state.bugs.forEach((bug, id) => {
+        if (!bug.alive || bug.hidden) return;
+        const dx = p.x - bug.x, dy = p.y - bug.y;
+        if (dx * dx + dy * dy <= reach2) targets.push({ id, bug });
+      });
+      for (const { id, bug } of targets) {
+        this._damageBug(sid, p, id, bug, bugDamage(p, 'smash'));
+      }
+      this.state.players.forEach((other, osid) => {
+        if (osid === sid || other.broken) return;
+        const dx = p.x - other.x, dy = p.y - other.y;
+        if (dx * dx + dy * dy <= reach2) this._applyPvpHit(sid, p, other, osid);
+      });
+      if (this.events.bossInReach(p.x, p.y, reach)) this.events.damageBoss(sid, p, bugDamage(p, 'smash'));
+      return;
+    }
+
+    const reach = (kind === 'punch') ? 112 : SMASH_RADIUS;
+
+    // The Deadline boss (explicit target from the client / a bot)
+    if (msg?.boss) {
+      if (this.events.bossInReach(p.x, p.y, reach)) {
+        p.energy = Math.max(0, p.energy - cost);
+        this.events.damageBoss(sid, p, bugDamage(p, 'smash'));
+      }
+      return;
+    }
+
+    if (msg?.targetSid) {
+      if (msg.targetSid === sid) return;
+      const other = this.state.players.get(msg.targetSid);
+      if (!other || other.broken) return;
+      const dx = p.x - other.x, dy = p.y - other.y;
+      if (Math.hypot(dx, dy) > reach) return;
+      p.energy = Math.max(0, p.energy - cost);
+      this._applyPvpHit(sid, p, other, msg.targetSid);
+      return;
+    }
+
+    const bug = this.state.bugs.get(msg?.id);
+    if (!bug || !bug.alive || bug.hidden) return;
+    const dx = p.x - bug.x, dy = p.y - bug.y;
+    if (Math.hypot(dx, dy) > reach) return;
+    p.energy = Math.max(0, p.energy - cost);
+    this._damageBug(sid, p, msg.id, bug, bugDamage(p, 'smash'));
+  }
+
+  // -------- simulation tick --------
+  _tick(dtMs) {
+    if (this.state.phase !== 'playing') return;
+    const now = Date.now();
+
+    // Directors first: events set this tick's modifiers, bots act on them.
+    this.events.tick(dtMs, now);
+    this.bots.tick(dtMs, now);
+
+    // Spawn cadence scales with hunters in the room; events can override it.
+    this._lastSpawnAt += dtMs;
+    const aliveBugs = this._countAliveBugs();
+    const playerCount = this.state.players.size;
+    const spawnDelay = this.events.mod('spawnEveryMs', spawnIntervalFor(playerCount));
+    const maxBugs = this.events.mod('maxBugs', MAX_BUGS);
+    if (aliveBugs < maxBugs && this._lastSpawnAt > spawnDelay) {
+      this._lastSpawnAt = 0;
+      this._spawnBug();
+    }
+
+    // Per-player ticks: combo decay + energy regen + pickup collection
+    const dtSec = dtMs / 1000;
+    this.state.players.forEach((p, sid) => {
+      const ps = this._playerState.get(sid);
+      if (p.combo > 0 && ps && (now - ps.lastKillAt) > COMBO_TIMEOUT_MS) {
+        p.combo = 0;
+      }
+      if (!p.broken && p.energy < p.maxEnergy && ENERGY_REGEN_PER_SEC > 0) {
+        p.energy = Math.min(p.maxEnergy, p.energy + ENERGY_REGEN_PER_SEC * dtSec);
+      }
+      // Pickup overlap (broken players skip — proposal §Recovery Restrictions)
+      if (!p.broken) this._tryCollectPickups(p, sid);
+    });
+
+    // Health pickup pool — Coffee Break raises the target + refills fast near humans
+    const pickupTarget = this.events.mod('pickupTarget', PICKUP_TARGET_COUNT);
+    const boosted = pickupTarget > PICKUP_TARGET_COUNT;
+    this._lastPickupSpawnAt += dtMs;
+    if (this.state.pickups.size < pickupTarget
+        && this._lastPickupSpawnAt > (boosted ? 900 : PICKUP_RESPAWN_MS)) {
+      this._lastPickupSpawnAt = 0;
+      this._spawnPickup(boosted ? this.events._pointNearHuman(140, 820) : null);
+    }
+
+    // ───── Bug AI + movement ─────
+    const dt = dtMs / 1000;
+    const players = [];
+    this.state.players.forEach((p, sid) => players.push({ p, sid }));
+    const speedMul = this.events.mod('bugSpeedMul', 1);     // Code Freeze = 0
+    const bugsAttack = this.events.mod('bugsAttack', true);
+
+    this.state.bugs.forEach((bug, id) => {
+      if (!bug.alive) return;
+      const ai = this._bugAI.get(id);
+      if (!ai) return;
+
+      // Expire 'hidden' state — bug pops back into play
+      if (bug.hidden && ai.hideUntil && now > ai.hideUntil) {
+        bug.hidden = false;
+        ai.hideUntil = 0;
+      }
+      if (bug.hidden) return;
+
+      // Find nearest non-broken player (target for pursuit + flee reference)
+      let nearest = null, nearestSid = null, nearestD2 = Infinity;
+      for (const { p, sid } of players) {
+        if (p.broken) continue;
+        const dx = p.x - bug.x, dy = p.y - bug.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < nearestD2) { nearestD2 = d2; nearest = p; nearestSid = sid; }
+      }
+
+      const attackCfg = bugsAttack ? BUG_ATTACK[bug.kind] : null;
+      const nearestD = Math.sqrt(nearestD2);
+
+      // ───── Aggressive AI (beetle, robot) ─────
+      if (attackCfg && nearest && nearestD < attackCfg.aggro) {
+        if (nearestD < attackCfg.reach) {
+          const cdAt = this._bugAttackCD.get(id) || 0;
+          if (now >= cdAt) {
+            this._bugAttackCD.set(id, now + attackCfg.cooldownMs);
+            this._applyBugContactDamage(nearest, nearestSid, attackCfg.dmg, { type: 'bug', kind: bug.kind });
+          }
+        }
+        // Pursue: head straight at the target (robot skips lerp for relentless feel)
+        const px = nearest.x - bug.x, py = nearest.y - bug.y;
+        const pl = Math.hypot(px, py) || 1;
+        const tx = px / pl, ty = py / pl;
+        if (bug.kind === 'bug-robot') {
+          ai.headingX = tx; ai.headingY = ty;
+        } else {
+          ai.headingX += (tx - ai.headingX) * Math.min(1, TURN_LERP * dt);
+          ai.headingY += (ty - ai.headingY) * Math.min(1, TURN_LERP * dt);
+        }
+        const hl = Math.hypot(ai.headingX, ai.headingY) || 1;
+        ai.headingX /= hl; ai.headingY /= hl;
+        const chaseSpeed = ai.baseSpeed * attackCfg.chaseMul * speedMul;
+        const c = clampToFreeSpace(this.state, bug.x, bug.y,
+          bug.x + ai.headingX * chaseSpeed * dt, bug.y + ai.headingY * chaseSpeed * dt, false);
+        bug.x = c.x; bug.y = c.y;
+        this._bounceInArena(bug, ai);
+        if (!ai.noAge && now - ai.spawnedAt > BUG_LIFETIME_MS) this._removeBug(id);
+        return; // skip the flee/wander block below
+      }
+
+      // ───── Default flee/wander ─────
+      const fleeR = ai.golden ? GOLDEN_BUG.fleeRadius : FLEE_RADIUS_PX;
+      let tx, ty, speed;
+      if (nearest && nearestD2 < fleeR * fleeR) {
+        const dx = bug.x - nearest.x, dy = bug.y - nearest.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        tx = dx / d; ty = dy / d;
+        if (ai.golden) {
+          // The CEO's bug zig-zags while it runs — catchable, but slippery.
+          const wob = Math.sin(now / 260 + (ai.phase || 0)) * 0.75;
+          const ox = tx, oy = ty;
+          tx = ox - oy * wob; ty = oy + ox * wob;
+          speed = ai.baseSpeed;
+        } else {
+          speed = ai.baseSpeed * FLEE_SPEED_MUL;
+        }
+      } else {
+        ai.nextWanderAt -= dtMs;
+        if (ai.nextWanderAt <= 0) {
+          const a = Math.random() * Math.PI * 2;
+          ai.wanderX = Math.cos(a);
+          ai.wanderY = Math.sin(a);
+          ai.nextWanderAt = 1500 + Math.random() * 1500;
+        }
+        tx = ai.wanderX; ty = ai.wanderY;
+        speed = ai.baseSpeed * 0.6;
+      }
+      speed *= speedMul;
+
+      // Lerp heading toward target dir for smoother motion
+      ai.headingX = ai.headingX + (tx - ai.headingX) * Math.min(1, TURN_LERP * dt);
+      ai.headingY = ai.headingY + (ty - ai.headingY) * Math.min(1, TURN_LERP * dt);
+      const hl = Math.hypot(ai.headingX, ai.headingY) || 1;
+      ai.headingX /= hl; ai.headingY /= hl;
+
+      const c = clampToFreeSpace(this.state, bug.x, bug.y,
+        bug.x + ai.headingX * speed * dt, bug.y + ai.headingY * speed * dt, false);
+      bug.x = c.x; bug.y = c.y;
+      this._bounceInArena(bug, ai);
+
+      if (!ai.noAge && now - ai.spawnedAt > BUG_LIFETIME_MS) this._removeBug(id);
+    });
+
+    // ───── Toxic clouds ─────
+    const r2Cloud = TOXIC_CLOUD_RADIUS * TOXIC_CLOUD_RADIUS;
+    this.state.clouds.forEach((cloud, cid) => {
+      if (now >= cloud.expiresAt) {
+        this.state.clouds.delete(cid);
+        this._cloudDamageAt.delete(cid);
+        return;
+      }
+      const nextAt = this._cloudDamageAt.get(cid) || 0;
+      if (now >= nextAt) {
+        this._cloudDamageAt.set(cid, now + TOXIC_CLOUD_TICK_MS);
+        this.state.players.forEach((p, sid) => {
+          if (p.broken) return;
+          const dx = p.x - cloud.x, dy = p.y - cloud.y;
+          if (dx * dx + dy * dy <= r2Cloud) {
+            this._applyBugContactDamage(p, sid, TOXIC_CLOUD_DAMAGE, { type: 'cloud' });
+          }
+        });
+      }
+    });
+
+    // ───── Obstacle respawn — keep at OBSTACLE_TARGET ─────
+    this._obstacleRespawnTimer = (this._obstacleRespawnTimer || 0) + dtMs;
+    if (this._obstacleRespawnTimer >= OBSTACLE_RESPAWN_MS) {
+      this._obstacleRespawnTimer = 0;
+      if (this.state.obstacles.size < OBSTACLE_TARGET) this._spawnRandomObstacle();
+    }
+
+    // ───── Bugs eat nearby obstacles (not while frozen or crowded; never the golden bug) ─────
+    this._bugEatTimer = (this._bugEatTimer || 0) + dtMs;
+    if (this._bugEatTimer >= BUG_EAT_INTERVAL_MS) {
+      this._bugEatTimer = 0;
+      if (speedMul > 0 && this._countAliveBugs() < EAT_PAUSE_ABOVE_BUGS) this._bugsEatObstacles();
+    }
+
+    // ───── Tech Lead crown ─────
+    if (now >= this._crownCheckAt) {
+      this._crownCheckAt = now + CROWN_CHECK_MS;
+      this._updateCrown(now);
+    }
+  }
+
+  _bounceInArena(bug, ai) {
+    if (bug.x < 30)           { bug.x = 30; ai.headingX = Math.abs(ai.headingX); }
+    if (bug.x > ARENA_W - 30) { bug.x = ARENA_W - 30; ai.headingX = -Math.abs(ai.headingX); }
+    if (bug.y < 60)           { bug.y = 60; ai.headingY = Math.abs(ai.headingY); }
+    if (bug.y > ARENA_H - 60) { bug.y = ARENA_H - 60; ai.headingY = -Math.abs(ai.headingY); }
+  }
+
+  _bugsEatObstacles() {
+    const eatR2 = BUG_EAT_RADIUS * BUG_EAT_RADIUS;
+    const toBreak = [];
+    this.state.obstacles.forEach((ob, id) => {
+      let dmg = 0;
+      this.state.bugs.forEach((bug) => {
+        if (!bug.alive || bug.hidden || bug.kind === GOLDEN_BUG.kind) return;
+        const cx = Math.max(ob.x, Math.min(bug.x, ob.x + ob.w));
+        const cy = Math.max(ob.y, Math.min(bug.y, ob.y + ob.h));
+        const dx = bug.x - cx, dy = bug.y - cy;
+        if (dx * dx + dy * dy <= eatR2) {
+          dmg += (bug.kind === 'bug-ladybug') ? LADYBUG_EAT_BONUS : 1;
+        }
+      });
+      if (dmg > 0) {
+        dmg = Math.min(MAX_EAT_PER_TICK, dmg);
+        ob.hp = Math.max(0, ob.hp - dmg);
+        ob.hit_seq = (ob.hit_seq + 1) >>> 0;
+        if (ob.hp <= 0) toBreak.push({ id, x: ob.x + ob.w / 2, y: ob.y + ob.h / 2 });
+      }
+    });
+    for (const t of toBreak) {
+      this.state.obstacles.delete(t.id);
+      const count = 2 + Math.floor(Math.random() * 3);
+      for (let n = 0; n < count; n++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 24 + Math.random() * 36;
+        this._spawnBugAt(t.x + Math.cos(a) * r, t.y + Math.sin(a) * r);
+      }
+    }
+  }
+
+  // ───────────────────────── Tech Lead crown ─────────────────────────
+  _updateCrown(now) {
+    const st = this.state;
+    let best = null, bestSid = '';
+    st.players.forEach((p, sid) => {
+      if (p.broken) return;
+      if (!best || p.score > best.score) { best = p; bestSid = sid; }
+    });
+    // Hysteresis: the holder keeps the crown unless a challenger leads by a
+    // clear margin — near-tied players were ping-ponging it every few seconds.
+    const cur = st.crownSid ? st.players.get(st.crownSid) : null;
+    if (cur && !cur.broken && best && best !== cur) {
+      const margin = Math.max(CROWN_SWAP_MARGIN_ABS, cur.score * CROWN_SWAP_MARGIN_PCT);
+      if (best.score < cur.score + margin) { best = cur; bestSid = st.crownSid; }
+    }
+    if (!best || best.score < CROWN_MIN_SCORE) { best = null; bestSid = ''; }
+
+    if (bestSid !== st.crownSid) {
+      st.crownSid = bestSid;
+      if (best) {
+        const bounty = bountyForScore(best.score);
+        if (now - this._lastCrownFeedAt > 6000) {
+          this._lastCrownFeedAt = now;
+          this._feed({ text: `👑 ${best.name} is the new TECH LEAD · bounty ${bounty} XP`, color: '#ffd700', a: bestSid });
+        }
+        // Personal banner at most every 30 s per player.
+        if (now - (this._crownedNoticeAt.get(bestSid) || 0) > CROWNED_NOTICE_COOLDOWN_MS) {
+          this._crownedNoticeAt.set(bestSid, now);
+          this._sendTo(bestSid, 'crowned', { bounty });
+        }
+      }
+    }
+    st.bounty = best ? bountyForScore(best.score) : 0;
+  }
+
+  // ───────────────────────── damage + rewards ─────────────────────────
+  /** Apply `dmg` to a bug from player p (sid). Handles the kill + rewards. */
+  _damageBug(sid, p, bugId, bug, dmg) {
+    // The CEO's bug is awarded by damage share, not last hit — record it.
+    if (bug.kind === GOLDEN_BUG.kind) this.events.noteGoldenDamage(sid, Math.min(bug.hp, dmg));
+    // Clamp at 0 — bug.hp is uint8, and a big hit (e.g. an ult) can exceed
+    // remaining HP; an unclamped negative would wrap on serialization.
+    bug.hp = Math.max(0, bug.hp - dmg);
+    bug.hit_seq = (bug.hit_seq + 1) >>> 0;
+    if (bug.hp > 0 || !bug.alive) return;
+    bug.alive = false; // first, so a second hit in the same tick can't double-award
+    this._awardBugKill(sid, p, bug);
+    if (bug.kind === 'bug-toxic') this._spawnToxicCloud(bug.x, bug.y);
+    this.clock.setTimeout(() => this._removeBug(bugId), 400);
+  }
+
+  _awardBugKill(sid, p, bug) {
+    const ps = this._playerState.get(sid);
+    const now = Date.now();
+    if (ps && (now - ps.lastKillAt) < COMBO_TIMEOUT_MS) {
+      p.combo = Math.min(99, (p.combo | 0) + 1);
+    } else {
+      p.combo = 1;
+    }
+    if (ps) ps.lastKillAt = now;
+    let gain;
+    if (bug.kind === GOLDEN_BUG.kind) {
+      gain = this.events.onGoldenKilled(sid, p);
+    } else {
+      const base = BUG_KIND_SCORE[bug.kind] ?? 10;
+      gain = Math.round(base * comboMult(p.combo) * this.events.mod('scoreMul', 1));
+    }
+    this._grantXP(sid, p, gain);
+    this._sendTo(sid, 'kill', { gain, kind: bug.kind, combo: p.combo });
+    if (COMBO_FEED_AT.includes(p.combo)) {
+      this._feed({ text: `⚡ ${p.name} is on a ×${p.combo} combo!`, color: '#ff9800', a: sid });
+    }
+    this.bots.onBugKill(sid, p.combo);
+  }
+
+  /** Add score + XP; handles level-ups (max bars grow, topped up by the increment). */
+  _grantXP(sid, p, amount) {
+    if (!p || !(amount > 0)) return;
+    p.score += amount;
+    p.xp += amount;
+    const newLevel = levelFromXP(p.xp);
+    if (newLevel <= p.level) return;
+    const oldLevel = p.level;
+    p.level = newLevel;
+    const newMaxE = maxEnergyForLevel(newLevel);
+    const newMaxH = maxHealthForLevel(newLevel);
+    if (!p.broken) {
+      p.energy = Math.min(newMaxE, p.energy + Math.max(0, newMaxE - p.maxEnergy));
+      p.health = Math.min(newMaxH, p.health + Math.max(0, newMaxH - p.maxHealth));
+    }
+    p.maxEnergy = newMaxE;
+    p.maxHealth = newMaxH;
+    if (newLevel >= 3) {
+      this._feed({ text: `⭐ ${p.name} got promoted to ${levelTitle(newLevel)}!`, color: '#ffd23f', a: sid });
+    }
+    if (newLevel === LEVEL_TITLES.length && oldLevel < newLevel) {
+      this._announce({ title: `👑 ${p.name} IS A SUPER SENIOR`, sub: 'Max level · now try not to burn out', color: '#ffd700', big: true });
+    }
+    this.bots.onLevelUp(sid, newLevel);
+  }
+
+  /**
+   * PvP hit from attacker p (aSid) on victim other (vSid). `source` picks the
+   * skill multiplier ('smash' | 'dash' | 'ult'); damage also scales by the
+   * level matchup. Returns true if damage landed (not dodged/absorbed).
+   */
+  _applyPvpHit(aSid, p, other, vSid, source = 'smash') {
+    if (other.broken || aSid === vSid) return false;
+    // Boss truce: no PvP while the Deadline is out (co-op moment).
+    if (this.events.mod('truce', false)) return false;
+    // Roll invulnerability / spawn protection — drop the hit completely.
+    if (Date.now() < (other.invulnUntil || 0)) return false;
+    this.bots.onPlayerHit(aSid, vSid);
+    // Laptop Shield absorbs the next hit completely and consumes itself.
+    if (other.shielded) {
+      other.shielded = false;
+      return false;
+    }
+    const dmg = pvpDamage(p, other, source);
+    other.health = Math.max(0, other.health - dmg);
+    if (other.health === 0) this._enterBroken(other, vSid, { type: 'player', sid: aSid });
+    return true;
+  }
+
+  /** Non-player damage (bug bite, toxic cloud, boss slam). Respects shield + invuln.
+   *  `killer` = { type: 'bug', kind } | { type: 'cloud' } | { type: 'boss' }.
+   *  Returns true if damage landed. */
+  _applyBugContactDamage(victim, vSid, dmg, killer = null) {
+    if (victim.broken) return false;
+    if (Date.now() < (victim.invulnUntil || 0)) return false;
+    if (victim.shielded) { victim.shielded = false; return false; }
+    victim.health = Math.max(0, victim.health - dmg);
+    if (victim.health === 0) this._enterBroken(victim, vSid, killer);
+    return true;
+  }
+
+  _enterBroken(p, sessionId, killer = null) {
+    if (p.broken) return;
+    const wasScore = p.score; // points earned this life — drives the bug drop
+    const wasCrown = this.state.crownSid === sessionId;
+    const bounty = this.state.bounty | 0;
+    p.broken = true;
+    p.broken_seq = (p.broken_seq + 1) >>> 0;
+    // Reset progression. Health + energy restore on exit; while broken they
+    // sit at 0 (visible empty bars) so the recovery beat reads clearly.
+    p.level = 1;
+    p.xp = 0;
+    p.maxEnergy = LEVEL_MAX_ENERGY[0];
+    p.maxHealth = LEVEL_MAX_HEALTH[0];
+    p.energy = 0;
+    p.health = 0;
+    p.combo = 0;
+    p.action = 'parry'; // re-use parry pose as "fixing laptop"
+    p.action_seq = (p.action_seq + 1) >>> 0;
+    p.cdQ = 0; p.cdW = 0; p.cdE = 0; p.cdR = 0;
+    p.shielded = false;
+    p.invulnUntil = 0;
+    p.stunnedUntil = 0;
+
+    // Personal Mode: defeated players spew bugs; score then RESETS to zero.
+    if (this.state.friendlyFire) {
+      const dropCount = Math.min(10, 2 + Math.floor(wasScore / 50));
+      for (let i = 0; i < dropCount; i++) {
+        const angle = (Math.PI * 2 * i) / dropCount + Math.random() * 0.6;
+        const radius = 30 + Math.random() * 60;
+        this._spawnBugAt(p.x + Math.cos(angle) * radius, p.y + Math.sin(angle) * radius);
+      }
+      p.score = 0;
+    }
+    if (wasCrown) { this.state.crownSid = ''; this.state.bounty = 0; }
+
+    // ── Drama: kill feed, streaks, shutdowns, bounty ──
+    const vps = this._playerState.get(sessionId);
+    const victimStreak = vps ? vps.koStreak : 0;
+    if (vps) vps.koStreak = 0;
+    const vName = p.name;
+    if (killer?.type === 'player') {
+      const a = this.state.players.get(killer.sid);
+      const aps = this._playerState.get(killer.sid);
+      if (a && aps) {
+        aps.koStreak += 1;
+        aps.kos += 1;
+        this._feed({ text: `💻 ${pickLine(KO_LINES, { a: a.name, b: vName })}`, color: '#ff8a8a', a: killer.sid, b: sessionId });
+        this._sendTo(killer.sid, 'ko', { victim: vName, streak: aps.koStreak });
+        this._sendTo(sessionId, 'brokenBy', { by: a.name });
+        const tier = STREAK_TIERS.find((t) => t.at === aps.koStreak)
+          || (aps.koStreak > 12 && aps.koStreak % 4 === 0
+            ? { icon: '👹', label: 'UNSTOPPABLE — somebody page the CTO' } : null);
+        if (tier) {
+          this._announce({ title: `${tier.icon} ${a.name} is ${tier.label}`, sub: `${aps.koStreak} laptops broken in a row`, color: '#ff9800' });
+        }
+        if (victimStreak >= SHUTDOWN_MIN_STREAK) {
+          const bonus = SHUTDOWN_XP_PER_KO * victimStreak;
+          this._grantXP(killer.sid, a, bonus);
+          this._announce({ title: `💥 SHUTDOWN! ${a.name} ended ${vName}'s streak`, sub: `${victimStreak}-KO streak over · +${bonus} XP`, color: '#ff5e94' });
+        }
+        if (wasCrown && bounty > 0) {
+          this._grantXP(killer.sid, a, bounty);
+          this._announce({ title: `💰 ${a.name} CLAIMED THE BOUNTY`, sub: `${vName} lost the Tech Lead crown · +${bounty} XP`, color: '#ffd700', big: true });
+          this._sendTo(killer.sid, 'reward', { kind: 'bounty', xp: bounty });
+        }
+        this.bots.onPlayerKO(killer.sid, sessionId);
+      }
+    } else if (killer?.type === 'bug') {
+      const bug = BUG_DISPLAY_NAME[killer.kind] || 'bug';
+      this._feed({ text: `🐞 ${pickLine(BUG_KO_LINES, { b: vName, bug })}`, color: '#c9a0ff', b: sessionId });
+      this._sendTo(sessionId, 'brokenBy', { by: `a ${bug}` });
+    } else if (killer?.type === 'cloud') {
+      this._feed({ text: pickLine(CLOUD_KO_LINES, { b: vName }), color: '#7ed957', b: sessionId });
+      this._sendTo(sessionId, 'brokenBy', { by: 'toxic fumes' });
+    } else if (killer?.type === 'boss') {
+      this._feed({ text: `⏰ ${pickLine(BOSS_KO_LINES, { b: vName })}`, color: '#ff5252', b: sessionId });
+      this._sendTo(sessionId, 'brokenBy', { by: 'THE DEADLINE' });
+    }
+    this.bots.onBroken(sessionId);
+
+    this.clock.setTimeout(() => {
+      const cur = this.state.players.get(sessionId);
+      if (cur && cur.broken) this._exitBroken(cur);
+    }, BROKEN_DURATION_MS);
+  }
+
+  _exitBroken(p) {
+    p.broken = false;
+    p.broken_seq = (p.broken_seq + 1) >>> 0;
+    p.energy = p.maxEnergy;
+    p.health = p.maxHealth;
+    p.action = 'idle';
+    p.action_seq = (p.action_seq + 1) >>> 0;
+    // Freshly repaired laptop — brief spawn protection so nobody farms you.
+    p.invulnUntil = Date.now() + SPAWN_PROTECT_MS;
+  }
+
+  // ───────────────────────── spawning ─────────────────────────
+
+  /** Spawn one new obstacle at a randomly-chosen safe position. */
   _spawnRandomObstacle() {
     const variant = OBSTACLE_VARIANTS[Math.floor(Math.random() * OBSTACLE_VARIANTS.length)];
     const w = variant.w, h = variant.h;
     for (let attempt = 0; attempt < 12; attempt++) {
       const x = 120 + Math.random() * (ARENA_W - w - 240);
       const y = 120 + Math.random() * (ARENA_H - h - 240);
-      // Reject overlap with existing obstacles (with padding)
       let overlap = false;
       this.state.obstacles.forEach((other) => {
         if (overlap) return;
@@ -987,7 +959,6 @@ export class ArenaRoom extends Room {
             y + h + OBSTACLE_PADDING > other.y) overlap = true;
       });
       if (overlap) continue;
-      // Reject if any player is too close (don't drop it on their head)
       let tooClose = false;
       const cx = x + w / 2, cy = y + h / 2;
       const minD2 = OBSTACLE_MIN_DIST_FROM_PLAYER * OBSTACLE_MIN_DIST_FROM_PLAYER;
@@ -997,7 +968,9 @@ export class ArenaRoom extends Room {
         if (dx * dx + dy * dy < minD2) tooClose = true;
       });
       if (tooClose) continue;
-      // Good spot — commit
+      // The Deadline boss stomps obstacles — don't drop one under it.
+      const boss = this.events.bossEntity();
+      if (boss && Math.hypot(boss.ent.x - cx, boss.ent.y - cy) < 260) continue;
       const ob = new Obstacle();
       ob.x = x; ob.y = y; ob.w = w; ob.h = h; ob.kind = variant.kind;
       ob.maxHp = 4; ob.hp = 4;
@@ -1022,11 +995,10 @@ export class ArenaRoom extends Room {
   /** Player smashed near an obstacle — damage it. On break, delete + emerge bugs. */
   _trySmashObstacles(p) {
     if (!p) return;
-    const reach = 110; // a bit larger than SMASH_RADIUS to make obstacle hits feel generous
+    const reach = 110; // a bit larger than SMASH_RADIUS so obstacle hits feel generous
     const reach2 = reach * reach;
     const toBreak = [];
     this.state.obstacles.forEach((ob, id) => {
-      // Distance from player to nearest point on obstacle rect
       const cx = Math.max(ob.x, Math.min(p.x, ob.x + ob.w));
       const cy = Math.max(ob.y, Math.min(p.y, ob.y + ob.h));
       const dx = p.x - cx, dy = p.y - cy;
@@ -1049,26 +1021,22 @@ export class ArenaRoom extends Room {
   }
 
   // NOTE: _enterResults and _enterPlaying below are unused in Personal Mode
-  // (no round flow). They're kept as a reference for the Team Mode room class
-  // we'll create in Phase C.
+  // (no round flow). Kept as a reference for the future Team Mode room class.
   _enterResults() {
     this.state.phase = 'results';
     this.state.timeLeftMs = PHASE_RESULTS_MS;
-    // Find the winner
     let best = null;
     this.state.players.forEach((p) => {
       if (!best || p.score > best.score) best = p;
     });
     this.state.winnerName  = best?.name  || '—';
     this.state.winnerScore = best?.score || 0;
-    console.log(`[ArenaRoom] round ${this.state.round} end — winner "${this.state.winnerName}" score ${this.state.winnerScore}`);
   }
 
   _enterPlaying() {
     this.state.phase = 'playing';
     this.state.timeLeftMs = PHASE_PLAYING_MS;
     this.state.round += 1;
-    // Reset scores; clear bugs
     this.state.players.forEach((p) => {
       p.score = 0; p.combo = 0; p.action = 'idle';
       p.level = 1; p.xp = 0;
@@ -1086,91 +1054,6 @@ export class ArenaRoom extends Room {
     this._lastPickupSpawnAt = 0;
     this.state.clouds.forEach((_, id) => this.state.clouds.delete(id));
     this._cloudDamageAt.clear();
-    console.log(`[ArenaRoom] round ${this.state.round} begin`);
-  }
-
-  /** Apply one hit to a bug from a player. Shared by all attack kinds. */
-  _applyHit(sessionId, p, bugId, bug) {
-    // Clamp at 0 — bug.hp is uint8, and a big hit (e.g. an ult) can exceed
-    // remaining HP; an unclamped negative would wrap on serialization and break
-    // the client's damage-number delta on the killing blow.
-    bug.hp = Math.max(0, bug.hp - bugDamage(p, 'smash'));
-    bug.hit_seq = (bug.hit_seq + 1) >>> 0;
-    if (bug.hp <= 0) {
-      const ps = this._playerState.get(sessionId);
-      const now = Date.now();
-      if (ps && (now - ps.lastKillAt) < COMBO_TIMEOUT_MS) {
-        p.combo = Math.min(99, (p.combo | 0) + 1);
-      } else {
-        p.combo = 1;
-      }
-      if (ps) ps.lastKillAt = now;
-      const base = BUG_KIND_SCORE[bug.kind] ?? 10;
-      const mult = comboMult(p.combo);
-      const gain = Math.round(base * mult);
-      p.score += gain;
-      p.xp += gain;
-      // Level up?
-      const newLevel = levelFromXP(p.xp);
-      if (newLevel !== p.level) {
-        p.level = newLevel;
-        // Bump max energy + max health + top up by the increment (don't fully refill)
-        const newMaxE = maxEnergyForLevel(newLevel);
-        const incE = Math.max(0, newMaxE - p.maxEnergy);
-        p.maxEnergy = newMaxE;
-        p.energy = Math.min(p.maxEnergy, p.energy + incE);
-        const newMaxH = maxHealthForLevel(newLevel);
-        const incH = Math.max(0, newMaxH - p.maxHealth);
-        p.maxHealth = newMaxH;
-        p.health = Math.min(p.maxHealth, p.health + incH);
-      }
-      bug.alive = false;
-      if (bug.kind === 'bug-toxic') this._spawnToxicCloud(bug.x, bug.y);
-      this.clock.setTimeout(() => {
-        this.state.bugs.delete(bugId);
-        this._bugAI.delete(bugId);
-        this._bugAttackCD.delete(bugId);
-      }, 400);
-    }
-    // (dive-on-survive disabled for MP — was making lock-on chase frustrating)
-  }
-
-  /** Apply dash damage to a bug along the dash path. Like _applyHit but with custom dmg. */
-  _applyDashHit(p, bug, bugId, dmg) {
-    bug.hp = Math.max(0, bug.hp - dmg); // clamp (uint8) — see _applyHit note
-    bug.hit_seq = (bug.hit_seq + 1) >>> 0;
-    if (bug.hp <= 0) {
-      const ps = this._playerState.get(p === this.state.players.get(p)) ? null : null; // never null path
-      // Find sessionId for this player to update kill bookkeeping
-      let foundSid = null;
-      this.state.players.forEach((pp, sid) => { if (pp === p) foundSid = sid; });
-      if (foundSid) {
-        const psr = this._playerState.get(foundSid);
-        const now = Date.now();
-        if (psr && (now - psr.lastKillAt) < COMBO_TIMEOUT_MS) p.combo = Math.min(99, (p.combo | 0) + 1);
-        else p.combo = 1;
-        if (psr) psr.lastKillAt = now;
-      }
-      const base = BUG_KIND_SCORE[bug.kind] ?? 10;
-      const gain = Math.round(base * comboMult(p.combo));
-      p.score += gain;
-      p.xp += gain;
-      const newLevel = levelFromXP(p.xp);
-      if (newLevel !== p.level) {
-        p.level = newLevel;
-        const newMaxE = maxEnergyForLevel(newLevel);
-        p.maxEnergy = newMaxE;
-        const newMaxH = maxHealthForLevel(newLevel);
-        p.maxHealth = newMaxH;
-      }
-      bug.alive = false;
-      if (bug.kind === 'bug-toxic') this._spawnToxicCloud(bug.x, bug.y);
-      this.clock.setTimeout(() => {
-        this.state.bugs.delete(bugId);
-        this._bugAI.delete(bugId);
-        this._bugAttackCD.delete(bugId);
-      }, 400);
-    }
   }
 
   _spawnToxicCloud(x, y) {
@@ -1183,91 +1066,17 @@ export class ArenaRoom extends Room {
     this._cloudDamageAt.set(id, Date.now() + TOXIC_CLOUD_TICK_MS);
   }
 
-  /** Apply contact damage from an aggressive bug to a player. Respects shield + roll-invuln. */
-  _applyBugContactDamage(victim, vSid, dmg) {
-    if (victim.broken) return;
-    if (Date.now() < (victim.invulnUntil || 0)) return;
-    if (victim.shielded) { victim.shielded = false; return; }
-    victim.health = Math.max(0, victim.health - dmg);
-    if (victim.health === 0) this._enterBroken(victim, vSid);
-  }
-
-  /** Apply ult health damage to a player. Respects roll-invuln + shield. */
-  /**
-   * Apply PvP health damage from attacker p to victim other (sessionId vSid).
-   * `source` selects the skill multiplier: 'smash' (basic + punch/kick),
-   * 'dash' (Q Bug Dash), or 'ult' (R Deadline Break). Damage also scales by the
-   * level matchup — see the PvP damage model near the top of the file.
-   */
-  _applyPvpHit(p, other, vSid, source = 'smash') {
-    if (other.broken) return;
-    // Debug Roll invulnerability window — drop the hit completely (no consume cost).
-    if (Date.now() < (other.invulnUntil || 0)) return;
-    // Laptop Shield absorbs the next PvP hit completely and consumes itself.
-    if (other.shielded) {
-      other.shielded = false;
-      return;
-    }
-    const dmg = pvpDamage(p, other, source);
-    other.health = Math.max(0, other.health - dmg);
-    if (other.health === 0) this._enterBroken(other, vSid);
-  }
-
-  _enterBroken(p, sessionId) {
-    if (p.broken) return;
-    const wasLevel = p.level; // remember before reset, used for bug-drop count
-    const wasScore = p.score; // total points earned this life — drives bug drop count
-    p.broken = true;
-    p.broken_seq = (p.broken_seq + 1) >>> 0;
-    // Reset progression. Health + energy fully restore on exit; while broken
-    // they sit at 0 (visible empty bars) so the recovery beat reads clearly.
-    p.level = 1;
-    p.xp = 0;
-    p.maxEnergy = LEVEL_MAX_ENERGY[0];
-    p.maxHealth = LEVEL_MAX_HEALTH[0];
-    p.energy = 0;
-    p.health = 0;
-    p.combo = 0;
-    p.action = 'parry'; // re-use parry pose as "fixing laptop"
-    p.action_seq = (p.action_seq + 1) >>> 0;
-    // Skill cooldowns + status flags reset on broken (consistent with level reset)
-    p.cdQ = 0; p.cdW = 0; p.cdE = 0; p.cdR = 0;
-    p.shielded = false;
-    p.invulnUntil = 0;
-    p.stunnedUntil = 0;
-
-    // Personal Mode only: defeated players spew bugs onto the map. Drop
-    // count scales with the SCORE earned this life. Score then RESETS to
-    // zero — death wipes your point bank in Personal Mode. (Team Mode keeps
-    // score across deaths because that's how round-based scoring works.)
-    if (this.state.friendlyFire) {
-      const dropCount = Math.min(10, 2 + Math.floor(wasScore / 50));
-      for (let i = 0; i < dropCount; i++) {
-        const angle = (Math.PI * 2 * i) / dropCount + Math.random() * 0.6;
-        const radius = 30 + Math.random() * 60;
-        const dx = Math.cos(angle) * radius;
-        const dy = Math.sin(angle) * radius;
-        this._spawnBugAt(p.x + dx, p.y + dy);
-      }
-      p.score = 0; // wipe points on defeat (Personal Mode only)
-    }
-
-    const sid = sessionId;
-    this.clock.setTimeout(() => {
-      const cur = this.state.players.get(sid);
-      if (cur && cur.broken) this._exitBroken(cur);
-    }, BROKEN_DURATION_MS);
-  }
-
-  /** Maintain pickup pool — spawns at a random world position (avoids obstacles). */
-  _spawnPickup() {
+  /** Spawn a health pickup — at `at` ({x,y}) if given, else a random free spot. */
+  _spawnPickup(at = null) {
     const id = String(this._nextPickupId++);
     const h = new HealthPickup();
-    let px = 0, py = 0;
-    for (let i = 0; i < 6; i++) {
-      px = 80 + Math.random() * (ARENA_W - 160);
-      py = 100 + Math.random() * (ARENA_H - 200);
-      if (!firstObstacleAt(this.state, px, py)) break;
+    let px = at?.x ?? 0, py = at?.y ?? 0;
+    if (!at) {
+      for (let i = 0; i < 6; i++) {
+        px = 80 + Math.random() * (ARENA_W - 160);
+        py = 100 + Math.random() * (ARENA_H - 200);
+        if (!firstObstacleAt(this.state, px, py)) break;
+      }
     }
     h.x = px; h.y = py;
     h.alive = true;
@@ -1275,7 +1084,7 @@ export class ArenaRoom extends Room {
   }
 
   /** Check player vs all pickups; collect any within range. Pickups restore HEALTH + ENERGY. */
-  _tryCollectPickups(p) {
+  _tryCollectPickups(p, sid) {
     // Skip if at max on BOTH bars — pickup persists for someone who needs it
     if (p.health >= p.maxHealth && p.energy >= p.maxEnergy) return;
     const r2 = (PICKUP_RADIUS + PLAYER_PICKUP_RADIUS) ** 2;
@@ -1283,41 +1092,77 @@ export class ArenaRoom extends Room {
       if (!h.alive) return;
       const dx = p.x - h.x, dy = p.y - h.y;
       if (dx * dx + dy * dy <= r2) {
-        p.health = Math.min(p.maxHealth, p.health + PICKUP_ENERGY_GAIN);   // +40 HP
-        p.energy = Math.min(p.maxEnergy, p.energy + 25);                    // +25 energy
+        p.health = Math.min(p.maxHealth, p.health + PICKUP_ENERGY_GAIN);
+        p.energy = Math.min(p.maxEnergy, p.energy + PICKUP_ENERGY_REFILL);
         h.alive = false;
+        this._sendTo(sid, 'pickup', {});
         this.clock.setTimeout(() => this.state.pickups.delete(id), 300);
       }
     });
   }
 
-  /** Spawn a bug at a specific world position (used by bug-drop on defeat). */
-  _spawnBugAt(x, y) {
+  /**
+   * Spawn a bug at a position. `def` overrides the random kind roll:
+   * { kind, hp, speed, golden? }. Returns the new bug id.
+   */
+  _spawnBugAt(x, y, def = null) {
+    // Hard ceiling across every spawn path (nests, drops, minions, surges) —
+    // the CEO's golden bug is exempt. Returns null when capped.
+    if (!def?.golden && this.state.bugs.size >= HARD_MAX_BUGS) return null;
     const id = String(this._nextBugId++);
-    const def = rollBugKind();
+    const d = def || rollBugKind();
     const b = new Bug();
-    b.kind = def.kind;
-    b.hp = def.hp;
+    b.kind = d.kind;
+    b.hp = d.hp;
     b.alive = true;
     b.x = Math.max(40, Math.min(ARENA_W - 40, x));
     b.y = Math.max(60, Math.min(ARENA_H - 60, y));
     this.state.bugs.set(id, b);
     this._bugAI.set(id, {
-      baseSpeed: def.speed,
+      baseSpeed: d.speed,
       headingX: 0, headingY: 0,
       wanderX: 0, wanderY: 0,
       nextWanderAt: 0,
       spawnedAt: Date.now(),
+      golden: !!d.golden,
+      noAge: !!d.golden,
+      phase: Math.random() * 6,
     });
+    return id;
   }
 
-  _exitBroken(p) {
-    p.broken = false;
-    p.broken_seq = (p.broken_seq + 1) >>> 0;
-    p.energy = p.maxEnergy;
-    p.health = p.maxHealth;
-    p.action = 'idle';
-    p.action_seq = (p.action_seq + 1) >>> 0;
+  /** Regular spawn: sometimes near a human (keeps their screen lively), else anywhere. */
+  _spawnBug() {
+    const humans = this.humanPlayers();
+    if (humans.length && Math.random() < SPAWN_NEAR_HUMAN_CHANCE) {
+      const h = humans[Math.floor(Math.random() * humans.length)];
+      for (let i = 0; i < 6; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = SPAWN_NEAR_HUMAN_RING[0] + Math.random() * (SPAWN_NEAR_HUMAN_RING[1] - SPAWN_NEAR_HUMAN_RING[0]);
+        const x = h.x + Math.cos(a) * r, y = h.y + Math.sin(a) * r;
+        if (x < 60 || x > ARENA_W - 60 || y < 80 || y > ARENA_H - 80) continue;
+        if (firstObstacleAt(this.state, x, y)) continue;
+        this._spawnBugAt(x, y);
+        return;
+      }
+    }
+    // Uniform fallback — retry a few times to avoid spawning inside an obstacle
+    let bx = 0, by = 0;
+    for (let i = 0; i < 6; i++) {
+      bx = 60 + Math.random() * (ARENA_W - 120);
+      by = 80 + Math.random() * (ARENA_H - 160);
+      if (!firstObstacleAt(this.state, bx, by)) break;
+    }
+    this._spawnBugAt(bx, by);
+  }
+
+  _removeBug(id) {
+    this.state.bugs.delete(id);
+    this._forgetBug(id);
+  }
+  _forgetBug(id) {
+    this._bugAI.delete(id);
+    this._bugAttackCD.delete(id);
   }
 
   _countAliveBugs() {
@@ -1326,51 +1171,47 @@ export class ArenaRoom extends Room {
     return n;
   }
 
-  _spawnBug() {
-    const id = String(this._nextBugId++);
-    const def = rollBugKind();
-    const b = new Bug();
-    b.kind = def.kind;
-    b.hp = def.hp;
-    b.alive = true;
-    // Retry up to 6 times to avoid spawning inside an obstacle
-    let bx = 0, by = 0;
-    for (let i = 0; i < 6; i++) {
-      bx = 60 + Math.random() * (ARENA_W - 120);
-      by = 80 + Math.random() * (ARENA_H - 160);
-      if (!firstObstacleAt(this.state, bx, by)) break;
-    }
-    b.x = bx; b.y = by;
-    this.state.bugs.set(id, b);
-    this._bugAI.set(id, {
-      baseSpeed: def.speed,
-      headingX: 0, headingY: 0,
-      wanderX: 0, wanderY: 0,
-      nextWanderAt: 0,
-      spawnedAt: Date.now(),
-    });
+  // ───────────────────────── lifecycle ─────────────────────────
+  onJoin(client, options) {
+    const wasEmpty = this.humanCount() === 0;
+    const p = this._addPlayer(client.sessionId, { name: options?.name, hat: options?.hat });
+    console.log(`[ArenaRoom] +join ${client.sessionId} as "${p.name}" (humans ${this.humanCount()}, bots ${this.bots.count})`);
+    this._feed({ text: `☕ ${pickLine(JOIN_LINES, { a: p.name })}`, color: '#8fd6a0', a: client.sessionId });
+    // First human in: a few coworkers are already at their desks.
+    if (wasEmpty && this.bots.count === 0) this.bots.seed(4);
+    this._spawnWelcomeBugs(p);
   }
 
-  onJoin(client, options) {
-    const p = new Player();
-    p.name  = (options?.name || 'guest').slice(0, 16);
-    p.color = PALETTE[this.state.players.size % PALETTE.length];
-    const jitter = 80;
-    p.x = ARENA_W / 2 + (Math.random() - 0.5) * jitter * 2;
-    p.y = ARENA_H / 2 + (Math.random() - 0.5) * jitter * 2;
-    this.state.players.set(client.sessionId, p);
-    this._playerState.set(client.sessionId, { lastKillAt: 0 });
-    console.log(`[ArenaRoom] +join ${client.sessionId} as "${p.name}" (now ${this.state.players.size})`);
+  /** A few easy bugs right on screen so the first seconds aren't empty. */
+  _spawnWelcomeBugs(p) {
+    const easy = BUG_KINDS.filter((k) => k.kind === 'bug-ladybug' || k.kind === 'bug-null');
+    for (let i = 0; i < WELCOME_BUGS; i++) {
+      for (let t = 0; t < 6; t++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = WELCOME_BUG_RING[0] + Math.random() * (WELCOME_BUG_RING[1] - WELCOME_BUG_RING[0]);
+        const x = p.x + Math.cos(a) * r, y = p.y + Math.sin(a) * r;
+        if (firstObstacleAt(this.state, x, y)) continue;
+        this._spawnBugAt(x, y, easy[Math.floor(Math.random() * easy.length)]);
+        break;
+      }
+    }
   }
 
   onLeave(client, _consented) {
-    this.state.players.delete(client.sessionId);
-    this._playerState.delete(client.sessionId);
-    this._lastChatAt.delete(client.sessionId);
-    console.log(`[ArenaRoom] -leave ${client.sessionId} (now ${this.state.players.size})`);
+    const p = this.state.players.get(client.sessionId);
+    const name = p?.name;
+    this._removePlayer(client.sessionId);
+    if (name) this._feed({ text: `🚪 ${pickLine(LEAVE_LINES, { a: name })}`, color: '#8890a0' });
+    console.log(`[ArenaRoom] -leave ${client.sessionId} (humans ${this.humanCount()}, bots ${this.bots.count})`);
   }
 
   onDispose() {
     console.log('[ArenaRoom] disposed', this.roomId);
+  }
+
+  /** Safety net: Colyseus wraps every handler / tick / timer with this, so one
+   *  bad message or edge case logs instead of taking every room down. */
+  onUncaughtException(err, methodName) {
+    console.error(`[ArenaRoom] ${methodName} threw:`, err?.message || err);
   }
 }

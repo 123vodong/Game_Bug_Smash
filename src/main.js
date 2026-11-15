@@ -5,6 +5,10 @@ import MenuScene from './scenes/MenuScene.js';
 import HuntScene from './scenes/HuntScene.js';
 import PlatformerScene from './scenes/PlatformerScene.js';
 import MultiPlayScene from './scenes/MultiPlayScene.js';
+import TeamLobbyScene from './scenes/TeamLobbyScene.js';
+import TeamModeScene from './scenes/TeamModeScene.js';
+import TeamSelectScene from './scenes/TeamSelectScene.js';
+import TeamCustomScene from './scenes/TeamCustomScene.js';
 
 const config = {
   type: Phaser.AUTO,
@@ -20,10 +24,32 @@ const config = {
     default: 'arcade',
     arcade: { gravity: { y: 1400 }, debug: false },
   },
-  scene: [MenuScene, HuntScene, PlatformerScene, MultiPlayScene],
+  scene: [MenuScene, HuntScene, PlatformerScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+// Exposed for the playtest harness (tools/playtest) and console debugging.
+window.__game = game;
+
+// Deep links (shareable + used by the harness):
+//   ?scene=lobby                         → Team Mode champion select
+//   ?scene=team[&champ=pixel][&name=X][&offline=1] → straight into a Team Mode match
+const params = new URLSearchParams(window.location.search);
+const deepScene = params.get('scene');
+if (deepScene === 'lobby' || deepScene === 'team') {
+  game.events.once('ready', () => {
+    game.scene.stop('MenuScene');
+    if (deepScene === 'lobby') {
+      game.scene.start('TeamLobbyScene');
+    } else {
+      game.scene.start('TeamModeScene', {
+        champ: params.get('champ') || 'pixel',
+        name: params.get('name') || 'Tester',
+        offline: params.get('offline') === '1',
+      });
+    }
+  });
+}
 
 // Global safety net: when a tab returns from background, Phaser can briefly
 // hit null texture frames mid-frame and throw "Cannot read properties of null

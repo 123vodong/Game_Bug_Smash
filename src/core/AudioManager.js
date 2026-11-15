@@ -141,6 +141,32 @@ export const AudioManager = {
     tone(880, 60, 'square', 0.05);
   },
 
+  // ----- Office Chaos (MP world events + boss) -----
+  paChime() {
+    // Office PA "ding-dong" before the PM speaks
+    tone(784, 260, 'sine', 0.07, 6);
+    later(240, () => tone(622, 420, 'sine', 0.065, 6));
+  },
+  alarm() {
+    // Prod-down siren: two rising/falling sweeps
+    sweep(520, 980, 260, 'square', 0.035);
+    later(270, () => sweep(980, 520, 260, 'square', 0.035));
+    later(560, () => sweep(520, 980, 260, 'square', 0.035));
+  },
+  bossRoar() {
+    // Low growl + rumble
+    sweep(180, 60, 700, 'sawtooth', 0.06);
+    noise(500, 0.05, 400);
+  },
+  slamImpact() {
+    noise(160, 0.07, 700);
+    tone(70, 220, 'square', 0.05);
+  },
+  reward() {
+    // Bright fanfare for bounties / golden bug / boss MVP
+    [659, 784, 988, 1319].forEach((f, i) => later(i * 70, () => tone(f, 160, 'triangle', 0.07)));
+  },
+
   // ----- UI / system -----
   pause() {
     tone(440, 80, 'sine', 0.045);

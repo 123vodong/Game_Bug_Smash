@@ -1,12 +1,64 @@
 # Task Status
 
-Updated: 2026-06-02
+Updated: 2026-11-07
 
 A running snapshot of what's done, what's in progress, and what's queued. Keep this honest — it's the file that future-you will read first.
 
 ---
 
 ## ✅ Done
+
+### Team Mode — "Office Siege" 5v5 office MOBA (2026-11-07, ✅ reviewed)
+
+**Review round (2 reviewers + playtester):** server — 0 critical, 4 minor fixed (slow stacking, passive gold
+while dead, post-victory tick, spawn-slot reuse). Client — 2 major fixed (touchscreen laptops forced into
+touch mode: auto-aim + stuck scoreboard), minor fixed: projectile speed = server, 🤖 tag on bot takeover,
+old-room callbacks guarded by visit, offline deep link, cast FIFO, held keys reset on chat, key captures
+released. Playtest: stable (0 errors over a full match + PLAY AGAIN), but early game is passive — tower HP
+−~17 %, THE DEADLINE 6500 → 4500 HP (avg match 17.8 min). Also: rooms now ignore `debug` quietly when hooks
+are off (Colyseus used to drop such clients). **Open:** bots play the early game too safely (first tower
+~9 min, ~2 kills by 9:00) — bot aggression tuning next; label overlap in big fights; shop title wrap.
+
+Original MOBA-genre mode (own map, champions and items — not a clone of any existing game):
+🚀 **Startup** (blue) vs 🏢 **MegaCorp** (red) ship bug waves at each other's **Production Server**.
+Built by the agent team in parallel against a frozen contract — [TEAM_MODE_BREAKDOWN.md](./TEAM_MODE_BREAKDOWN.md).
+
+- ✅ **Shared data** ([shared/moba/](../../../shared/moba/)) — imported by BOTH server and browser: `rules.js` (economy, leveling 1–12, towers, minions, camps, epics), `map.js` (6000² "Open Office": 3 corridors, data-stream river, 4 legacy-code jungles, mirrored for fairness), `champions.js` (6 champions × 4 data-driven skills), `items.js` (17 office-gear items).
+- ✅ **Champions** — 🎨 Pixel (Frontend mage) · 🗄️ Stack (Backend tank) · ⚙️ Ops (DevOps healer) · 🔍 Tester (QA marksman) · 🥷 Zero (Security assassin) · 📊 Model (Data-science controller). Skills = 7 generic types (skillshot, area, targeted, dash, blink, self, team) interpreted by one engine; R at Lv 6.
+- ✅ **Server** ([TeamRoom.js](../../../server/rooms/TeamRoom.js) + [server/game/moba/](../../../server/game/moba/)) — lobby → playing → ended; minion waves, towers with an unlock chain + backdoor guard, jungle camps with leash, river epics (✨ golden bug → team gold; ⏰ THE DEADLINE → team buff), gold/XP/levels/items, shop + recall + fountain, server-authoritative movement, skill engine, **champion bots** (lane, last-hit, trade, retreat/recall, buy builds, jungle, siege, group for epics). Exploit suite: `tools/playtest/team_sim.mjs --exploits` (18/18).
+- ✅ **Client** — [TeamLobbyScene](../../../src/scenes/TeamLobbyScene.js) (champion select), [TeamModeScene](../../../src/scenes/TeamModeScene.js) + [src/entities/moba/](../../../src/entities/moba/) (map, units, structures, champions, VFX, HUD, minimap, two cameras, offline mock `?offline=1`), [src/ui/moba/](../../../src/ui/moba/) (Office Supply Store shop with recommended builds, scoreboard, end screen). Menu TEAM button is live; deep links `?scene=lobby`, `?scene=team&champ=<id>`.
+- ✅ **Coordinator fixes at integration** — tower range 440 → 600 (ranged champions out-ranged towers), golden bug 2:00/200 g → 3:00/150 g (early snowball), shared `ATK_PROJ_SPEED`, and **alternating per-tick processing order** (blue always acted first → red won 24/38 simulated matches; after the fix 20/38).
+- Measured (fast-forward harness `tools/playtest/team_ff.mjs`, bots only): avg match ≈ 18 min (14–29), ~27–30 kills, ~8 structures, tick ≈ 0.3 ms, ~110 synced entities, ~7 KB/s per client.
+
+### Office Chaos update — MP arena never empty, always something happening (2026-11-06)
+
+Goal: a new player who opens the arena alone should see a lively office within seconds,
+laugh at the chat, and have a reason to come back tomorrow. Team process for future work:
+[develop_notes/AGENT_TEAM.md](../develop_notes/AGENT_TEAM.md) (agents in `.claude/agents/`,
+harness in `tools/playtest/`).
+
+**Server refactor** — tunables moved to [server/game/rules.js](../../../server/game/rules.js), synced
+state to [server/game/schema.js](../../../server/game/schema.js), content to `server/data/`. Message
+handlers became `_doMove/_doSmash/_doAction/_doCastSkill(sid, msg)` so bots and humans share
+one validated code path. Kill rewards unified in `_awardBugKill/_grantXP` (fixes: dash/ult kills
+didn't top up HP/energy on level-up). `move` rejects NaN; smash can't target yourself.
+
+- ✅ **AI coworkers** ([BotDirector.js](../../../server/game/BotDirector.js), [data/bots.js](../../../server/data/bots.js)) — keep humans+bots ≈ 9 (max 8 bots); the first human finds 4 "warm" bots already playing; bots trickle in/out with feed lines ("🏠 LegacyLarry went to lunch"). 5 archetypes (grinder/brawler/coward/tryhard/chaos) → hunt, heal, flee, fight, raid the boss, chase the golden bug, use Q/W/E/R. Fairness: never pick fights with human Interns, ≤2 bots per human, forgive a newbie's first 2 accidental hits, no ult splash on bystander humans. Chat jokes (EN + some Vietnamese), replies to human chat ("are you bots?" → "I'm not a bot, I'm a contractor"). Shown with 🤖 + "N AI coworkers" in the HUD.
+- ✅ **PM world events** ([EventDirector.js](../../../server/game/EventDirector.js), [data/events.js](../../../server/data/events.js)) — first at 25 s, then every 38–55 s; PM announces over the PA (ding-dong) + nags in chat between events. 🚨 Prod Down (bug surge, ×1.5 XP) · ☕ Coffee Break (pickup rain, slow bugs) · 🧊 Code Freeze (bugs frozen, no bites) · 🚀 Friday Deploy (×2 XP, faster bugs) · 🍕 Hackathon (skills cost 0) · ✨ CEO's golden bug (240 HP, flees, spawns near a human, 10 s human head start, +400 XP to whoever did the most damage, minimap + off-screen arrow).
+- ✅ **THE DEADLINE boss** (every 3rd event) — co-op **truce** (no PvP, +4 s grace after), HP 1200+950/player (~27–36 s raid), telegraphed slams (first after 4.2 s; 1.1 s windup, 150 px, 16% of max HP, knockback; double slam in phase 2), light minions, "PM ordered pizza" heal drops, tramples code obstacles. Win → 1500 XP by damage share + 100 participation + 300 last hit + MVP banner. Timeout → "DEADLINE MISSED" stun + bug wave. Sprite: [assets/boss/deadline.png](../../../assets/boss/deadline.png) (cropped from the parked boss art).
+- ✅ **Drama** — kill feed with joke KO lines ([data/feed.js](../../../server/data/feed.js)), PvP streaks (3/5/8/12) + **shutdown** bonus, 👑 **Tech Lead crown** on the top scorer (≥200) with a bounty (100 + 25% of score) paid to whoever breaks them, combo milestones, promotions ≥Lv3, 3 s spawn protection (join + after repair).
+- ✅ **Client** — [MPOverlay.js](../../../src/ui/MPOverlay.js) (feed, queued banners, event HUD + countdown + edge tint, toasts, first-session tips), [MPBossView.js](../../../src/entities/MPBossView.js) (sprite, HP bar, telegraphs, win/fail), golden bug look, +XP popups, leaderboard (top 8 + you, crown, bounty, 🤖), server-clock sync for stun/invuln, Hackathon "FREE" buttons, boss click/SPACE/Q targeting, chat colors (PM orange, bots gray-blue).
+- ✅ **Retention** — 12 cosmetic **hats** ([src/data/cosmetics.js](../../../src/data/cosmetics.js)) unlocked by career stats (picker in the join box; server allowlist); **career stats** + **daily missions** (3/day, same for everyone, streaks) in [SaveManager](../../../src/core/SaveManager.js) / [missions.js](../../../src/data/missions.js); main menu shows the real missions, a live "● N devs online" badge (`GET /api/stats`) and a career line.
+- Dev-only `debug` message forces events (`tools/playtest/sim.mjs … golden_bug@5`); exists only when the server runs with `BUG_SMASH_DEBUG=1`.
+
+#### Team review + fixes (2026-11-07) — first run of the [agent pipeline](../develop_notes/AGENT_TEAM.md)
+Two `code-reviewer`s + one `playtester` in parallel; every finding verified by the coordinator before fixing. Regression: `tools/playtest/exploits.mjs` (9/9), sim + browser passes clean.
+
+- **Security (server)** — fixed: `castSkill` with an ±Infinity aim gave a NaN position that bypassed every range check · `smash {kind:'constructor'}` turned energy into NaN (free skills) · no server rate limit on smash/skills (Hackathon = infinite ults) · `move` could teleport across the map (pre-existing) · `debug` with an inherited key crashed the whole process → own-keys + opt-in env var + `onUncaughtException` safety net · `hello` answered once (memory DoS).
+- **Client** — fixed: rejoining MP in the same page showed an empty arena (stale `_shuttingDown`, pre-existing) · stun ⭐ never appeared (epoch ms `| 0` overflow, pre-existing) · your own client ignored server knockback/stun → now adopts server corrections + mirrors obstacle collision locally · post-boss truce grace on the client · midnight rollover for dailies/streaks · leaderboard 💻✖ refresh · boss entrance drop · boss damage numbers batched · event banners pre-empt the queue · menu text overlap.
+- **Fairness / balance** — fixed: golden bug always went to bots (bot hunters didn't exclude it + last-hit stealing → damage-share winner, human head start) · boss too short (~20 s) and broke Interns while bots survived (HP ×1.8, %-HP slams, first-slam delay, participation XP) · bot Q dashes KO'd passive Interns (bystander check) · bots stomped humans 2+ levels below · crown ping-pong (hysteresis) · Prod Down overshot to 151 bugs and stripped obstacles (hard cap 150, eat pause) · empty first seconds (welcome bugs, closer bot spawns) · dead join greetings · no bot churn in solo rooms · golden bug orphaned on 'replaced' end · newer boss deleted by an old fight's timer · shield re-cast stripped by an old timer · stuck-inside-obstacle (bots trapped 80 s).
+- **Intentional rule change** — Shield / roll i-frames now block the whole ult (damage, knockback, stun). Documented in 09_BALANCE.
+- **Harness lesson** — the headless "human" stepped from its 12.5 Hz synced position (~150 px/s) and couldn't catch anything; `sim.mjs` now predicts its own position like the real client.
 
 ### Single-player 2D campaign — shippable
 
@@ -66,6 +118,9 @@ A running snapshot of what's done, what's in progress, and what's queued. Keep t
 | Item | State | Next step |
 |---|---|---|
 | Server-side smash logging | left enabled while we verify kills land | Once 2 consecutive sessions confirm hits register, strip the `console.log` lines in `ArenaRoom.js` |
+| **Team Mode v2 — "Walls & New Hires"** ([breakdown](TEAM_MODE_V2_BREAKDOWN.md)) | ✅ built + reviewed + playtested + integrated (see breakdown "Results") | polish: Wet Floor puddle visual, bots aiming knockbacks at walls, faster early game |
+| **Team Mode v3 — "Draft Day"** ([breakdown](TEAM_MODE_V3_BREAKDOWN.md)): thin bordering walls, queue → champion select → loading, summoner spells (D/F), info panel (C), Crunch Time | ✅ built + reviewed + playtested + integrated (2026-11-08) | open items in the breakdown "Results" |
+| **Team Mode v4 — "Custom Rooms, Bushes & Smooth Play"** ([breakdown](TEAM_MODE_V4_BREAKDOWN.md)) | ✅ built + reviewed + playtested + integrated (2026-11-08) | open items in the breakdown "Results" |
 
 ---
 
