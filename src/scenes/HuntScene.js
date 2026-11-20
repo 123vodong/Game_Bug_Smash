@@ -7,8 +7,9 @@ import { Hunter } from '../entities/Hunter.js';
 import { BugSpawner } from '../systems/BugSpawner.js';
 import { SkillManager } from '../systems/SkillManager.js';
 import { SKILL_IDS } from '../data/skills.js';
-import { LEVELS, TOTAL_LEVELS } from '../data/levels.js';
+import { LEVELS, TOTAL_LEVELS, starsFor } from '../data/levels.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { Progress } from '../core/Progress.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { TALK, pickWinCategory, pickLoseCategory, pickExchanges } from '../data/talk.js';
 import {
@@ -26,6 +27,9 @@ const FAIL_MESSAGES = [
 ];
 
 const PLAYER_RADIUS = 24;
+// Modal overlays (pause / win / lose) sit above every gameplay layer, incl. the
+// finale cinematic actors (73–79); help + mute flash go above them.
+const OVERLAY_DEPTH = 200;
 
 export default class HuntScene extends Phaser.Scene {
   constructor() { super('HuntScene'); }
@@ -64,6 +68,11 @@ export default class HuntScene extends Phaser.Scene {
   }
 
   create() {
+    // scene.restart() reuses this instance: reset every per-run field (review EP-1 — a stale
+    // _winInfo let ESC skip the next clear, and the finale's 0.25 timeScale survived restarts).
+    this._winInfo = null; this._heldMs = 0; this._lastPx = this._lastPy = null;
+    this._helpContainer = null; this._pauseOverlay = null;
+    this.time.timeScale = 1;
     const { width: W, height: H } = this.scale;
     this._drawCodeBackdrop(W, H);
 
@@ -77,6 +86,14 @@ export default class HuntScene extends Phaser.Scene {
     });
     this.totalBugs = Object.values(this.level.wave).reduce((s, n) => s + n, 0);
     this.spawner.spawnWave(this.level.wave);
+    // 1-1 teaches "one click is a code review, not a fix" — make it true: the
+    // first few bugs take 2 hits, so a quick tap visibly doesn't finish them.
+    const tut = this.level.tutorialBugs;
+    if (tut && tut.count > 0) {
+      for (const b of this.spawner.bugs.slice(0, tut.count)) {
+        if (b.maxHp < tut.hp) { b.maxHp = tut.hp; b.hp = tut.hp; }
+      }
+    }
 
     // ----- Skills -----
     this.skills = new SkillManager(this, {
@@ -100,17 +117,22 @@ export default class HuntScene extends Phaser.Scene {
 
     // ----- Input -----
     this.input.on('pointermove', (p) => this._onPointerMove(p));
-    this.input.on('pointerdown', (p) => this._onPointerMove(p));
-    this.input.keyboard.on('keydown-ESC', () => this.scene.start('MenuScene'));
+    this.input.on('pointerdown', (p) => { this._pressAt = this.time.now; this._onPointerMove(p); });
+    this.input.on('pointerup', () => this._onPointerUp());
+    // ESC asks first (EP-14) — a stray key no longer throws the run away.
+    this.input.keyboard.on('keydown-ESC', () => this._onEsc());
     this.input.keyboard.on('keydown-R', () => {
-      if (this.state !== 'playing') this.scene.restart({ levelIndex: this.levelIndex });
+      // Not during the win finale before the clear is committed (same guard as ESC).
+      if (this.state === 'lost' || (this.state === 'won' && this._winInfo)) this.scene.restart({ levelIndex: this.levelIndex });
     });
     this.input.keyboard.on('keydown-H', () => this._toggleHelp());
     this.input.keyboard.on('keydown-P', () => this._togglePause());
     this.input.keyboard.on('keydown-M', () => this._toggleMute());
 
-    // Restore saved mute state & prime AudioContext on first interaction
+    // Restore saved mute + volume (§3.4) & prime AudioContext on first interaction
     AudioManager.setMuted(SaveManager.isMuted());
+    const vol = SaveManager.getSettings?.()?.volume;
+    if (Number.isFinite(vol)) AudioManager.setVolume?.(vol);
     this.input.once('pointerdown', () => AudioManager.prime());
 
     // ----- HUD -----
@@ -135,6 +157,93 @@ export default class HuntScene extends Phaser.Scene {
     // ----- Timer audio cues -----
     this._lastSecond = Math.ceil(this.timeLeftMs / 1000);
     this._warnedAt = new Set();
+
+    // ----- 1-1 coach (EP-14): teaches move → HOLD to smash → AI tools -----
+    // While it runs, the deadline waits for the first kill (or 6 s of play).
+    this._coach = null;
+    this._clockHeld = false;
+    if (this.levelIndex === 0 && !SaveManager.getFlag?.('coachCampaign')) this._startCoach();
+  }
+
+  // ============================================================ COACH (1-1)
+  _startCoach() {
+    const { width: W, height: H } = this.scale;
+    const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const pill = this.add.text(W / 2, H - 120, '', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 20, color: '#ffffff',
+      stroke: '#000', strokeThickness: 5, align: 'center',
+      backgroundColor: 'rgba(5,12,24,0.78)', padding: { x: 16, y: 10 },
+      wordWrap: { width: W - 120 },
+    }).setOrigin(0.5).setDepth(45).setAlpha(0);
+    const stepNo = this.add.text(W / 2, H - 162, '', {
+      fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(45);
+    this._coach = {
+      step: 0, t: 0, moved: 0, pill, stepNo, touch,
+      lines: [
+        touch ? '👆 Drag your finger — you follow it like a PM follows deadlines.'
+              : '🖱 Move the mouse — you follow it like a PM follows deadlines.',
+        touch ? '✊ HOLD your finger on a bug to smash it.\nOne tap is a code review, not a fix.'
+              : '✊ HOLD the click on a bug to smash it.\nOne click is a code review, not a fix.',
+        '✨ Glowing things are AI tools. Results may vary.',
+      ],
+    };
+    this._clockHeld = true;
+    this.timerLabel?.setText('DEADLINE · starts at your first fix');
+    this._coachStep(0);
+  }
+
+  _coachStep(i) {
+    const co = this._coach;
+    if (!co) return;
+    co.step = i; co.t = 0;
+    if (i >= co.lines.length) { this._endCoach(); return; }
+    co.pill.setText(co.lines[i]).setScale(0.85).setAlpha(0);
+    co.stepNo.setText(`TRAINING ${i + 1}/${co.lines.length}`);
+    this.tweens.add({ targets: co.pill, alpha: 1, scale: 1, duration: 240, ease: 'Back.easeOut' });
+    AudioManager.uiClick?.();
+  }
+
+  _endCoach() {
+    const co = this._coach;
+    if (!co) return;
+    this._coach = null;
+    SaveManager.setFlag?.('coachCampaign', true);
+    this.tweens.add({
+      targets: [co.pill, co.stepNo], alpha: 0, duration: 400,
+      onComplete: () => { co.pill.destroy(); co.stepNo.destroy(); },
+    });
+  }
+
+  _releaseClock() {
+    if (!this._clockHeld) return;
+    this._clockHeld = false;
+    this.timerLabel?.setText('DEADLINE');
+  }
+
+  _updateCoach(dtMs) {
+    const co = this._coach;
+    if (!co) return;
+    co.t += dtMs;
+    if (co.step === 0) {
+      if (co.moved > 160 || co.t > 4000) this._coachStep(1);
+    } else if (co.step === 1) {
+      // Gentle pulse so the HOLD line can't be missed
+      co.pill.setScale(1 + 0.03 * Math.sin(this.time.now / 140));
+    } else if (co.step === 2 && co.t > 5000) {
+      this._coachStep(3);
+    }
+  }
+
+  /** A quick tap during the HOLD step → nudge. */
+  _onPointerUp() {
+    const co = this._coach;
+    if (!co || co.step !== 1 || this.state !== 'playing') return;
+    if (this.time.now - (this._pressAt || 0) < 220) {
+      co.pill.setText(co.touch ? '✊ Keep your finger DOWN — hold it on the bug!' : '✊ Keep the button DOWN — hold it on the bug!');
+      this.tweens.add({ targets: co.pill, scale: 1.12, duration: 90, yoyo: true });
+      this.time.delayedCall(1600, () => { if (this._coach === co && co.step === 1) co.pill.setText(co.lines[1]); });
+    }
   }
 
   /** "glitchRelocate" gimmick: every 12 s pick one alive, visible bug and
@@ -175,6 +284,18 @@ export default class HuntScene extends Phaser.Scene {
     if (this.state !== 'playing' || !this.player) return;
     const now = this.time.now;
 
+    // Coach (1-1): track movement for step 1; the deadline waits up to 6 s
+    if (this._coach) {
+      const px = this.player.x, py = this.player.y;
+      if (this._lastPx != null) this._coach.moved += Math.hypot(px - this._lastPx, py - this._lastPy);
+      this._lastPx = px; this._lastPy = py;
+      this._updateCoach(dtMs);
+    }
+    if (this._clockHeld) {
+      this._heldMs = (this._heldMs || 0) + dtMs;
+      if (this._heldMs >= 6000) this._releaseClock();
+    }
+
     // Player
     this.player.update(dtMs, now);
     // Bugs
@@ -203,6 +324,9 @@ export default class HuntScene extends Phaser.Scene {
         if (res.hit) {
           this._onSmashHit(bug, res.killed);
           if (res.killed) {
+            // First kill starts the deadline (coach) and moves the coach on
+            this._releaseClock();
+            if (this._coach && this._coach.step === 1) this._coachStep(2);
             // Remember where the last kill happened — used to center the finale cinematic
             this._lastKillPos = {
               x: bug.x, y: bug.y,
@@ -242,7 +366,7 @@ export default class HuntScene extends Phaser.Scene {
     }
 
     // Tick deadline + update progress factor for bug respawn timing
-    this.timeLeftMs -= dtMs;
+    if (!this._clockHeld) this.timeLeftMs -= dtMs;
     this.deadlineProgress = 1 - Math.max(0, this.timeLeftMs / this.level.timeLimitMs);
 
     // Audio: warning beeps at thresholds + tick in last 10 seconds
@@ -265,6 +389,8 @@ export default class HuntScene extends Phaser.Scene {
     // Win check (instant)
     const c = this.spawner.count();
     if (c.killed >= this.totalBugs) {
+      // Show "BUGS 0/N" + the final score before the finale freezes the HUD
+      this._updateHUD(c);
       this._win();
       return;
     }
@@ -282,6 +408,8 @@ export default class HuntScene extends Phaser.Scene {
   _win() {
     if (this.state !== 'playing') return;
     this.state = 'won';
+    if (this._coach) this._endCoach();
+    this._pauseBtn?.setVisible(false);
     // Play the slow-motion finale, then run the actual win flow.
     this._playFinaleCinematic(() => this._commitWin());
   }
@@ -290,12 +418,25 @@ export default class HuntScene extends Phaser.Scene {
     const timeBonus = Math.round(this.timeLeftMs / 100);
     this.score += timeBonus;
 
+    // Stars + dailies + hats (EP-14 / §3.4) — one call, no separate campaignLevels add.
+    // Must run BEFORE setLevelBest: SaveManager counts a level with a best score
+    // as 1★ (old-save migration), which would make a first clear look like a replay.
+    const prevBestScore = SaveManager.getLevelBest(this.level.id);
+    const stars = starsFor(this.timeLeftMs, this.level.timeLimitMs);
+    let res = { prev: 0, best: stars, improved: false, missions: [], hats: [] };
+    try { res = Progress.campaignClear(this.level.id, stars) || res; } catch (e) { console.warn('[Hunt] campaignClear failed', e); }
     // Persist progress
-    SaveManager.setLevelBest(this.level.id, this.score);
+    const beatScore = SaveManager.setLevelBest(this.level.id, this.score);
     SaveManager.setHighScore(this.score);
     const nextIndex = this.levelIndex + 1;
     SaveManager.setUnlockedIndex(nextIndex);
     if (nextIndex >= TOTAL_LEVELS) SaveManager.setCampaignCleared();
+    this._winInfo = {
+      stars, prevStars: res.prev | 0,
+      firstClear: !(res.prev > 0) && !(prevBestScore > 0),
+      newBest: !!res.improved && res.prev > 0 || (beatScore && prevBestScore > 0),
+      missions: res.missions || [], hats: res.hats || [],
+    };
 
     AudioManager.victory();
     confettiBurst(this, this.scale.width / 2, this.scale.height / 2, 48);
@@ -667,9 +808,19 @@ export default class HuntScene extends Phaser.Scene {
     }).setOrigin(0.5, 0).setDepth(40).setVisible(false);
 
     // Subtle hint
-    this.add.text(W - 20, H - 30, '[P] pause  [H] guide  [M] mute  [ESC] menu', {
+    this.add.text(W - 20, H - 30, '[hold] smash  [P] pause  [H] guide  [M] mute  [ESC] menu', {
       fontFamily: 'Consolas, monospace', fontSize: 11, color: '#6a7088',
     }).setOrigin(1, 0).setDepth(40);
+
+    // On-screen ⏸ (touch has no P / ESC) — right of the deadline bar
+    const pb = this.add.container(W / 2 + 196, 34).setDepth(44);
+    const pbRing = this.add.circle(0, 0, 20, 0x05080f, 0.75).setStrokeStyle(2, 0x9aa3b2, 0.9)
+      .setInteractive({ useHandCursor: true });
+    const pbIcon = this.add.text(0, 0, '⏸', { fontFamily: 'Arial Black, sans-serif', fontSize: 18, color: '#e8f4ff' }).setOrigin(0.5);
+    pb.add([pbRing, pbIcon]);
+    pbRing.on('pointerup', () => { if (this.state === 'playing') this._togglePause(); });
+    this._pauseBtn = pb;
+    this._pauseBtnR = 30;
   }
 
   _updateHUD(c) {
@@ -727,7 +878,17 @@ export default class HuntScene extends Phaser.Scene {
   // ============================================================ INPUT
   _onPointerMove(p) {
     if (this.state !== 'playing') return;
+    // Don't walk toward the ⏸ button when it's tapped
+    const b = this._pauseBtn;
+    if (b && p.isDown && Math.hypot(p.x - b.x, p.y - b.y) < this._pauseBtnR) return;
     this.player.setTarget(p.x, p.y);
+  }
+
+  _onEsc() {
+    if (this._helpContainer) { this._toggleHelp(); return; }
+    if (this.state === 'playing') this._togglePause(true);
+    else if (this.state === 'paused') this._togglePause();
+    else if (this.state === 'lost' || (this.state === 'won' && this._winInfo)) this.scene.start('MenuScene');
   }
 
   // ============================================================ HIT VFX
@@ -744,9 +905,20 @@ export default class HuntScene extends Phaser.Scene {
   }
 
   // ============================================================ OVERLAYS
+  /** End of level: hide live HUD bits + pickups so nothing pokes through the overlay. */
+  _clearPlayfieldForOverlay() {
+    for (const o of [this.timerLabel, this.timerText, this.timerBg, this.timerFg, this.comboText, this._pauseBtn]) o?.setVisible(false);
+    this.skills?._hudContainer?.setVisible(false);
+    for (const p of this.skills?.pickups || []) { try { p.destroy(true); } catch (_) { /* gone */ } }
+    if (this.skills?.pickups) this.skills.pickups.length = 0;
+    this._skillTimer?.remove(false);
+  }
+
   _showWinOverlay(timeBonus, hasNext, exchanges = []) {
     const { width: W, height: H } = this.scale;
-    const c = this.add.container(0, 0).setDepth(60);
+    this._clearPlayfieldForOverlay();
+    // Depth 200: above the player (10), pickups (6–7) and the finale actors (73–79)
+    const c = this.add.container(0, 0).setDepth(OVERLAY_DEPTH);
     c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.78));
 
     const title = hasNext ? 'BUGS FIXED!' : 'ALL DEADLINES MET!';
@@ -770,6 +942,48 @@ export default class HuntScene extends Phaser.Scene {
       fontFamily: 'Consolas, monospace', fontSize: 14, color: '#ffd23f',
     }).setOrigin(0.5));
 
+    // ── Stars + NEW BEST (EP-14) ──
+    const info = this._winInfo || { stars: 1, missions: [], hats: [] };
+    const starRow = this.add.container(W / 2, 34);
+    for (let i = 0; i < 3; i++) {
+      const on = i < info.stars;
+      const st = this.add.text((i - 1) * 46, 0, '★', {
+        fontFamily: 'Arial Black, sans-serif', fontSize: 40, color: on ? '#ffd23f' : '#3a4050',
+        stroke: '#000', strokeThickness: 5,
+      }).setOrigin(0.5).setScale(on ? 0.2 : 1);
+      starRow.add(st);
+      if (on) {
+        this.tweens.add({ targets: st, scale: 1, duration: 260, delay: 250 + i * 220, ease: 'Back.easeOut',
+          onStart: () => AudioManager.combo?.(Math.min(3, i + 1)) });
+      }
+    }
+    c.add(starRow);
+    const tag = info.newBest ? 'NEW BEST!' : (info.firstClear ? 'FIRST CLEAR!' : '');
+    if (tag) {
+      const nb = this.add.text(W / 2 + 96, 34, tag, {
+        fontFamily: 'Arial Black, sans-serif', fontSize: 16, color: '#7ed957', stroke: '#000', strokeThickness: 4,
+      }).setOrigin(0, 0.5).setAngle(-6);
+      this.tweens.add({ targets: nb, scale: { from: 1, to: 1.12 }, duration: 420, yoyo: true, repeat: -1 });
+      c.add(nb);
+    }
+    if (info.stars < 3) {
+      c.add(this.add.text(W / 2 - 96, 34, info.stars < 2 ? '2★ = 25% time left' : '3★ = 45% time left', {
+        fontFamily: 'Consolas, monospace', fontSize: 11, color: '#9aa3b2',
+      }).setOrigin(1, 0.5));
+    }
+    // Missions / hats earned by this clear
+    const rewards = [
+      ...info.missions.map((m) => `✅ Daily mission complete: ${m.text}`),
+      ...info.hats.map((h) => `🎉 New hat unlocked: ${h.emoji} ${h.name}`),
+    ];
+    if (rewards.length) {
+      AudioManager.reward?.();
+      c.add(this.add.text(W / 2, H - 150, rewards.join('\n'), {
+        fontFamily: 'Arial Black, sans-serif', fontSize: 14, color: '#7ed957',
+        stroke: '#000', strokeThickness: 4, align: 'center',
+      }).setOrigin(0.5, 1).setDepth(63));
+    }
+
     const buttons = hasNext
       ? [
           { label: 'NEXT LEVEL',  color: 0x7ed957, action: () => this.scene.restart({ levelIndex: this.levelIndex + 1 }) },
@@ -779,6 +993,10 @@ export default class HuntScene extends Phaser.Scene {
           { label: 'PLAY AGAIN',  color: 0x7ed957, action: () => this.scene.restart({ levelIndex: 0 }) },
           { label: 'MENU',        color: 0x2d6cdf, action: () => this.scene.start('MenuScene') },
         ];
+    // World 1 done → point them at the online arena (EP-14)
+    if (this.levelIndex === 2) {
+      buttons.splice(1, 0, { label: 'PLAY ONLINE ▶', color: 0x39a0d0, action: () => this.scene.start('MultiPlayScene') });
+    }
     this._playEndDialog(c, exchanges, buttons);
   }
 
@@ -786,7 +1004,8 @@ export default class HuntScene extends Phaser.Scene {
     const { width: W, height: H } = this.scale;
     const msg = FAIL_MESSAGES[Math.floor(Math.random() * FAIL_MESSAGES.length)];
     const c = this.spawner.count();
-    const container = this.add.container(0, 0).setDepth(60);
+    this._clearPlayfieldForOverlay();
+    const container = this.add.container(0, 0).setDepth(OVERLAY_DEPTH);
     container.add(this.add.rectangle(W / 2, H / 2, W, H, 0x300000, 0.82));
     container.add(this.add.text(W / 2, 96, 'YOU LOSE', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 64, color: '#ff8a3d',
@@ -844,7 +1063,8 @@ export default class HuntScene extends Phaser.Scene {
     if (!exchanges || exchanges.length === 0) return;
 
     // Show the first exchange immediately
-    let idx = 0;
+    // Start at a different line per level so back-to-back wins don't repeat the joke
+    let idx = (this.levelIndex * 3 + Math.floor(Math.random() * exchanges.length)) % exchanges.length;
     const renderExchange = (i) => {
       const ex = exchanges[i % exchanges.length];
       pmBubble.text.setText(ex.pm || '');
@@ -1005,29 +1225,33 @@ export default class HuntScene extends Phaser.Scene {
     const t = this.add.text(W / 2, 100, m ? '🔇 MUTED' : '🔊 SOUND ON', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 18, color: '#ffd23f',
       stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(80);
+    }).setOrigin(0.5).setDepth(OVERLAY_DEPTH + 20);
     this.tweens.add({ targets: t, alpha: 0, y: 70, duration: 900,
       onComplete: () => t.destroy() });
   }
 
   // ============================================================ PAUSE
-  _togglePause() {
+  /** P / ⏸ toggles; ESC opens the same card phrased as "leave?" (quitAsk). */
+  _togglePause(quitAsk = false) {
     if (this.state === 'playing') {
       this.state = 'paused';
       AudioManager.pause();
       const { width: W, height: H } = this.scale;
-      const c = this.add.container(0, 0).setDepth(70);
-      c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65));
-      c.add(this.add.text(W / 2, H / 2 - 80, 'PAUSED', {
+      const c = this.add.container(0, 0).setDepth(OVERLAY_DEPTH);
+      // Interactive backdrop swallows taps so they don't steer the hunter
+      c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65).setInteractive());
+      c.add(this.add.text(W / 2, H / 2 - 80, quitAsk ? 'LEAVE THE LEVEL?' : 'PAUSED', {
         fontFamily: 'Arial Black, sans-serif', fontSize: 48, color: '#ffd23f',
         stroke: '#000', strokeThickness: 6,
       }).setOrigin(0.5));
-      c.add(this.add.text(W / 2, H / 2 - 30, 'press P to resume', {
+      c.add(this.add.text(W / 2, H / 2 - 30, quitAsk
+        ? "This attempt won't be saved. ESC again = keep smashing."
+        : 'press P to resume', {
         fontFamily: 'Consolas, monospace', fontSize: 14, color: '#9aa3b2',
       }).setOrigin(0.5));
-      c.add(this._makeButton(W / 2 - 110, H / 2 + 40, 'RESUME', 0x7ed957,
+      c.add(this._makeButton(W / 2 - 110, H / 2 + 40, quitAsk ? 'KEEP SMASHING' : 'RESUME', 0x7ed957,
         () => this._togglePause()));
-      c.add(this._makeButton(W / 2 + 110, H / 2 + 40, 'MENU',   0x2d6cdf,
+      c.add(this._makeButton(W / 2 + 110, H / 2 + 40, quitAsk ? 'QUIT TO MENU' : 'MENU', 0x2d6cdf,
         () => this.scene.start('MenuScene')));
       this._pauseOverlay = c;
     } else if (this.state === 'paused') {
@@ -1046,7 +1270,7 @@ export default class HuntScene extends Phaser.Scene {
       return;
     }
     const { width: W, height: H } = this.scale;
-    const c = this.add.container(0, 0).setDepth(80);
+    const c = this.add.container(0, 0).setDepth(OVERLAY_DEPTH + 10);
     c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.85));
     // Scale the 1536x1024 guide image to fit
     const img = this.add.image(W / 2, H / 2 - 20, 'skills-guide');

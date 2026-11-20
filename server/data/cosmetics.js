@@ -4,6 +4,8 @@
 export const HAT_IDS = new Set([
   'headset', 'cap', 'coffee', 'gradcap', 'tophat', 'duck',
   'pizza', 'fire', 'skull', 'brain', 'golden', 'rocket',
+  // Experience Pass 1 (career hats from Team Mode / streaks / campaign)
+  'badge', 'captain', 'standup', 'unicorn', 'broom',
 ]);
 
 export function sanitizeHat(id) {

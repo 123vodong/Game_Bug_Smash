@@ -87,7 +87,8 @@ export default class TeamLobbyScene extends Phaser.Scene {
     }
   }
 
-  init() {
+  init(data) {
+    this._autoQueue = !!data?.autoQueue; // round 2: PLAY AGAIN after a quick match queues right away
     this._leaving = false;
     this._editing = false;
     this._ignoreKeysUntil = 0;
@@ -134,6 +135,10 @@ export default class TeamLobbyScene extends Phaser.Scene {
     this._bindKeys();
     this.events.once('shutdown', () => this._cleanup());
     this.cameras.main.fadeIn(280, 0, 0, 0);
+    if (this._autoQueue) {
+      this._autoQueue = false;
+      this.time.delayedCall(350, () => { if (!this._shuttingDown && !this._leaving && !this._queue) this._findMatch(); });
+    }
   }
 
   // ───────────────────────── background + header ─────────────────────────
@@ -902,7 +907,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
     q.status = `connecting to ${url} …`;
     try {
       const client = new Colyseus.Client(url);
-      const room = await client.joinOrCreate('team', { name: this._playerName(), champ });
+      const room = await client.joinOrCreate('team', { name: this._playerName(), champ, hat: SaveManager.getHat?.() || '' }); // EP-11
       if (this._queue !== q || this._shuttingDown) { try { room.leave(); } catch (_) { /* ignore */ } return; }
       q.room = room;
       q.joinedAt = Date.now();

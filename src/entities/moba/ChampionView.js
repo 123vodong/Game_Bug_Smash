@@ -9,7 +9,7 @@
 // (deck + 2 spinning wheels; he leans instead of running). ≤ 6 extra images.
 import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { RECALL_MS } from '../../../shared/moba/rules.js';
-import { FONT, BAR, ME_COLOR, D, depthAt, teamColor, teamCss, relation, approach } from './mobaGfx.js';
+import { FONT, BAR, ME_COLOR, D, depthAt, teamColor, teamCss, relation, approach, calmPrefs, hatEmoji } from './mobaGfx.js';
 
 // Nameplate / HP+mana bars / level badge / status icons live in a SEPARATE container at a
 // fixed depth just below damage numbers, so opaque walls (v3 partitions, cubicles, shelves)
@@ -73,6 +73,7 @@ export class ChampionView {
     this._phase = Math.random() * 4000;
     this.moving = false;
     this.hidden = false;           // v4: in a bush (own team only — hidden enemies are not sent)
+    this.plateDy = 0; this._plateDy = 0; this._plateScale = 1; // round 2: crowded-fight nameplate stacking
     this.destroyed = false;
     this._fading = false;
 
@@ -121,11 +122,23 @@ export class ChampionView {
       fontFamily: FONT, fontSize: 13, color: isMe ? '#ffd23f' : teamCss(ch.team), stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5);
     this._isBot = !!ch.isBot;
-    over.push(this.lvBg, this.lvText, this.name, this.status, this.stunFx);
+    // EP-11: the player's cosmetic hat (TeamChamp.hat → emoji) floats above the nameplate.
+    this._hat = null;
+    this.hatT = scene.add.text(0, BAR_Y - 40, '', { fontSize: 20, padding: { y: 4 } }).setOrigin(0.5).setVisible(false);
+    this._setHat(ch.hat);
+    over.push(this.lvBg, this.lvText, this.name, this.status, this.stunFx, this.hatT);
     c.add(parts);
     this.ov = scene.add.container(ch.x, ch.y, over).setDepth(OVERLAY_DEPTH);
     this._setPose('idle');
     if (this.dead) { c.setVisible(false); this.ov.setVisible(false); }
+  }
+
+  _setHat(id) {
+    const hid = typeof id === 'string' ? id : '';
+    if (hid === this._hat) return;
+    this._hat = hid;
+    const e = hatEmoji(hid);
+    this.hatT.setText(e).setVisible(!!e);
   }
 
   /** World point projectiles / sparks aim at (chest). */
@@ -143,6 +156,7 @@ export class ChampionView {
       const nm = String(ch.name || this.def.name).slice(0, 18);
       this.name.setText(this._isBot ? `🤖 ${nm}` : nm);
     }
+    if ((ch.hat || '') !== this._hat) this._setHat(ch.hat || '');
     this.tx = ch.x; this.ty = ch.y;
     const dead = !!ch.dead;
     if (dead !== this.dead) {
@@ -188,6 +202,9 @@ export class ChampionView {
     if (icons !== this.status.text) this.status.setText(icons);
     this.targetId = ch.targetId || '';
   }
+
+  /** Round 2: crowded fights — shrink a non-focused nameplate (1 = normal). */
+  setPlateScale(s) { if (s !== this._plateScale) { this._plateScale = s; this.ov.setScale(s); } }
 
   /** Local prediction drives the local champion's displayed position. */
   setDisplayPos(x, y) { this.x = x; this.y = y; }
@@ -254,14 +271,18 @@ export class ChampionView {
     }
     this._drawRecall(srvNow);
     this.c.setPosition(this.x, this.y);
-    this.ov.setPosition(this.x, this.y);
+    if (this._plateDy !== this.plateDy) {
+      const d = this.plateDy - this._plateDy;
+      this._plateDy = Math.abs(d) < 0.5 ? this.plateDy : this._plateDy + d * approach(dt, 14);
+    }
+    this.ov.setPosition(this.x, this.y + this._plateDy);
     const dep = depthAt(this.y);
     if (Math.abs(dep - this.c.depth) > 0.01) this.c.setDepth(dep);
   }
 
   /** Brief white outline (took damage). */
   flash(color = 0xffffff) {
-    if (this.dead) return;
+    if (this.dead || !calmPrefs().flashes) return; // EP-10: settings.flashes off → no white outline
     for (const o of this.outlines) o.setTintFill(color);
     this._flashUntil = this.scene.time.now + 90;
   }

@@ -86,8 +86,10 @@ app.get('/api/team/rooms', async (_req, res) => {
   }
 });
 
-// Dev-only Colyseus monitor (lists active rooms + clients).
-app.use('/colyseus', monitor());
+// Dev-only Colyseus monitor (lists active rooms + clients and can DISPOSE them),
+// so it is OPT-IN: BUG_SMASH_MONITOR=1. Without it /colyseus is a plain 404.
+const MONITOR = process.env.BUG_SMASH_MONITOR === '1';
+if (MONITOR) app.use('/colyseus', monitor());
 
 const httpServer = http.createServer(app);
 
@@ -114,5 +116,5 @@ gameServer.define('team_custom', TeamRoom, { custom: true });
 
 gameServer.listen(PORT).then(() => {
   console.log(`[bug-smash-server] listening on ws://localhost:${PORT}`);
-  console.log(`[bug-smash-server] monitor at http://localhost:${PORT}/colyseus`);
+  if (MONITOR) console.log(`[bug-smash-server] monitor at http://localhost:${PORT}/colyseus`);
 });

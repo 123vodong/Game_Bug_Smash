@@ -4,7 +4,7 @@
 // and a destroy animation when `alive` flips false.
 import { TOWER, TEAM_INFO } from '../../../shared/moba/rules.js';
 import {
-  D, FONT, BAR, depthAt, teamColor, teamCss, relation,
+  D, FONT, BAR, depthAt, teamColor, teamCss, relation, calmPrefs,
   CORE_TEX_W, CORE_TEX_H, CORE_BAYS, CORE_BAY_Y0, CORE_BAY_STEP,
 } from './mobaGfx.js';
 
@@ -105,7 +105,7 @@ export class StructureView {
   }
 
   flash() {
-    if (!this.alive || !this.body?.scene) return;
+    if (!this.alive || !this.body?.scene || !calmPrefs().flashes) return; // EP-10: settings.flashes
     this.body.setTintFill(0xffffff);
     this.scene.time.delayedCall(70, () => { if (this.body?.scene) this.body.clearTint(); });
   }

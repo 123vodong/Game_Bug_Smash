@@ -54,7 +54,25 @@ export const BOT_TEAM_LINES = {
   lose: ['gg', 'post-mortem at 9am...', 'ff... jk gg', 'gg, who wrote the rollback plan?'],
   idle: ['farm farm farm', "who's doing the code review after?", 'mid missing', 'my keyboard is clicky', 'anyone else hungry?', 'cà phê đâu rồi ☕'],
   takeover: ['{b} disconnected, I got this', 'covering for {b} until they reboot'],
+  // Experience Pass 1 (§5): rollback vote
+  voteYes: ['ok rollback đi, tôi muốn về nhà', 'yes. revert everything.', 'rollback, I have a dentist appointment'],
+  voteNo: ['I voted no, I have stock options', 'no. we can still hotfix this', 'no rollback, I believe in this sprint'],
+  handback: ['welcome back {b}, I only pushed to main twice', '{b} is back, returning the laptop 💻'],
 };
+
+/** Experience Pass 1 (§5): reconnect / disconnect feed lines ({a} = the human). */
+export const DISCONNECT_LINE = '📶 {a} lost Wi-Fi — a bot holds their laptop for {s}s';
+export const RECONNECT_LINES = [
+  "🔌 {a} is back — 'just restarting my router'",
+  '☕ {a} returned. The bot already pushed to main.',
+];
+export const RECONNECT_TIMEOUT_LINE = '🤖 {a} did not come back — the bot keeps their laptop';
+
+/** Experience Pass 1 (§5): rollback (concede) vote copy. */
+export const ROLLBACK_PASS_TITLE = '🔙 {team} rolled back. {other} ships unopposed.';
+export const ROLLBACK_PASS_SUB = 'Rollback vote passed {yes}/{need} after {t}';
+export const ROLLBACK_FAIL_LINE = 'Rollback rejected. The sprint continues 😩';
+export const ROLLBACK_START_LINE = "🏳 {by} wants last Friday's build back — rollback vote ({yes}/{need})";
 
 /** Bots answer humans in chat when a message matches (first match wins). */
 export const BOT_TEAM_REPLIES = [

@@ -11,12 +11,13 @@ export const TEAM_INFO = {
 };
 
 // ── Match flow ──
-export const LOBBY_MS = 12000;              // queue: countdown from the first human join (or startNow) → champion select
+export const LOBBY_MS = 8000;               // quick-play queue: countdown from the first human join (or startNow) → champion select
+export const LOBBY_SOLO_MS = 3000;          // EP-19 r2: only one human in the queue → start this soon (others can still join meanwhile)
 // v3 match flow: lobby (queue) → select (champion select) → loading → playing → ended.
 export const SELECT_MS = 30000;             // champion select timer (humans auto-lock their hover / a random free champ)
-export const SELECT_BOT_PICK_MS = [3000, 22000]; // bots lock in at random times inside this window
-export const SELECT_ALL_LOCKED_MS = 3000;   // everyone locked → select ends this soon after
-export const LOADING_MS = 4000;             // loading screen (10 champions) before playing
+export const SELECT_BOT_PICK_MS = [1000, 3000];  // EP-19 r2: bots lock fast (was 3–22 s → 1.5–6 s → 1–3 s)
+export const SELECT_ALL_LOCKED_MS = 1500;   // everyone locked → select ends this soon after (was 3 s)
+export const LOADING_MS = 2500;             // loading screen (10 champions) before playing (was 4 s)
 export const PICK_RATE_MS = 150;            // min interval between accepted pick / spells messages
 export const END_LINGER_MS = 20000;         // victory screen before the room closes
 export const TICK_MS = 50;                  // 20 Hz simulation
@@ -153,6 +154,12 @@ export const BUSH_REVEAL_MS = 1500;          // attacking / casting from a bush 
 export const AUTO_AIM_SLACK = 150;           // auto-aim looks for enemies within skill range + this
 export const ROOM_NAME_MAX = 24;             // custom room name length
 export const ROOM_MAX_HUMANS = 10;           // custom rooms: up to 10 humans (5 per side)
+
+// ── Experience Pass 1: "Rollback" (concede) vote — EXPERIENCE_PASS_BREAKDOWN.md §3.3 ──
+export const ROLLBACK_FROM_MS = 720000;      // votes allowed from 12:00
+export const ROLLBACK_VOTE_MS = 20000;       // a vote stays open this long
+export const ROLLBACK_COOLDOWN_MS = 180000;  // per team, after a failed vote
+export const ROLLBACK_NEED = 4;              // yes votes (of 5 seats) — and no human may vote no
 
 // ── Champion leveling helper ──
 /** Stat at a level: base + growth × (level − 1). */

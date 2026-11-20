@@ -1,43 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Claude Haiku — Debuff (red-orange, with hazard crack overlay) -->
+  <!-- Intern Bot — Random debuff (orange): a well-meaning bot rolling the dice -->
   <defs>
     <linearGradient id="bg-haiku" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ff8a55"/>
-      <stop offset="100%" stop-color="#9c2018"/>
+      <stop offset="0%" stop-color="#ff9a5a"/>
+      <stop offset="100%" stop-color="#b8341e"/>
     </linearGradient>
     <linearGradient id="hl-haiku" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
-
-  <rect x="4" y="4" width="120" height="120" rx="22"
-        fill="url(#bg-haiku)" stroke="#3a0a05" stroke-width="3"/>
+  <rect x="4" y="4" width="120" height="120" rx="22" fill="url(#bg-haiku)" stroke="#4a1208" stroke-width="3"/>
   <rect x="10" y="10" width="108" height="56" rx="16" fill="url(#hl-haiku)"/>
-
-  <!-- White asterisk burst -->
-  <g transform="translate(64 64)" stroke="#ffffff" stroke-width="7" stroke-linecap="round">
-    <line x1="-28" y1="0"   x2="28" y2="0"/>
-    <line x1="0"   y1="-28" x2="0"  y2="28"/>
-    <line x1="-20" y1="-20" x2="20" y2="20"/>
-    <line x1="-20" y1="20"  x2="20" y2="-20"/>
-    <line x1="-12" y1="-26" x2="12" y2="26"/>
-    <line x1="-12" y1="26"  x2="12" y2="-26"/>
+  <!-- die (tilted) -->
+  <g transform="rotate(-12 60 66)">
+    <rect x="28" y="34" width="64" height="64" rx="12" fill="#ffffff" stroke="#4a1208" stroke-width="3"/>
+    <circle cx="44" cy="50" r="6" fill="#4a1208"/>
+    <circle cx="60" cy="66" r="6" fill="#4a1208"/>
+    <circle cx="76" cy="82" r="6" fill="#4a1208"/>
   </g>
-  <circle cx="64" cy="64" r="6" fill="#ffffff"/>
-
-  <!-- Crack / glitch overlay -->
-  <g stroke="#3a0a05" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.7">
-    <path d="M14 30 L26 38 L20 44 L34 50"/>
-    <path d="M100 22 L92 30 L100 32 L94 42"/>
-    <path d="M22 96 L30 100 L26 108 L36 112"/>
-    <path d="M108 90 L100 96 L106 102 L98 110"/>
-  </g>
-
-  <!-- Small warning ! in corner -->
-  <g transform="translate(102 102)">
-    <circle cx="0" cy="0" r="11" fill="#ffd23f" stroke="#3a0a05" stroke-width="2"/>
-    <rect x="-1.5" y="-6" width="3" height="7" fill="#3a0a05"/>
-    <circle cx="0" cy="4" r="1.6" fill="#3a0a05"/>
+  <!-- intern lanyard badge with "?" -->
+  <circle cx="98" cy="96" r="15" fill="#ffd23f" stroke="#4a1208" stroke-width="3"/>
+  <text x="98" y="103" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="20" fill="#4a1208">?</text>
+  <!-- wobble marks -->
+  <g stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" fill="none">
+    <path d="M18 30 l6 -6 l4 6"/>
+    <path d="M102 26 l6 6 l-6 4"/>
   </g>
 </svg>

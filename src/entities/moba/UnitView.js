@@ -7,7 +7,7 @@
 // as fallback. Pets (kind 'pet', `owner` = champion key): small, owner's team ring,
 // no HP bar, hover bob, never targetable (hitTest → false, `targetable` = false).
 import { MINIONS, CAMPS, EPICS } from '../../../shared/moba/rules.js';
-import { FONT, BAR, depthAt, teamColor, relation, approach } from './mobaGfx.js';
+import { FONT, BAR, depthAt, teamColor, relation, approach, calmPrefs } from './mobaGfx.js';
 import { ensureMobaLooks, unitTextureKey, unitName, lookMeta } from './looks.js';
 
 // Bug PNGs are colorful → light tint; robot textures are neutral grays → stronger tint.
@@ -173,9 +173,10 @@ export class UnitView {
   flash() {
     if (this.dying) return;
     const now = this.scene.time.now;
+    this._punchUntil = now + 110;
+    if (!calmPrefs().flashes) return; // EP-10: settings.flashes off → punch only, no white flash
     if (this.body.setTintFill) this.body.setTintFill(0xffffff);
     this._flashUntil = now + 70;
-    this._punchUntil = now + 110;
   }
 
   /** Small step toward a melee target. */

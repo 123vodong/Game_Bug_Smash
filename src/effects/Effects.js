@@ -1,5 +1,8 @@
 // Effects — shared visual juice for the hunter scene.
 // All functions take a Phaser scene and produce ephemeral self-destructing tweens.
+// Screen shake goes through camera.shake (gated globally by core/FxPrefs.js); the
+// full-screen flash below checks the "Flashes" setting itself.
+import { fxAllowed } from '../core/FxPrefs.js';
 
 /** Tiny screen shake. magnitude in px, duration in ms. */
 export function screenShake(scene, durationMs = 150, magnitude = 0.005) {
@@ -70,6 +73,7 @@ export function hitNumbers(scene, x, y, text, color = '#ffd23f', size = 18) {
 
 /** Brief white flash overlaid on the scene (for big events). */
 export function fullScreenFlash(scene, color = 0xffffff, alpha = 0.3, durationMs = 120) {
+  if (!fxAllowed('flashes')) return;
   const { width: W, height: H } = scene.scale;
   const f = scene.add.rectangle(W / 2, H / 2, W, H, color, alpha).setDepth(50);
   scene.tweens.add({

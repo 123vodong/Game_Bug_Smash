@@ -36,6 +36,20 @@ window.__game = game;
 //   ?scene=team[&champ=pixel][&name=X][&offline=1] → straight into a Team Mode match
 const params = new URLSearchParams(window.location.search);
 const deepScene = params.get('scene');
+// Custom-room invite link: ?room=<roomId> → straight to the rooms screen, joining that code (EP-11).
+const inviteRoom = params.get('room');
+if (inviteRoom && /^[A-Za-z0-9_-]{1,32}$/.test(inviteRoom) && !deepScene) {
+  game.events.once('ready', () => {
+    game.scene.stop('MenuScene');
+    let name = '';
+    try { name = window.localStorage && JSON.parse(localStorage.getItem('bugSmashHunter.save.v1') || '{}').playerName || ''; } catch (_) { /* no save */ }
+    game.scene.start('TeamCustomScene', { joinCode: inviteRoom, name });
+  });
+}
+// The platformer prototype is hidden from the menu (EP-22) but stays reachable: ?scene=platformer
+if (deepScene === 'platformer') {
+  game.events.once('ready', () => { game.scene.stop('MenuScene'); game.scene.start('PlatformerScene'); });
+}
 if (deepScene === 'lobby' || deepScene === 'team') {
   game.events.once('ready', () => {
     game.scene.stop('MenuScene');

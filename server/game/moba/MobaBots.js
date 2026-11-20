@@ -37,6 +37,7 @@ import { SPELLS } from '../../../shared/moba/spells.js';
 import { classifySkill } from './SkillEngine.js';
 import { lanePath, dist, otherTeam, LANE_IDS } from './geo.js';
 import { BOT_TEAM_LINES, BOT_TEAM_REPLIES } from './lines.js';
+import { VOTE_BOT_KILL_GAP } from './tuning.js';
 
 const ROLE_LANE = { top: 'top', jungle: 'mid', mid: 'mid', bot: 'bot', support: 'bot' };
 const SLOTS = ['q', 'w', 'e', 'r'];
@@ -44,22 +45,39 @@ const SLOTS = ['q', 'w', 'e', 'r'];
 // ── Bot tunables (server-only) ──
 const THINK_MS = [240, 360];          // per-bot decision cadence
 const PLAN_EVERY_MS = 1000;           // team plans
-const RETREAT_HP = 0.3;               // run home below this HP fraction
-const RETREAT_HP_OUTNUMBERED = 0.5;   // … or below this when the local fight is lost
-const FIGHT_MIN_HP = 0.4;             // don't start fights below this
+const RETREAT_HP = 0.2;               // run home below this HP fraction (EP-05: was 0.3 — fights ended before anyone died)
+const RETREAT_HP_OUTNUMBERED = 0.42;  // … or below this when the local fight is lost (was 0.5)
+const FIGHT_MIN_HP = 0.32;            // don't start fights below this (was 0.4)
 const DANGER_RATIO = 1.6;             // enemy power nearby > ours × this → back off to a tower
 const TOWER_POWER = 18;               // an allied tower counts like a mid-game champion
 const RECALL_GOLD_MIN = 850;          // recall to shop once this rich (and the next item is affordable)
 const BASE_HEAL_TO = 0.9;             // wait in the fountain until this HP fraction
-const GROUP_AFTER_MS = 13 * 60000;    // late game: the whole team groups and pushes one lane
-const GROUP_AFTER_TOWERS = 4;         // … or once this many enemy towers are down
+const GROUP_AFTER_MS = 8 * 60000;     // late game: the whole team groups and pushes one lane (EP-05: was 13:00)
+const GROUP_AFTER_TOWERS = 3;         // … or once this many enemy towers are down (was 4)
 const EPIC_MIN_ALLIES = 3;
 const DEADLINE_MIN_AVG_LEVEL = 6;
 const GOLDEN_MIN_AVG_LEVEL = 3;
 const EPIC_GIVE_UP_MS = 60000;
-const GANK_EVERY_MS = [16000, 26000];
-const GANK_MIN_LEVEL = 3;
+// EP-05 early-game pacing (bots-only sims: first kill ~5:20, first tower ~8:30, 3 kills by 9:00,
+// 18.8-min matches → see EXPERIENCE_PASS_BREAKDOWN.md EP-05 for the before/after numbers).
+const GANK_EVERY_MS = [12000, 20000];
+const FIRST_GANK_MS = [40000, 60000]; // first jungle gank right after the first camp (was 2:30–3:30)
+const GANK_MIN_LEVEL = 1;             // (was 3)
+const GANK_MIN_SCORE = 0.05;          // gank target score threshold (was 0.35: only hurt laners)
+const DIVE_MIN_LEVEL = 3;             // EP-05 r2: from here a healthy bot dives a LONE low-HP champion under its tower
+const DIVE_FOE_HP = 0.35;             // … at or below this HP fraction (killable, no ally of theirs within DIVE_ALONE_R)
+const DIVE_ALONE_R = 900;
+const SIEGE_HELP_RANGE = 3000;        // EP-05: a jungler with no camp up helps siege a tanked tower this close
+const SIEGE_FIRST_MS = 2 * 60000;     // EP-05: from here a jungler drops its camps to join a tanked siege within SIEGE_ROAM_RANGE
+const SIEGE_ROAM_RANGE = 5000;
+const PUSH_THROUGH_MS = 3.5 * 60000;    // EP-05: from here a laner keeps shoving its wave through any contest it isn't losing (stalemate breaker)
+const DEFEND_RANGE_EARLY = 2200;      // EP-05: before the group phase only bots this close answer a defend call (was 3400 always)
 const HUMAN_GANK_GRACE_MS = 5 * 60000; // junglers leave human laners alone early
+// EP-05 newcomer protection — pacing must not come from farming humans:
+const HUMAN_GRACE_MS = 5 * 60000;     // bots don't START fights with humans before this (they still hit back)
+const HUMAN_MERCY_DEATHS = 2;         // … nor with a human who died this often …
+const HUMAN_MERCY_WINDOW_MS = 180000; // … within this window
+const PROVOKED_MS = 4000;             // a human who hit this bot this recently is fair game
 const BOT_CHAT_GAP_MS = [2800, 5200];
 const IDLE_CHAT_EVERY_MS = [45000, 90000];
 // v3 summoner spells
@@ -85,6 +103,7 @@ export class MobaBots {
     this._chatAt = 0;
     this._idleChatAt = Date.now() + rand(...IDLE_CHAT_EVERY_MS);
     this._laneTowers = this._precomputeLaneTowers();
+    this._humanDeaths = new Map(); // EP-05: human sid -> recent death times (mercy rule)
   }
 
   _newPlan() { return { epic: null, epicSince: 0, epicCooldownUntil: 0, defend: null, group: null, groupUntil: 0 }; }
@@ -103,12 +122,12 @@ export class MobaBots {
     const b = {
       sid, role, lane: ROLE_LANE[role] || 'mid', silent,
       skill: rand(0.55, 0.9),      // reaction + aim quality
-      aggro: rand(0.35, 0.75),     // appetite for trades
+      aggro: rand(0.5, 0.85),      // appetite for trades (EP-05: was 0.35–0.75)
       side: Math.random() < 0.5 ? -1 : 1,
       thinkMs: rand(...THINK_MS),
       nextThinkAt: Date.now() + rand(100, 600),
       skills, lastHp: ch ? ch.hp : 0, hurtAt: 0,
-      gankId: '', gankUntil: 0, nextGankAt: Date.now() + rand(150000, 210000),
+      gankId: '', gankUntil: 0, nextGankAt: Date.now() + rand(...FIRST_GANK_MS),
       campId: '', diveUntil: 0, lastStopAt: 0, recallChatAt: 0,
     };
     this.brains.set(sid, b);
@@ -356,11 +375,14 @@ export class MobaBots {
     let best = null, bestScore = -Infinity;
     for (const { e, d } of ctx.enemyChamps) {
       if (d > reach) continue;
+      if (this._spareHuman(ch, e, now)) continue; // EP-05: newcomer grace / mercy rule
       const killable = e.hp <= this._burst(ch, e, now) * 0.9;
       const tower = this._enemyTowerAt(e.x, e.y, ch.team, 80);
       if (tower) {
-        // Only dive a near-dead target, healthy, while minions tank the tower.
-        if (!(killable && ctx.hp > 0.55 && this._towerTanked(tower, ch.team))) continue;
+        // Only dive a near-dead target, healthy, while minions tank the tower — or (EP-05 r2, Lv3+) a LONE
+        // low-HP one: a tower shot or two is worth the kill.
+        const lone = ch.level >= DIVE_MIN_LEVEL && killable && hpPct(e) <= DIVE_FOE_HP && ctx.hp > 0.5 && this._alone(e, now);
+        if (!lone && !(killable && ctx.hp > 0.55 && this._towerTanked(tower, ch.team))) continue;
       }
       const p = this._localPowers(ch.team, e.x, e.y, 1050);
       const ratio = p.ally / Math.max(0.1, p.enemy);
@@ -517,6 +539,7 @@ export class MobaBots {
     const raw = scaledAmount(k.spec.dmg, ch.level, ch.ad, ch.ap, ch.maxHp);
     for (const e of this.room.champs.values()) {
       if (e.dead || e.team === ch.team || this.room.inFountain(e) || !this.room.canSee(ch.team, e, now)) continue;
+      if (this._spareHuman(ch, e, now)) continue;
       const d = dist(ch, e);
       if (d > k.spec.range * 0.9 || d < 300) continue;
       if (e.hp > damageAfterArmor(raw, e.armor) * 0.95) continue;
@@ -836,7 +859,7 @@ export class MobaBots {
     if (this._contestEpic(b, ch, ctx, now)) return true;
     if (plan.defend && ctx.hp > 0.4) {
       const s = room.structs.get(plan.defend);
-      if (s && s.alive && dist(ch, s) < 3400) {
+      if (s && s.alive && dist(ch, s) < (plan.group || s.tier >= 3 ? 3400 : DEFEND_RANGE_EARLY)) {
         const home = FOUNTAIN[ch.team];
         const d = dist(s, home) || 1;
         // Stand just behind the structure (between it and our fountain).
@@ -950,7 +973,13 @@ export class MobaBots {
     // 2) Push: siege a tanked tower, else clear the wave.
     const plan = this.plans[team];
     const contested = ctx.enemyChamps.some((e) => e.d < 1000);
-    if (!contested || plan.group) {
+    // EP-05: keep sieging a tanked tower through a contest we aren't losing (was: any enemy nearby → stop).
+    const holdSiege = contested && enemyTower && tanked && lp.ally >= lp.enemy * 0.75;
+    // EP-05: winning the lane (more power around the wave + an HP lead on the closest laner) → keep shoving the wave.
+    const near = ctx.enemyChamps[0];
+    const pressure = contested && near && ((lp.ally >= lp.enemy && ctx.hp > hpPct(near.e) + 0.1)
+      || (room.matchMs(now) >= PUSH_THROUGH_MS && lp.ally >= lp.enemy * 0.9 && ctx.hp > 0.45));
+    if (!contested || plan.group || holdSiege || pressure) {
       if (enemyTower && tanked && !enemyTower.invulnerable && dist(ch, enemyTower) < 1100) {
         this._attack(b, ch, enemyTower.id);
         this._farmCasts(b, ch, enemyTower, ctx, now, 0.9); // steroids only, really
@@ -1001,11 +1030,12 @@ export class MobaBots {
         const d = dist(ch, e);
         if (d > 3200 || this._enemyTowerAt(e.x, e.y, ch.team, 150)) continue;
         if (!e.isBot && room.matchMs(now) < HUMAN_GANK_GRACE_MS) continue; // let new humans learn their lane
+        if (this._spareHuman(ch, e, now)) continue;
         const allyNear = [...room.champs.values()].some((a) => a.team === ch.team && !a.dead && a !== ch && dist(a, e) < 1100);
         const score = (1 - hpPct(e)) + (allyNear ? 0.5 : 0) - d / 6000;
         if (score > bestScore) { bestScore = score; best = e; }
       }
-      if (best && bestScore > 0.35) { b.gankId = best.id; b.gankUntil = now + 15000; }
+      if (best && bestScore > GANK_MIN_SCORE) { b.gankId = best.id; b.gankUntil = now + 15000; }
     }
     if (b.gankId) {
       const t = room.champs.get(b.gankId);
@@ -1017,6 +1047,11 @@ export class MobaBots {
         this._attack(b, ch, t.id);
         return;
       }
+    }
+    // EP-05: from 3:00 a tanked siege beats farming camps.
+    if (room.matchMs(now) >= SIEGE_FIRST_MS && ctx.hp > 0.5) {
+      const lane = this._siegeLane(ch, SIEGE_ROAM_RANGE);
+      if (lane) { b.campId = ''; b.lastMode = 'siege'; this._lane(b, ch, ctx, lane, now); return; }
     }
     // Clear our camps.
     const camp = this._pickCamp(b, ch, ctx);
@@ -1035,8 +1070,8 @@ export class MobaBots {
       }
     }
     b.campId = '';
-    // Nothing up: help the lane with the most pressure (default mid).
-    this._lane(b, ch, ctx, this._busiestLane(ch.team), now);
+    // EP-05: nothing up → help siege a tanked enemy tower nearby, else the lane with the most pressure.
+    this._lane(b, ch, ctx, this._siegeLane(ch) || this._busiestLane(ch.team), now);
   }
 
   _pickCamp(b, ch, ctx) {
@@ -1056,6 +1091,30 @@ export class MobaBots {
       let score = Math.hypot(camp.x - ch.x, camp.y - ch.y);
       if (camp.id === b.campId) score -= 800;
       if (score < bestScore) { bestScore = score; best = camp; }
+    }
+    return best;
+  }
+
+  /** EP-05 r2: no (visible, alive) teammate of `e` within DIVE_ALONE_R. */
+  _alone(e, now) {
+    for (const c of this.room.champs.values()) {
+      if (c === e || c.dead || c.team !== e.team) continue;
+      if (Math.hypot(c.x - e.x, c.y - e.y) <= DIVE_ALONE_R && this.room.canSee(otherTeam(e.team), c, now)) return false;
+    }
+    return true;
+  }
+
+  /** EP-05: lane whose next enemy tower is tanked by our minions within SIEGE_HELP_RANGE of `ch`, else null. */
+  _siegeLane(ch, range = SIEGE_HELP_RANGE) {
+    let best = null, bestD = range;
+    for (const lane of LANE_IDS) {
+      for (const t of this._laneTowers[ch.team][lane].enemy) {
+        const s = this.room.structs.get(t.id);
+        if (!s || !s.alive) continue;
+        const d = dist(ch, s);
+        if (d < bestD && !s.invulnerable && this._towerTanked(s, ch.team)) { bestD = d; best = lane; }
+        break;
+      }
     }
     return best;
   }
@@ -1086,7 +1145,7 @@ export class MobaBots {
     if (!carry || dist(ch, carry.c) > 4500) { this._lane(b, ch, ctx, 'bot', now); return; }
     const c = carry.c;
     // Poke enemy champions that come close to the carry (mana permitting).
-    const foe = ctx.enemyChamps.find((e) => e.d < ch.range + 150 && !this._enemyTowerAt(e.e.x, e.e.y, ch.team, 60));
+    const foe = ctx.enemyChamps.find((e) => e.d < ch.range + 150 && !this._enemyTowerAt(e.e.x, e.e.y, ch.team, 60) && !this._spareHuman(ch, e.e, now));
     if (foe && ctx.mana > 0.45) this._offensiveCasts(b, ch, foe.e, ctx, now);
     const home = FOUNTAIN[ch.team];
     const d = dist(c, home) || 1;
@@ -1230,7 +1289,31 @@ export class MobaBots {
     }
   }
 
+  /**
+   * EP-05: leave this HUMAN alone? Before HUMAN_GRACE_MS, or after HUMAN_MERCY_DEATHS deaths in
+   * HUMAN_MERCY_WINDOW_MS — unless they provoked this bot (hit it within PROVOKED_MS) or stand
+   * under our tower. Bot-held seats (disconnected humans) are fair game.
+   */
+  _spareHuman(ch, e, now) {
+    if (e.isBot || e.etype !== 'champ') return false;
+    const hit = ch.damagers.get(e.id);
+    if (hit && now - hit < PROVOKED_MS) return false;
+    if (this._ownTowerAt(e.x, e.y, ch.team, 0)) return false;
+    if (this.room.matchMs(now) < HUMAN_GRACE_MS) return true;
+    const log = this._humanDeaths.get(e.id);
+    if (!log) return false;
+    let n = 0;
+    for (let i = 0; i < log.length; i++) if (now - log[i] < HUMAN_MERCY_WINDOW_MS) n++;
+    return n >= HUMAN_MERCY_DEATHS;
+  }
+
   onChampDeath(victim, killer) {
+    if (!victim.isBot) {
+      const log = this._humanDeaths.get(victim.id) || [];
+      log.push(Date.now());
+      if (log.length > 4) log.shift();
+      this._humanDeaths.set(victim.id, log);
+    }
     const vb = this.brains.get(victim.id);
     if (vb) { vb.gankId = ''; vb.diveUntil = 0; }
     if (killer && this.brains.has(killer.id)) {
@@ -1271,6 +1354,34 @@ export class MobaBots {
     if (w) this._say(w.sid, pick(BOT_TEAM_LINES.win), 1, rand(1200, 2500));
     this._chatAt = 0;
     if (l) this._say(l.sid, pick(BOT_TEAM_LINES.lose), 1, rand(2800, 4500));
+  }
+
+  // ───────────────────────── Experience Pass 1 ─────────────────────────
+  /**
+   * EP-04 (§3.3): bots vote YES on a rollback iff their team has lost more structures than the
+   * enemy, or trails by ≥ VOTE_BOT_KILL_GAP kills — so one human can't throw a close game.
+   */
+  wantsRollback(team) {
+    const room = this.room;
+    let lost = 0, enemyLost = 0;
+    for (const s of room.structs.values()) if (!s.alive) { if (s.team === team) lost++; else enemyLost++; }
+    const st = room.state;
+    const mine = team === 'blue' ? st.blueKills : st.redKills;
+    const theirs = team === 'blue' ? st.redKills : st.blueKills;
+    return lost > enemyLost || theirs - mine >= VOTE_BOT_KILL_GAP;
+  }
+
+  onRollbackVote(sid, yes) {
+    this._chatAt = Math.min(this._chatAt, Date.now() + 400);
+    this._say(sid, pick(yes ? BOT_TEAM_LINES.voteYes : BOT_TEAM_LINES.voteNo), 0.45, rand(300, 900));
+  }
+
+  /** EP-03: a human reconnected and got their laptop back (their brain is already removed). */
+  onHandBack(sid) {
+    const ch = this.room.champs.get(sid);
+    if (!ch) return;
+    const mate = this._randomBot((x) => !x.silent && this.room.champs.get(x.sid)?.team === ch.team);
+    if (mate) this._say(mate.sid, fill(pick(BOT_TEAM_LINES.handback), { b: ch.name }), 0.6);
   }
 
   /** A human said something — maybe a bot answers (same rules as the arena bots). */

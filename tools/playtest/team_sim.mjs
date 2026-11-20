@@ -52,7 +52,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const client = new Client(SERVER);
 if (flag('soak', false)) process.exit(await runSoak(Number(flag('soak', 180)) || 180));
 const AUTOLOCK = !!flag('autolock', false) && !flag('exploits', false);
-const room = await client.joinOrCreate('team', { champ: CHAMP, name: NAME, ...(AUTOLOCK ? { autoLock: true } : {}) });
+const room = await client.joinOrCreate('team', { champ: CHAMP, name: NAME, ...(AUTOLOCK ? { autoLock: true } : {}), ...(EXPLOITS ? { hat: 'duck' } : {}) });
 const t0 = Date.now();
 let skew = 0;
 const ts = () => ((Date.now() - t0) / 1000).toFixed(1).padStart(6);
@@ -64,7 +64,8 @@ let left = false;
 room.onLeave((code) => { left = true; console.log(`${ts()} LEFT room (code ${code})`); });
 
 room.onMessage('welcome', (m) => { bump('welcome'); welcome = m; skew = m.serverNow - Date.now(); console.log(`${ts()} welcome team=${m.team} champ=${m.champ} skew=${skew}ms`); });
-room.onMessage('feed', (m) => { bump('feed'); if (!EXPLOITS) console.log(`${ts()} feed     ${m.text}`); });
+const feedLog = []; // EP-03 checks look for the disconnect / reconnect lines
+room.onMessage('feed', (m) => { bump('feed'); feedLog.push(m.text); if (feedLog.length > 300) feedLog.shift(); if (!EXPLOITS) console.log(`${ts()} feed     ${m.text}`); });
 room.onMessage('announce', (m) => { bump('announce'); if (!EXPLOITS) console.log(`${ts()} ANNOUNCE ${m.title}${m.sub ? ' — ' + m.sub : ''}${m.big ? ' [big]' : ''}`); });
 room.onMessage('chat', (m) => { bump('chat'); if (!EXPLOITS) console.log(`${ts()} chat     ${m.kind || 'human'} ${m.name}: ${m.text}`); });
 room.onMessage('chatHistory', (m) => bump('chatHistory'));
@@ -78,11 +79,11 @@ room.send('hello');
 const FIELDS = {
   champion: ['x', 'y', 'team', 'champ', 'name', 'isBot', 'level', 'xp', 'gold', 'hp', 'maxHp', 'mana', 'maxMana', 'ad', 'ap', 'armor', 'ms', 'range', 'as',
     'dead', 'respawnAt', 'kills', 'deaths', 'assists', 'cs', 'items', 'cdQ', 'cdW', 'cdE', 'cdR', 'stunnedUntil', 'rootedUntil', 'slowUntil', 'slowPct',
-    'shield', 'buffs', 'recallUntil', 'action', 'action_seq', 'targetId', 'locked', 'spellD', 'spellF', 'cdD', 'cdF', 'inBush'],
+    'shield', 'buffs', 'recallUntil', 'action', 'action_seq', 'targetId', 'locked', 'spellD', 'spellF', 'cdD', 'cdF', 'inBush', 'hat'],
   unit: ['x', 'y', 'team', 'kind', 'hp', 'maxHp', 'alive', 'hit_seq', 'campId', 'owner'],
   structure: ['x', 'y', 'team', 'kind', 'lane', 'tier', 'hp', 'maxHp', 'alive', 'invulnerable'],
   state: ['phase', 'lobbyEndsAt', 'startedAt', 'winner', 'blueKills', 'redKills', 'buffBlue', 'buffBlueUntil', 'buffRed', 'buffRedUntil', 'epicGoldenAt', 'epicDeadlineAt', 'selectEndsAt', 'loadingEndsAt',
-    'custom', 'roomName', 'hostId', 'scores'],
+    'custom', 'roomName', 'hostId', 'scores', 'winReason'],
   score: ['team', 'champ', 'name', 'isBot', 'level', 'kills', 'deaths', 'assists', 'cs', 'items', 'dead', 'respawnAt', 'spellD', 'spellF'],
 };
 function contractCheck() {
@@ -184,18 +185,31 @@ process.exit(0);
 async function runExploits() {
   const results = [];
   const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
+  check('EP-03: welcome carries reconnectS (team grace = 60 s)', welcome?.reconnectS === 60, `welcome=${JSON.stringify(welcome)}`);
   // v2: three more humans so the wall / pet / knockback checks have casters + victims.
   //   main = pixel (blue, blink) · B = guard (red, knockback E) · C = embedded (blue, pet) · D = appdev (red, dash E)
   const extra = {};
+  // EP-06 hats: B a bogus id, C 'badge' (new EP-06 id — expected per the server allowlist), D a non-string.
+  const HAT_OPT = { B: 'crown<script>', C: 'badge', D: { toString: 'duck' } };
   for (const [k, champ] of [['B', 'guard'], ['C', 'embedded'], ['D', 'appdev']]) {
     try {
-      const r = await new Client(SERVER).joinOrCreate('team', { champ, name: `Exploit${k}`, autoLock: true });
+      const r = await new Client(SERVER).joinOrCreate('team', { champ, name: `Exploit${k}`, autoLock: true, hat: HAT_OPT[k] });
       r.onMessage('*', () => {});
       extra[k] = r;
     } catch (err) { console.log(`      (could not join extra client ${k}: ${err.message})`); }
   }
   await sleep(400);
   const me = () => room.state.champions.get(room.sessionId);
+  {
+    const { sanitizeHat } = await import('../../server/data/cosmetics.js');
+    const hatOf = (r) => room.state.champions.get(r.sessionId)?.hat;
+    check("EP-06: join option hat:'duck' → TeamChamp.hat synced", me()?.hat === 'duck', `hat='${me()?.hat}'`);
+    check("EP-06: bogus / non-string hat → ''", (!extra.B || hatOf(extra.B) === '') && (!extra.D || hatOf(extra.D) === ''), `B='${extra.B && hatOf(extra.B)}' D='${extra.D && hatOf(extra.D)}'`);
+    if (extra.C) check(`EP-06: hat:'badge' → '${sanitizeHat('badge')}' (server allowlist${sanitizeHat('badge') ? '' : ' has no badge yet'})`, hatOf(extra.C) === sanitizeHat('badge'), `C='${hatOf(extra.C)}'`);
+    let botHats = 0;
+    room.state.champions.forEach((c) => { if (c.isBot && c.hat) botHats++; });
+    check('EP-06: bots wear no hat', botHats === 0, `botHats=${botHats}`);
+  }
   await v3SelectChecks(check, me, extra);
   check('match reaches playing (select → loading → playing)', room.state.phase === 'playing', `phase=${room.state.phase}`);
   await sleep(600);
@@ -276,6 +290,7 @@ async function runExploits() {
   await v2Checks(check, me, extra);
   await v3SpellChecks(check, me, extra);
   await v4BushChecks(check, me, extra);
+  await ep3ReconnectChecks(check, me, extra); // EP-03 (+ runs the EP-04 / EP-06 checks during the 60 s grace wait)
 
   let welcomes = 0;
   room.onMessage('welcome', () => welcomes++);
@@ -312,6 +327,7 @@ async function v2Checks(check, me, extra) {
   const cd = (r) => r.send('debug', { cmd: 'cd' });
   const free = (c, pad = 2) => !isBlocked(c.x, c.y, CHAMP_RADIUS - pad);
   // Is debug on? A tp must move us.
+  for (let i = 0; i < 120 && me()?.dead; i++) await sleep(250); // (aggressive bots: respawn before probing debug hooks)
   tp(room, 1450, 3150);
   await sleep(500);
   if (Math.hypot(me().x - 1450, me().y - 3150) > 5) { console.log(`SKIP  v2 checks (debug hooks off? tp landed at ${me().x},${me().y})`); return; }
@@ -449,22 +465,41 @@ async function v3SelectChecks(check, me, extra) {
   room.send('pick', 'pixel');
   await sleep(200);
   check('v3: pick with junk / prototype keys is rejected', me().champ === CHAMP, `champ=${me().champ}`);
-  room.send('pick', { champ: 'guard' }); // B = red (enemy), locked
+  // EP-19: bots lock within 1.5–6 s (role-balanced) — every champion below is chosen among the ones no
+  // TEAMMATE holds right now, and each step polls the state (message / patch jitter on a busy machine).
+  const waitFor = async (cond, ms = 1500) => { for (let t = 0; t < ms && !cond(); t += 50) await sleep(50); return cond(); };
+  const heldByMates = () => { const h = new Set(); st().champions.forEach((c, sid) => { if (sid !== room.sessionId && c.team === me().team && c.champ) h.add(c.champ); }); return h; };
+  await sleep(300);
+  const enemyPick = [];
+  st().champions.forEach((c) => { if (c.team !== me().team && c.champ && c.locked) enemyPick.push(c.champ); });
+  // Stay in our own lane (mid) while hovering: a hover in another lane makes a bot re-role into ours and
+  // take CHAMP (r2: bots lock in 1–3 s). Prefer an enemy-locked mid champion.
+  const { CHAMPIONS: CH } = await import('../../shared/moba/champions.js');
+  const myLane = CH[CHAMP]?.lane;
+  const dupOk = (c) => !heldByMates().has(c) && c !== CHAMP;
+  const dup = enemyPick.find((c) => dupOk(c) && CH[c]?.lane === myLane) || enemyPick.find(dupOk);
+  room.send('pick', { champ: dup }); // an ENEMY's locked champion (B = guard when free for us)
+  await waitFor(() => me().champ === dup);
+  check("v3: pick an enemy's champion is allowed (enemy duplicates OK)", !!dup && me().champ === dup, `champ=${me().champ} (enemy ${dup})`);
+  await sleep(350);
+  const [pa, pb] = ['model', 'cleaner', 'pixel', 'zero', 'courier', 'tester', 'appdev', 'ops', 'stack', 'dev']
+    .filter((c) => !heldByMates().has(c) && c !== me().champ && c !== CHAMP)
+    .sort((x, y) => (CH[y]?.lane === myLane) - (CH[x]?.lane === myLane));
+  room.send('pick', { champ: pa });
+  room.send('pick', { champ: pb });
+  await waitFor(() => me().champ !== dup, 1000);
   await sleep(250);
-  check("v3: pick an enemy's champion is allowed (enemy duplicates OK)", me().champ === 'guard', `champ=${me().champ}`);
-  await sleep(200);
-  room.send('pick', { champ: 'model' });
-  room.send('pick', { champ: 'zero' });
-  await sleep(250);
-  check('v3: pick is rate-limited (2nd pick within PICK_RATE_MS dropped)', me().champ === 'model', `champ=${me().champ}`);
-  await sleep(200);
+  check('v3: pick is rate-limited (2nd pick within PICK_RATE_MS dropped)', me().champ === pa, `champ=${me().champ} (sent ${pa} then ${pb})`);
+  await sleep(350);
   room.send('pick', { champ: CHAMP });
-  await sleep(250);
+  await waitFor(() => me().champ === CHAMP);
+  await sleep(200);
   room.send('lock');
-  await sleep(250);
+  await waitFor(() => me().locked === true);
   check('v3: lock locks the hovered champion', me().locked === true && me().champ === CHAMP, `champ=${me().champ} locked=${me().locked}`);
-  room.send('pick', { champ: 'model' });
   await sleep(250);
+  room.send('pick', { champ: pa });
+  await sleep(400);
   check('v3: pick after lock is rejected', me().champ === CHAMP, `champ=${me().champ}`);
   const x0 = me().x, y0 = me().y, nFx = fxLog.length;
   room.send('order', { type: 'move', x: 3000, y: 3000 });
@@ -508,6 +543,7 @@ async function v3SpellChecks(check, me, extra) {
   const free = (c, pad = 2) => !isBlocked(c.x, c.y, CHAMP_RADIUS - pad);
   const spellFx = (sid, from) => fxLog.slice(from).filter((f) => f.k === 'spell' && f.sid === sid);
   const waitAlive = async (r) => { for (let i = 0; i < 80 && champ(r)?.dead; i++) await sleep(250); };
+  for (let i = 0; i < 120 && me()?.dead; i++) await sleep(250); // (aggressive bots: respawn before probing debug hooks)
   tp(room, 1450, 3150);
   await sleep(500);
   if (Math.hypot(me().x - 1450, me().y - 3150) > 5) { console.log('SKIP  v3 spell checks (debug hooks off?)'); return; }
@@ -659,6 +695,7 @@ async function v4BushChecks(check, me, extra) {
   const bFx = [];
   B.onMessage('fx', (m) => bFx.push(m));
   B.onMessage('atk', (m) => { for (const e of m) bFx.push({ k: 'atk', ...e }); });
+  for (let i = 0; i < 120 && me()?.dead; i++) await sleep(250); // (aggressive bots: respawn before probing debug hooks)
   tp(room, 1450, 3150);
   await sleep(500);
   if (Math.hypot(me().x - 1450, me().y - 3150) > 5) { console.log('SKIP  v4 bush checks (debug hooks off?)'); return; }
@@ -836,6 +873,11 @@ async function v4RoomChecks(check) {
   }
   await sleep(500);
   check('v4: guests join by roomId (host unchanged)', others.length === 5 && st(host).hostId === host.sessionId, `guests=${others.length}`);
+  { // r2: an invited friend lands on the HOST's side while it has < 5 humans, else the other side
+    const ht = seat(host)?.team;
+    const sides = others.map((r) => seat(r)?.team);
+    check("r2: invite joins land on the host's side until it has 5 humans, then the other side", sides.slice(0, 4).every((t) => t === ht) && sides[4] && sides[4] !== ht, `host ${ht} · guests ${sides.join(',')}`);
+  }
   const all = [host, ...others];
   for (const r of all) { if (seat(r)?.team !== 'blue') r.send('side', { team: 'blue' }); }
   await sleep(500);
@@ -883,4 +925,230 @@ async function v4RoomChecks(check) {
   await sleep(300);
   check('v4: side during select is rejected', seat(newHost)?.team === before, `team=${seat(newHost)?.team}`);
   for (const r of others) { try { await r.leave(); } catch (_) { /* gone */ } }
+}
+
+// ───────────────────────── EP-03: team reconnect grace ─────────────────────────
+// Needs BUG_SMASH_DEBUG=1 (`tp`, `level`, `gold`, `freeze`). C (blue, = main's team) drops its socket
+// (non-consented) and reconnects within the grace; D (red) drops and never comes back. The
+// EP-04 vote checks run in their own rooms while D's 60 s grace runs out.
+async function ep3ReconnectChecks(check, me, extra) {
+  const { C, D } = extra;
+  if (!C || !D) { console.log('SKIP  EP-03 checks (extra clients missing)'); return; }
+  const st = () => room.state;
+  const champ = (sid) => st().champions.get(sid);
+  const score = (sid) => st().scores?.get(sid);
+  const tp = (r, x, y) => r.send('debug', { cmd: 'tp', x, y });
+  for (let i = 0; i < 120 && me()?.dead; i++) await sleep(250); // (aggressive bots: respawn before probing debug hooks)
+  tp(room, 1450, 3150);
+  await sleep(500);
+  if (Math.hypot(me().x - 1450, me().y - 3150) > 5) { console.log('SKIP  EP-03 checks (debug hooks off?)'); await ep4VoteChecks(check); return; }
+  const { ITEMS } = await import('../../shared/moba/items.js');
+  const worth = (c) => (c ? c.gold + [...c.items].reduce((a, id) => a + (id ? ITEMS[id]?.cost || 0 : 0), 0) : 0);
+
+  // D (red) drops for good — checked after the grace (≈ 61 s; the vote checks run meanwhile).
+  const dSid = D.sessionId, dToken = D.reconnectionToken;
+  const dropAt = Date.now();
+  D.connection.close(); // raw socket close (not room.leave()) → non-consented → seat held
+  await sleep(700);
+  check("EP-03: a dropped human's seat is taken by a bot at once (isBot true + feed line)", score(dSid)?.isBot === true && feedLog.some((t) => t.includes('lost Wi-Fi')),
+    `isBot=${score(dSid)?.isBot} feed=${feedLog.filter((t) => t.includes('Wi-Fi')).slice(-1)[0] || 'none'}`);
+
+  // C (blue): drop + reconnect inside the grace with gold / items / level intact and the brain released.
+  const cSid = C.sessionId;
+  room.send('debug', { cmd: 'freeze' }); // bots stop → C's stats can't change while the brain holds it
+  for (let i = 0; i < 120 && champ(cSid)?.dead; i++) await sleep(250); // tp / buy are ignored while dead
+  const home = champ(cSid)?.team === 'blue' ? { x: 520, y: 5480 } : { x: 5480, y: 520 };
+  tp(C, home.x, home.y);
+  C.send('debug', { cmd: 'level', n: 5 });
+  C.send('debug', { cmd: 'gold', n: 1500 });
+  await sleep(500);
+  C.send('buy', { item: 'mouse' });
+  await sleep(400);
+  const before = { level: champ(cSid).level, worth: worth(champ(cSid)), items: [...champ(cSid).items].join(',') };
+  const token = C.reconnectionToken;
+  C.connection.close();
+  await sleep(700);
+  check('EP-03: during the grace the seat is bot-held (isBot true for the team)', champ(cSid)?.isBot === true || score(cSid)?.isBot === true, `isBot=${champ(cSid)?.isBot} score.isBot=${score(cSid)?.isBot}`);
+  let C2 = null, wel = null;
+  try { C2 = await new Client(SERVER).reconnect(token); } catch (err) { check('EP-03: reconnect(token) inside the grace succeeds', false, err.message); }
+  if (C2) {
+    C2.onMessage('*', () => {});
+    C2.onMessage('welcome', (m) => { wel = m; });
+    C2.send('hello');
+    await sleep(800);
+    const c = champ(cSid);
+    check('EP-03: reconnect inside the grace → same sessionId, isBot false (laptop handed back)', C2.sessionId === cSid && c?.isBot === false && score(cSid)?.isBot === false,
+      `sid same=${C2.sessionId === cSid} isBot=${c?.isBot} score.isBot=${score(cSid)?.isBot}`);
+    check('EP-03: level / items / gold kept', !!c && c.level >= before.level && worth(c) >= before.worth - 1 && [...c.items].join(',') === before.items,
+      `level ${before.level}→${c?.level} worth ${before.worth}→${worth(c)} items ${before.items}→${c && [...c.items].join(',')}`);
+    check('EP-03: the reconnected client is welcomed again (new Client) with reconnectS + its team', wel?.reconnectS === 60 && wel?.team === c?.team,
+      `welcome=${JSON.stringify(wel)}`);
+    check('EP-03: reconnected client gets its full team view (own champion + structures)', !!C2.state.champions?.get(cSid) && C2.state.structures?.size > 0,
+      `own=${!!C2.state.champions?.get(cSid)} structures=${C2.state.structures?.size}`);
+    check('EP-03: feed line on return', feedLog.some((t) => t.includes('is back') || t.includes('returned')), feedLog.slice(-3).join(' | '));
+    room.send('debug', { cmd: 'freeze' }); // bots resume — C's brain must be gone: it stays idle in the fountain
+    const p0 = { x: c.x, y: c.y };
+    await sleep(4000);
+    const c1 = champ(cSid);
+    check('EP-03: bot brain released (the champion idles in the fountain, no orders of its own)', !!c1 && Math.hypot(c1.x - p0.x, c1.y - p0.y) < 25 && !c1.isBot,
+      `moved ${c1 ? Math.round(Math.hypot(c1.x - p0.x, c1.y - p0.y)) : '?'} px isBot=${c1?.isBot}`);
+    const p1 = { x: c1.x, y: c1.y }; // (c1 is the live schema object — copy the coordinates)
+    C2.send('order', { type: 'move', x: p1.x + 150, y: p1.y - 150 });
+    await sleep(900);
+    check('EP-03: the reconnected client controls its champion again', Math.hypot(champ(cSid).x - p1.x, champ(cSid).y - p1.y) > 60, `${p1.x},${p1.y} → ${champ(cSid).x},${champ(cSid).y}`);
+    extra.C = C2;
+  } else {
+    room.send('debug', { cmd: 'freeze' });
+  }
+
+  await ep4VoteChecks(check);
+  await ep19HeldSeatCheck(check);
+
+  // D: wait out the 60 s grace → the bot keeps the seat, the old token is dead.
+  const left = 61500 - (Date.now() - dropAt);
+  if (left > 0) { console.log(`      (waiting ${Math.ceil(left / 1000)} s for D's reconnect grace to run out…)`); await sleep(left); }
+  check('EP-03: after the grace the bot keeps the seat (isBot true, timeout feed line)', score(dSid)?.isBot === true && feedLog.some((t) => t.includes('did not come back')),
+    `isBot=${score(dSid)?.isBot} feed=${feedLog.filter((t) => t.includes('come back')).slice(-1)[0] || 'none'}`);
+  let late = null;
+  try { late = await new Client(SERVER).reconnect(dToken); } catch (_) { late = null; }
+  check('EP-03: reconnecting after the grace fails cleanly (token expired)', !late, late ? 'reconnected?!' : 'rejected');
+  if (late) { try { await late.leave(); } catch (_) { /* gone */ } }
+  delete extra.D;
+}
+
+// ───────────────────────── EP-04: rollback (concede) vote ─────────────────────────
+// Own custom rooms (needs BUG_SMASH_DEBUG=1: start, clock, tower).
+async function ep4VoteChecks(check) {
+  const { ROLLBACK_FROM_MS, ROLLBACK_NEED } = await import('../../shared/moba/rules.js');
+  const mk = async (fn) => { const r = await fn(new Client(SERVER)); r.inbox = []; r.onMessage('*', (type, m) => r.inbox.push({ type, m, at: Date.now() })); return r; };
+  const got = (r, type, since = 0) => r.inbox.filter((x) => x.type === type && x.at >= since).map((x) => x.m);
+  const last = (r, type, since = 0) => got(r, type, since).slice(-1)[0];
+  const seat = (r) => r.state.champions.get(r.sessionId);
+  const toPlaying = async (host) => {
+    host.send('startNow');
+    await sleep(500);
+    for (let i = 0; i < 3 && host.state.phase !== 'playing'; i++) { host.send('debug', { cmd: 'start' }); await sleep(500); }
+    for (let i = 0; i < 40 && host.state.phase !== 'playing'; i++) await sleep(100);
+    return host.state.phase === 'playing';
+  };
+  let H1, H2, H3;
+  try {
+    H1 = await mk((c) => c.create('team_custom', { name: 'VoteHost', roomName: 'vote test', champ: 'pixel' }));
+    H2 = await mk((c) => c.joinById(H1.roomId, { name: 'VoteNo', champ: 'ops' }));
+    H3 = await mk((c) => c.joinById(H1.roomId, { name: 'VoteRed', champ: 'guard' }));
+  } catch (err) { check('EP-04: vote test rooms', false, err.message); return; }
+  await sleep(500);
+  for (const [r, t] of [[H1, 'blue'], [H2, 'blue'], [H3, 'red']]) if (seat(r)?.team !== t) { r.send('side', { team: t }); await sleep(450); }
+  await sleep(400);
+  let t0 = Date.now();
+  H1.send('vote', { yes: true });
+  for (let i = 0; i < 15 && !got(H1, 'voteDeny', t0).length; i++) await sleep(100);
+  check("EP-04: vote outside 'playing' (custom room phase) → voteDeny {reason:'phase'}", last(H1, 'voteDeny', t0)?.reason === 'phase', JSON.stringify(got(H1, 'voteDeny', t0)));
+  if (!(await toPlaying(H1))) { check('EP-04: vote room reaches playing (debug start)', false, `phase=${H1.state.phase}`); return; }
+  await sleep(400);
+  t0 = Date.now();
+  H1.send('vote', { yes: true });
+  await sleep(400);
+  check("EP-04: vote before 12:00 → voteDeny {reason:'early'}", last(H1, 'voteDeny', t0)?.reason === 'early' && !got(H1, 'vote', t0).length, JSON.stringify(got(H1, 'voteDeny', t0)));
+  for (const junk of [null, 'yes', { yes: 'true' }, { yes: 1 }, { no: true }]) { H1.send('vote', junk); await sleep(80); }
+  await sleep(400);
+  H1.send('debug', { cmd: 'clock', n: ROLLBACK_FROM_MS + 2000 });
+  H1.send('debug', { cmd: 'tower', team: 'blue' });
+  await sleep(150);
+  H1.send('debug', { cmd: 'tower', team: 'blue' }); // blue lost 2 structures, red 0 → blue bots will vote yes
+  await sleep(500);
+  // An ENEMY (red) vote: its own team's vote — blue sees nothing of it.
+  t0 = Date.now();
+  H3.send('vote', { yes: true });
+  await sleep(4000); // red bots vote (no: red is ahead) → red's vote fails
+  const rv = got(H3, 'vote', t0)[0];
+  check("EP-04: vote payload {yes,no,need,endsAt,by} to the voter's team", !!rv && rv.yes === 1 && rv.no === 0 && rv.need === ROLLBACK_NEED && rv.endsAt > Date.now() - 10000 && rv.by === 'VoteRed', JSON.stringify(rv));
+  check("EP-04: an enemy's vote never reaches the other team", !got(H1, 'vote', t0).length && !got(H2, 'vote', t0).length && !got(H1, 'voteEnd', t0).length, `blue saw ${got(H1, 'vote', t0).length} vote / ${got(H1, 'voteEnd', t0).length} voteEnd`);
+  check('EP-04: bots of the leading team vote no → that vote fails (voteEnd {passed:false})', last(H3, 'voteEnd', t0)?.passed === false && H1.state.phase === 'playing',
+    `red voteEnd=${JSON.stringify(got(H3, 'voteEnd', t0))} last vote=${JSON.stringify(last(H3, 'vote', t0))}`);
+  // Blue (losing): H1 opens, spams, bots say yes, H2 says no → blocked.
+  t0 = Date.now();
+  H1.send('vote', { yes: true });
+  await sleep(450);
+  const bv = last(H2, 'vote', t0);
+  check('EP-04: a yes at ≥ 12:00 opens a vote — every teammate gets {yes:1,no:0,need,by}', !!bv && bv.yes === 1 && bv.need === ROLLBACK_NEED && bv.by === 'VoteHost', JSON.stringify(bv));
+  for (let i = 0; i < 8; i++) { H1.send('vote', { yes: true }); await sleep(120); }
+  await sleep(300);
+  const denies = got(H1, 'voteDeny', t0);
+  const maxYes = Math.max(0, ...got(H1, 'vote', t0).map((v) => v.yes));
+  check("EP-04: voting twice / spam → voteDeny {reason:'active'} (rate-limited), the ballot counts once",
+    denies.length >= 1 && denies.length <= 4 && denies.every((d) => d.reason === 'active') && maxYes <= 4,
+    `denies=${denies.length} (${[...new Set(denies.map((d) => d.reason))]}) maxYes=${maxYes}`);
+  await sleep(3200); // 3 blue bots vote yes → 4 yes, but H2 (human) has not voted → still open
+  const mid = last(H1, 'vote', t0);
+  check('EP-04: 4 yes but a human still to vote → the vote stays open', !!mid && mid.yes >= ROLLBACK_NEED && !got(H1, 'voteEnd', t0).length && H1.state.phase === 'playing', JSON.stringify(mid));
+  H2.send('vote', { yes: false });
+  await sleep(500);
+  check('EP-04: one human NO blocks the rollback (voteEnd {passed:false}, match goes on)', last(H1, 'voteEnd', t0)?.passed === false && last(H2, 'voteEnd', t0)?.passed === false && H1.state.phase === 'playing',
+    `voteEnd=${JSON.stringify(got(H1, 'voteEnd', t0))} phase=${H1.state.phase}`);
+  t0 = Date.now();
+  H1.send('vote', { yes: true });
+  await sleep(400);
+  check("EP-04: a new vote right after a failed one → voteDeny {reason:'cooldown'}", last(H1, 'voteDeny', t0)?.reason === 'cooldown', JSON.stringify(got(H1, 'voteDeny', t0)));
+  for (const r of [H1, H2, H3]) { try { await r.leave(); } catch (_) { /* gone */ } }
+
+  // Solo human + 4 bots, losing → passes: the other team wins by 'rollback'.
+  let S;
+  try { S = await mk((c) => c.create('team_custom', { name: 'SoloQuit', roomName: 'rollback', champ: 'tester' })); } catch (err) { check('EP-04: solo vote room', false, err.message); return; }
+  await sleep(400);
+  if (!(await toPlaying(S))) { check('EP-04: solo room reaches playing', false, `phase=${S.state.phase}`); return; }
+  const myTeam = seat(S)?.team;
+  S.send('debug', { cmd: 'clock', n: ROLLBACK_FROM_MS + 1000 });
+  S.send('debug', { cmd: 'tower' }); await sleep(150); S.send('debug', { cmd: 'tower' });
+  await sleep(400);
+  t0 = Date.now();
+  S.send('vote', { yes: true });
+  for (let i = 0; i < 50 && S.state.phase === 'playing'; i++) await sleep(100);
+  await sleep(300);
+  const ann = got(S, 'announce', t0).find((a) => /rolled back/.test(a.title));
+  check('EP-04: a losing solo human + 4 bots → the vote passes (voteEnd {passed:true})', last(S, 'voteEnd', t0)?.passed === true, JSON.stringify(got(S, 'vote', t0).slice(-1)));
+  check("EP-04: pass → phase ended, winner = the other team, winReason 'rollback', banner", S.state.phase === 'ended' && !!S.state.winner && S.state.winner !== myTeam && S.state.winReason === 'rollback' && !!ann,
+    `phase=${S.state.phase} winner=${S.state.winner} (me ${myTeam}) winReason=${S.state.winReason} announce=${ann?.title}`);
+  t0 = Date.now();
+  S.send('vote', { yes: true });
+  await sleep(400);
+  check("EP-04: vote after 'ended' → voteDeny {reason:'phase'}", last(S, 'voteDeny', t0)?.reason === 'phase', JSON.stringify(got(S, 'voteDeny', t0)));
+  console.log('INFO  EP-04: offline practice — n/a on the server (OfflineSim has no vote; the client hides the button)');
+  try { await S.leave(); } catch (_) { /* gone */ }
+}
+
+// ───────────────────────── review fix: a dropped human keeps a LOCKED pick during select ─────────────────────────
+// A locks pixel (mid) → A's socket drops (seat held, bot-held) → teammate B locks another mid champion
+// (triggers the bot re-balance) → A's seat must keep pixel, and still have it after reconnecting.
+async function ep19HeldSeatCheck(check) {
+  let A, B;
+  const quiet = (r) => { r.onMessage('*', () => {}); return r; };
+  try {
+    A = quiet(await new Client(SERVER).create('team_custom', { name: 'HeldA', roomName: 'held seat', champ: 'pixel' }));
+    B = quiet(await new Client(SERVER).joinById(A.roomId, { name: 'HeldB', champ: 'stack' }));
+  } catch (err) { check('review: held-seat room', false, err.message); return; }
+  await sleep(500);
+  const seat = (r, sid) => r.state.champions.get(sid);
+  if (seat(B, B.sessionId)?.team !== seat(A, A.sessionId)?.team) { B.send('side', { team: seat(A, A.sessionId).team }); await sleep(500); }
+  A.send('startNow');
+  for (let i = 0; i < 30 && A.state.phase !== 'select'; i++) await sleep(100);
+  A.send('pick', { champ: 'pixel' }); await sleep(250); A.send('lock'); await sleep(300);
+  const aSid = A.sessionId, token = A.reconnectionToken;
+  const lockedOk = seat(B, aSid)?.champ === 'pixel' && seat(B, aSid)?.locked;
+  A.connection.close();
+  await sleep(500);
+  const mid = ['cleaner', 'model'].find((c) => { let held = false; B.state.champions.forEach((x) => { if (x.team === seat(B, B.sessionId).team && x.champ === c) held = true; }); return !held; });
+  B.send('pick', { champ: mid }); await sleep(250); B.send('lock'); await sleep(400);
+  const during = seat(B, aSid);
+  check('review: a human who drops in select after locking keeps the pick while bot-held (B locked the same lane)',
+    lockedOk && during?.isBot === true && during?.champ === 'pixel' && during?.locked === true && seat(B, B.sessionId)?.champ === mid,
+    `locked=${lockedOk} A seat ${during?.champ} isBot=${during?.isBot} · B ${seat(B, B.sessionId)?.champ}`);
+  let A2 = null;
+  try { A2 = quiet(await new Client(SERVER).reconnect(token)); } catch (err) { check('review: held-seat reconnect', false, err.message); }
+  if (A2) {
+    await sleep(500);
+    const back = seat(B, aSid);
+    check('review: … and still has it after reconnecting (isBot false)', back?.champ === 'pixel' && back?.locked === true && back?.isBot === false, `A seat ${back?.champ} locked=${back?.locked} isBot=${back?.isBot}`);
+  }
+  for (const r of [A2, B]) { try { await r?.leave(); } catch (_) { /* gone */ } }
 }

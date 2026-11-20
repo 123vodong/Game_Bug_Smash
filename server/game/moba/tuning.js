@@ -71,3 +71,10 @@ export const SIDE_RATE_MS = 400;           // custom room: min interval between 
 export const INTEREST_RADIUS = 1600;       // atk / fx only reach a team with a champion within this (or its own events)
 export const VISION_EVERY_TICKS = 1;       // bush visibility pass cadence (1 = every tick, 20 Hz)
 export const VIEW_GC_MS = 1000;            // drop pending StateView changes of views nobody is using (memory)
+
+// ── Experience Pass 1 (EXPERIENCE_PASS_BREAKDOWN.md §3.2/§3.3) ──
+export const TEAM_RECONNECT_GRACE_S = 60;  // EP-03: a dropped human's seat waits this long (a bot plays it meanwhile)
+export const VOTE_RATE_MS = 300;           // EP-04: min interval between processed `vote` messages per client
+export const VOTE_BOT_DELAY_MS = [800, 3000]; // EP-04: bots cast their rollback vote this long after it opens
+export const VOTE_BOT_KILL_GAP = 10;       // EP-04: bots vote yes when their team trails by this many kills …
+                                           //        … or has lost more structures than the enemy (§3.3)

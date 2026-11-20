@@ -9,7 +9,7 @@
 //
 // Fields:
 //   id          - texture key + reference id
-//   name        - display name (e.g., "Claude Sonnet")
+//   name        - display name (e.g., "Espresso Bot") — original office names, no real AI brands
 //   category    - 'buff' | 'debuff' | 'utility' | 'chaos'
 //   color       - hex (used for pickup glow + HUD chip)
 //   durationMs  - how long the active effect lasts (0 = instant)
@@ -26,33 +26,33 @@
 
 export const SKILLS = {
   sonnet: {
-    id: 'sonnet', name: 'Claude Sonnet', category: 'buff',
+    id: 'sonnet', name: 'Espresso Bot', category: 'buff',
     color: 0x4a8af0, durationMs: 5000, spawnWeight: 4, rarity: 'common',
     flavor: 'Speed boost! Move faster.',
     effect: { speedBoost: 1.5 },
   },
   opus: {
-    id: 'opus', name: 'Claude Opus', category: 'buff',
+    id: 'opus', name: 'Senior Review', category: 'buff',
     color: 0xffd23f, durationMs: 3000, spawnWeight: 1, rarity: 'rare',
-    flavor: 'One-hit kill! Maximum power.',
+    flavor: 'One-hit fix! Every smash squashes a bug.',
     effect: { oneShotSmash: true },
   },
   haiku: {
-    id: 'haiku', name: 'Claude Haiku', category: 'debuff',
+    id: 'haiku', name: 'Intern Bot', category: 'debuff',
     color: 0xff5252, durationMs: 6000, spawnWeight: 3, rarity: 'common',
-    flavor: 'Random debuff. Anything can happen.',
+    flavor: 'Random debuff. The intern is helping.',
     effect: { random: ['slowPlayer:0.55', 'extraBugOnHit:1'] },
   },
   cursor: {
-    id: 'cursor', name: 'Cursor', category: 'utility',
+    id: 'cursor', name: 'Hot Desk', category: 'utility',
     color: 0x7ec8ff, durationMs: 0, spawnWeight: 3, rarity: 'common',
     flavor: 'Teleport to the nearest bug.',
     effect: { teleportToBug: true },
   },
   copilot: {
-    id: 'copilot', name: 'GitHub Copilot', category: 'chaos',
+    id: 'copilot', name: 'All-Hands Ping', category: 'chaos',
     color: 0x7ed957, durationMs: 0, spawnWeight: 2, rarity: 'uncommon',
-    flavor: 'All remaining bugs appear at once!',
+    flavor: 'All-hands! Every remaining bug shows up at once!',
     effect: { respawnAllBugs: true },
   },
 };

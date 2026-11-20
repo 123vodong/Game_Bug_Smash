@@ -37,6 +37,9 @@ export class Player extends Schema {
     // Office Chaos update
     this.isBot = false; // AI coworker (shown with a BOT tag)
     this.hat = '';      // cosmetic id from src/data/cosmetics.js ('' = none)
+    // Experience Pass 1
+    this.away = false;      // dropped connection, inside the reconnect grace (frozen)
+    this.brokenUntil = 0;   // server epoch ms when the laptop is fixed (0 = not broken)
   }
 }
 type('number')(Player.prototype, 'x');
@@ -64,6 +67,8 @@ type('number')(Player.prototype, 'invulnUntil');
 type('number')(Player.prototype, 'stunnedUntil');
 type('boolean')(Player.prototype, 'isBot');
 type('string')(Player.prototype, 'hat');
+type('boolean')(Player.prototype, 'away');
+type('number')(Player.prototype, 'brokenUntil');
 
 export class Bug extends Schema {
   constructor() {

@@ -38,24 +38,6 @@
       #rotate-msg { display: flex; }
     }
 
-    /* "Tap to play fullscreen" splash — shown on first touch */
-    #fs-prompt {
-      display: none;
-      position: fixed; inset: 0; z-index: 9000;
-      background: rgba(10,14,22,0.92);
-      color: #fff; font-family: Arial Black, sans-serif;
-      flex-direction: column; justify-content: center; align-items: center;
-      cursor: pointer;
-    }
-    #fs-prompt .btn {
-      padding: 18px 28px; border: 3px solid #39c2ff; border-radius: 12px;
-      background: #102030; color: #39c2ff; font-size: 20px;
-      box-shadow: 0 0 24px rgba(57,194,255,0.5);
-    }
-    #fs-prompt .hint { margin-top: 14px; font-size: 12px; color: #aab0c0; font-family: Consolas, monospace; }
-    @media (hover: none) and (pointer: coarse) {
-      #fs-prompt { display: flex; }
-    }
   </style>
 </head>
 <body>
@@ -67,36 +49,34 @@
     <p>This game is designed for landscape mode.</p>
   </div>
 
-  <div id="fs-prompt">
-    <div class="btn">▶ TAP TO PLAY</div>
-    <div class="hint">enters fullscreen + landscape lock</div>
-  </div>
-
   <script>
-    // Touch-device only: handle fullscreen + orientation lock on first tap.
+    // Touch devices: go fullscreen + lock landscape on the FIRST tap, without eating it.
+    // (Was a blocking "TAP TO PLAY" overlay — it swallowed the new player's first tap, so
+    // START TRAINING / JUMP ONLINE needed two taps.) The listener is passive and on the
+    // capture phase, so the same tap still reaches the game canvas. touchend counts as a
+    // user activation, which requestFullscreen needs.
     (function () {
-      const fsPrompt = document.getElementById('fs-prompt');
-      if (!fsPrompt) return;
+      const coarse = window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+      if (!coarse) return;
       const enterFullscreenAndLock = async () => {
+        window.removeEventListener('touchend', enterFullscreenAndLock, true);
         try {
           const el = document.documentElement;
-          if (el.requestFullscreen)      await el.requestFullscreen();
-          else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-        } catch (e) { /* user cancelled or unsupported */ }
-        try {
-          if (screen.orientation && screen.orientation.lock) {
-            await screen.orientation.lock('landscape');
+          if (!document.fullscreenElement) {
+            if (el.requestFullscreen)            await el.requestFullscreen({ navigationUI: 'hide' });
+            else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
           }
-        } catch (e) { /* iOS Safari etc. silently refuse — that's ok, overlay still prompts manual rotate */ }
-        fsPrompt.style.display = 'none';
+        } catch (e) { /* user cancelled or unsupported (iOS Safari) — the game still works */ }
+        try {
+          if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+        } catch (e) { /* unsupported — the rotate overlay still prompts a manual rotate */ }
       };
-      fsPrompt.addEventListener('click', enterFullscreenAndLock);
-      fsPrompt.addEventListener('touchend', (e) => { e.preventDefault(); enterFullscreenAndLock(); });
+      window.addEventListener('touchend', enterFullscreenAndLock, { capture: true, passive: true });
     })();
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
-  <script src="https://unpkg.com/colyseus.js@^0.16.0/dist/colyseus.js"></script>
+  <script src="https://unpkg.com/colyseus.js@0.16.19/dist/colyseus.js"></script>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

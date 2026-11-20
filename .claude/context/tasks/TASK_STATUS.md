@@ -1,6 +1,6 @@
 # Task Status
 
-Updated: 2026-11-07
+Updated: 2026-11-18
 
 A running snapshot of what's done, what's in progress, and what's queued. Keep this honest — it's the file that future-you will read first.
 
@@ -117,7 +117,7 @@ Two `code-reviewer`s + one `playtester` in parallel; every finding verified by t
 
 | Item | State | Next step |
 |---|---|---|
-| Server-side smash logging | left enabled while we verify kills land | Once 2 consecutive sessions confirm hits register, strip the `console.log` lines in `ArenaRoom.js` |
+| **Experience Pass 1** — full-game review → improve fun, onboarding, progression, polish (branch `feat/experience-pass`; tasks in [EXPERIENCE_PASS_BREAKDOWN.md](EXPERIENCE_PASS_BREAKDOWN.md)) | ✅ all 23 tasks built · code review (2 major + 13 minor) fixed · playtest ✅ · round-2 fixes ✅ · final check ✅ (exploits 25/25, team_sim 117/117, nav ✅) | commit when asked · next ideas in the breakdown §7 |
 | **Team Mode v2 — "Walls & New Hires"** ([breakdown](TEAM_MODE_V2_BREAKDOWN.md)) | ✅ built + reviewed + playtested + integrated (see breakdown "Results") | polish: Wet Floor puddle visual, bots aiming knockbacks at walls, faster early game |
 | **Team Mode v3 — "Draft Day"** ([breakdown](TEAM_MODE_V3_BREAKDOWN.md)): thin bordering walls, queue → champion select → loading, summoner spells (D/F), info panel (C), Crunch Time | ✅ built + reviewed + playtested + integrated (2026-11-08) | open items in the breakdown "Results" |
 | **Team Mode v4 — "Custom Rooms, Bushes & Smooth Play"** ([breakdown](TEAM_MODE_V4_BREAKDOWN.md)) | ✅ built + reviewed + playtested + integrated (2026-11-08) | open items in the breakdown "Results" |

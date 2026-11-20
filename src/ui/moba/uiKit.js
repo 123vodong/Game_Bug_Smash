@@ -421,3 +421,59 @@ export function startClockSync(room, { everyMs = 3000, seed = null } = {}) {
     },
   };
 }
+
+// ───────────────────────── Experience Pass 1: §3.3 reconnect loop ─────────────────────────
+// Mirrors server/game/moba/tuning.js TEAM_RECONNECT_GRACE_S (used until `welcome.reconnectS` arrives).
+export const TEAM_RECONNECT_GRACE_S = 60;
+
+/**
+ * Retry `client.reconnect(token)` every `everyMs` (each attempt raced against `attemptMs`) until
+ * `graceS` runs out. Real-time timers (the Phaser clock slows on weak devices / hidden tabs).
+ *   onTick(secondsLeft, attempts) · onSuccess(room, client) · onFail('timeout' | 'gone', msg)
+ * 'gone' = the room itself no longer exists `goneAfter` times in a row (match over / disposed).
+ * A late success of an attempt that already timed out is still taken while the loop runs.
+ * Returns { cancel() }.
+ */
+export function reconnectLoop({
+  token, graceS = TEAM_RECONNECT_GRACE_S, url = teamServerUrl(), everyMs = 2000, attemptMs = 5000, goneAfter = 3,
+  onTick, onSuccess, onFail,
+}) {
+  const until = Date.now() + Math.max(1, graceS) * 1000;
+  let attempts = 0, gone = 0, done = false, timer = null;
+  const left = () => Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  const finish = (fn) => {
+    if (done) return;
+    done = true; clearTimeout(timer); clearInterval(ticker);
+    try { fn?.(); } catch (e) { console.warn('[reconnect] callback failed', e); }
+  };
+  const ticker = setInterval(() => {
+    if (done) return;
+    try { onTick?.(left(), attempts); } catch (_) { /* scene gone */ }
+    if (Date.now() >= until) finish(() => onFail?.('timeout', ''));
+  }, 250);
+  const attempt = async () => {
+    if (done) return;
+    if (Date.now() >= until) { finish(() => onFail?.('timeout', '')); return; }
+    attempts++;
+    let client = null, settled = false;
+    const next = () => { if (!done && !settled) { settled = true; timer = setTimeout(attempt, everyMs); } };
+    try {
+      if (typeof Colyseus === 'undefined') throw new Error('no Colyseus client');
+      client = new Colyseus.Client(url);
+      const p = client.reconnect(token);
+      p.then((room) => { // may land after the race timed out
+        if (done) { if (settled) { try { room.leave(); } catch (_) { /* ignore */ } } return; }
+        finish(() => onSuccess?.(room, client));
+      }, () => {});
+      await Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('attempt timed out')), attemptMs))]);
+    } catch (e) {
+      if (done) return;
+      const msg = String(e?.message || e);
+      gone = /not found|no room|does not exist|disposed/i.test(msg) ? gone + 1 : 0;
+      if (gone >= goneAfter) { finish(() => onFail?.('gone', msg)); return; }
+      next();
+    }
+  };
+  timer = setTimeout(attempt, 400);
+  return { cancel() { finish(null); } };
+}
