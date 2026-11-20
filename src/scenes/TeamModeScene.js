@@ -31,6 +31,13 @@
 // HUD-button casts → nearest visible enemy champion within range + AUTO_AIM_SLACK, else the
 // nearest enemy unit, else facing. Perf (§3.4): views far off-camera are hidden and not
 // updated, auto quality (FPS < 45 for 3 s → low effects; HUD ✨ toggle, remembered).
+//
+// Experience Pass 1 (EXPERIENCE_PASS_BREAKDOWN.md §3.3): EP-07 reconnect — a non-consented drop
+// (code ∉ {1000, 4000}, not ended, server announced `welcome.reconnectS`) shows "📶 reconnecting…
+// Ns" and calls client.reconnect(token) every 2 s; on success every view is cleared and the NEW
+// room is adopted (hello again). EP-08 🏳 rollback vote (button from 12:00, `/rollback` in chat,
+// Y / N, panel; hidden offline). EP-10 first-siege coaching tips (flag `tipsSiege`, ≤ 1 per 20 s).
+// EP-11 join option `hat`. EP-21 first-buy nudge, AudioManager team hooks, short offline timers.
 import { CHAMPIONS, isChampionId, autoAimsAtEnemy, autoAimReach } from '../../shared/moba/champions.js';
 import * as R from '../../shared/moba/rules.js';
 import { MAP_W, MAP_H, FOUNTAIN, CHAMP_RADIUS, MINION_RADIUS, clampToMap, distToSeg, bushAt } from '../../shared/moba/map.js';
@@ -38,7 +45,8 @@ import { findPath, clipMove, nearestFree, pushOut, isBlocked, segmentClear } fro
 import { SPELLS, DEFAULT_SPELLS, validSpellPair } from '../../shared/moba/spells.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
-import { ensureMobaTextures, D, teamColor, toArr, approach, setLooks, projectileTex, fmtTime } from '../entities/moba/mobaGfx.js';
+import { ITEMS, buyBlocker } from '../../shared/moba/items.js';
+import { ensureMobaTextures, D, teamColor, toArr, approach, setLooks, projectileTex, fmtTime, shakeCam } from '../entities/moba/mobaGfx.js';
 import { MobaMap } from '../entities/moba/MobaMap.js';
 import { ChampionView } from '../entities/moba/ChampionView.js';
 import { UnitView } from '../entities/moba/UnitView.js';
@@ -48,6 +56,7 @@ import { MobaHud } from '../entities/moba/MobaHud.js';
 import { OfflineSim } from '../entities/moba/OfflineSim.js';
 import { FallbackShopPanel, FallbackScoreboard, FallbackEndScreen } from '../entities/moba/Fallbacks.js';
 import { InfoPanel } from '../ui/moba/InfoPanel.js';
+import { reconnectLoop, TEAM_RECONNECT_GRACE_S } from '../ui/moba/uiKit.js';
 
 // looks.js (client-art, contract v2 §3.3) is a hard dependency — ChampionView,
 // UnitView, the lobby and the UI import it statically too — so a plain import.
@@ -59,7 +68,7 @@ const STICK_POSES = [
   ['stick-kick', 'kick.svg'], ['stick-punch', 'punch.svg'], ['stick-parry', 'parry.svg'], ['stick-jump', 'jump.svg'],
 ];
 const BUG_SPRITES = ['bug-ladybug', 'bug-null', 'bug-robot', 'bug-beetle'];
-const MSG_TYPES = ['welcome', 'time', 'atk', 'fx', 'feed', 'announce', 'gold', 'chat', 'chatHistory'];
+const MSG_TYPES = ['welcome', 'time', 'atk', 'fx', 'feed', 'announce', 'gold', 'chat', 'chatHistory', 'vote', 'voteEnd', 'voteDeny'];
 const TIME_SYNC_MS = 10000;        // contract §3.6: `time` samples (smallest RTT wins)
 const KEY_CAPTURES = 'TAB,SPACE,UP,DOWN,LEFT,RIGHT';
 const WORLD_PHASES = new Set(['playing', 'ended']); // the match world is only shown in these
@@ -70,6 +79,17 @@ const MOUSE_IDLE_MS = 1000;        // mouse not moved for this long → auto-aim
 const CULL_PAD = 260;              // views farther than this outside the camera are hidden + not updated
 const FX_PREF_KEY = 'bugsmash.team.fx'; // 'auto' | 'high' | 'low' (localStorage)
 const LOW_FPS = 45, LOW_FPS_MS = 3000, FPS_WARMUP_MS = 4000;
+const RECONNECT_EVERY_MS = 2000;   // §3.3: client.reconnect(token) cadence while in grace
+const STALL_MS = 8000;             // EP-07 watchdog: no patch / message this long while playing = suspect
+const STALL_GRACE_MS = 4000;       // … plus one extra window (ping sent) before it counts as dropped
+                                   // (a dead Wi-Fi leaves the socket CLOSING for minutes without onLeave)
+const COACH_GAP_MS = 20000;        // EP-10: at most one coaching tip per 20 s
+const COACH_MATCHES = 2;           // tips stop (flag tipsSiege) after this many finished matches
+const SHOP_ASSIST_GAMES = 3;       // EP-21: the first 3 games open the shop at 0:00
+const VOTE_DENY = {
+  early: '🏳 Rollback opens at 12:00 — keep shipping', cooldown: '🏳 Rollback on cooldown — the last one was rejected',
+  active: '🏳 You already voted', phase: '🏳 Not now — the match is not running',
+};
 
 /** ws URL: same host:port as the page, except the :8000 python dev server → :2567; `?server=` overrides. */
 function serverUrl() {
@@ -134,6 +154,17 @@ export default class TeamModeScene extends Phaser.Scene {
     this._meInfo = { x: 0, y: 0, team: null, dead: true };
     this._pointerOut = false; this._worldReady = false; this._meHidden = null; this._playingAt = 0;
     this._cull = { x0: 0, y0: 0, x1: 0, y1: 0 };
+    // Experience Pass 1
+    this._reconn = null; this._wantHistory = true; this._stallAt = 0; this._lastRxAt = Date.now();
+    this._reconnectS = TEAM_RECONNECT_GRACE_S; // review fix 2: an early drop (before `welcome`) still retries
+    this._vote = null; this._voteMine = null; this._voteReqAt = 0; this._voteKey = 0;
+    this._firstBlood = null; this._firstBloodDone = false; this._lastCastSfx = 0; this._slowTickAt = 0; this._shopAssistAt = 0;
+    const career = SaveManager.getCareer?.() || {};
+    this._gamesPlayed = (career.teamGames | 0) + (career.teamPractice | 0);
+    const tipsDone = SaveManager.getFlag ? !!SaveManager.getFlag('tipsSiege') : this._gamesPlayed >= COACH_MATCHES;
+    this._coach = tipsDone ? null : { seen: new Set(), lastAt: -1e9, nextAt: 0 };
+    this._shopAssist = this._gamesPlayed < SHOP_ASSIST_GAMES;
+    this._wasCustom = false; this._noEnemyAt = -1e9; this._leftBaseAt = 0;
 
     this._setupCameras();
     ensureMobaTextures(this);
@@ -162,6 +193,8 @@ export default class TeamModeScene extends Phaser.Scene {
       onStick: (dir) => { this._stickDir = dir; },
       onLeave: () => this._goMenu(),
       onFx: () => this._cycleFxPref(),
+      onRollback: () => this._rollback(),
+      onVote: (yes) => this._castVote(yes),
     });
     this._initQuality();
     try { this.info = new InfoPanel(this, { onClose: () => {} }); } catch (e) { console.warn('[TeamMode] InfoPanel failed:', e?.message); this.info = null; }
@@ -169,6 +202,9 @@ export default class TeamModeScene extends Phaser.Scene {
     this._buildChatInput();
     this._loadUiModules();
     this.events.once('shutdown', () => this._cleanup());
+    // Review fix 3: a phone resuming from sleep must not look like a dead link to the watchdog.
+    this._onVis = () => { if (document.visibilityState === 'visible') { this._lastRxAt = Date.now(); this._stallAt = 0; } };
+    document.addEventListener('visibilitychange', this._onVis);
     this.cameras.main.centerOn(FOUNTAIN.blue.x, FOUNTAIN.blue.y);
 
     // Only data decides (main.js reads the deep link once) — a later PLAY AGAIN in
@@ -234,7 +270,7 @@ export default class TeamModeScene extends Phaser.Scene {
           if (Array.isArray(sp) && validSpellPair(sp[0], sp[1])) this.mySpells = sp.slice(0, 2);
         } catch (_) { /* keep defaults */ }
       }
-      const room = await this.client.joinOrCreate('team', { name: this.playerName, champ: this.myChamp, autoLock: true });
+      const room = await this.client.joinOrCreate('team', { name: this.playerName, champ: this.myChamp, autoLock: true, hat: SaveManager.getHat?.() || '' });
       if (this._shuttingDown || visit !== this._visit) { try { room.leave(); } catch (_) { /* ignore */ } return; }
       this._adoptRoom(room, visit, { fresh: true });
       // Lobby / select only (the server ignores it later): our D / F picks.
@@ -247,38 +283,44 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   /** Take over a joined room (deep link join, or handed over by TeamSelectScene — no re-join). */
-  _adoptRoom(room, visit, { fresh = false, pending = null } = {}) {
+  _adoptRoom(room, visit, { fresh = false, pending = null, rejoin = false } = {}) {
     this.room = room;
+    this._wantHistory = fresh && !rejoin; // a rejoin keeps the chat already on screen
     this.localId = room.sessionId;
     const add = (u) => { if (typeof u === 'function') this._unsubs.push(u); };
+    this._lastRxAt = Date.now();
     for (const type of MSG_TYPES) {
-      add(room.onMessage(type, (m) => { if (!this._shuttingDown && visit === this._visit) this._onMsg(type, m ?? {}); }));
+      add(room.onMessage(type, (m) => { if (!this._shuttingDown && visit === this._visit) { this._lastRxAt = Date.now(); this._onMsg(type, m ?? {}); } }));
     }
+    const onPatch = () => { this._lastRxAt = Date.now(); };
+    try { room.onStateChange(onPatch); this._unsubs.push(() => room.onStateChange?.remove?.(onPatch)); } catch (_) { /* older client */ }
     add(room.onMessage('*', () => { /* unknown message types: ignore quietly */ }));
     const onLeave = (code) => {
-      if (this._shuttingDown || visit !== this._visit) return; // an old visit's room closing late
+      if (this._shuttingDown || visit !== this._visit || this.room !== room) return; // an old visit's / old room closing late
+      const token = room.reconnectionToken || '';
       this.room = null;
-      if (this._phase !== 'ended') this._connLost(code);
+      if (this._phase !== 'ended') this._connLost(code, token);
     };
     const onError = (code, msg) => { if (!this._shuttingDown && visit === this._visit) console.warn('[TeamMode] room error', code, msg); };
     room.onLeave(onLeave);
     room.onError(onError);
     this._unsubs.push(() => room.onLeave?.remove?.(onLeave), () => room.onError?.remove?.(onError));
-    // hello/welcome is once per client: only a fresh join asks (a handed-over room already did;
-    // team + champ then come from the state).
-    if (fresh) { try { room.send('hello'); } catch (_) { /* closed — onLeave reports it */ } }
+    // hello/welcome is once per client and no earlier scene sends it, so ask on every adopt: the
+    // welcome carries `reconnectS` (EP-07). A reconnect is a NEW server Client → it answers again.
+    try { room.send('hello'); } catch (_) { /* closed — onLeave reports it */ }
     // Clock: `time` samples (§3.6) — 3 quick ones, then every TIME_SYNC_MS; smallest RTT wins.
     const ping = () => { if (!this._shuttingDown && visit === this._visit && this.room === room) { try { room.send('time', { t: Date.now() }); } catch (_) { /* closed */ } } };
     ping();
     this.time.delayedCall(700, ping);
     this.time.delayedCall(1500, ping);
-    this.time.addEvent({ delay: TIME_SYNC_MS, loop: true, callback: ping });
+    const pingEvt = this.time.addEvent({ delay: TIME_SYNC_MS, loop: true, callback: ping });
+    this._unsubs.push(() => pingEvt.remove(false));
     // Messages TeamSelectScene received between the phase patch and the handoff.
     if (Array.isArray(pending)) {
       for (const p of pending) if (p && MSG_TYPES.includes(p.type)) { try { this._onMsg(p.type, p.msg ?? {}); } catch (e) { console.warn('[TeamMode] pending replay failed', p.type, e?.message); } }
     }
     this.hud.setStatus('');
-    if (room.connection && room.connection.isOpen === false) this._connLost('closed');
+    if (room.connection && room.connection.isOpen === false) { this.room = null; this._connLost('closed', room.reconnectionToken || ''); }
   }
 
   _connFail(why) {
@@ -293,12 +335,126 @@ export default class TeamModeScene extends Phaser.Scene {
     });
   }
 
-  _connLost(code) {
+  /** §3.3: a non-consented drop while the server keeps our seat (welcome.reconnectS) → reconnect. */
+  _connLost(code, token = '') {
+    if (this._shuttingDown || this._sim || this._reconn) return;
+    const graceS = Number(this._reconnectS) || 0;
+    const consented = code === 1000 || code === 4000;
+    if (!consented && token && graceS > 0 && this._phase !== 'ended') { this._startReconnect(token, graceS); return; }
+    this._lostModal(`The connection to the match was lost (code ${code}).`);
+  }
+
+  _lostModal(body, title = 'Disconnected') {
+    this._setScoreboard(false); this.shop?.close?.(); this.info?.close?.();
     this.hud.modal({
-      title: 'Disconnected',
-      body: `The connection to the match was lost (code ${code}).`,
-      buttons: [{ label: '☰ MENU', color: 0x39c2ff, fn: () => this._goMenu() }],
+      title, body: `${body}\nPractice offline against bots instead?`,
+      buttons: [
+        { label: '🤖 PRACTICE', color: 0x7ed957, fn: () => this._restartOffline() },
+        { label: '☰ MENU', color: 0x39c2ff, fn: () => this._goMenu() },
+      ],
     });
+  }
+
+  /** The online match is gone — start a fresh offline practice with the same champion. */
+  _restartOffline() {
+    const data = { offline: true, champ: this.myChamp, name: this.playerName, spells: this.mySpells };
+    this._cleanup();
+    this.scene.start('TeamModeScene', data);
+  }
+
+  _startReconnect(token, graceS) {
+    const visit = this._visit;
+    const r = { left: graceS, attempts: 0, loop: null };
+    this._reconn = r;
+    for (const u of this._unsubs) { try { u(); } catch (_) { /* old room listeners */ } }
+    this._unsubs = [];
+    this._dropInputs();
+    this._setScoreboard(false); this.shop?.close?.(); this.info?.close?.();
+    this.hud.modal({
+      title: '📶 Wi-Fi went to lunch — reconnecting…', body: this._reconnBody(),
+      buttons: [{ label: '☰ MENU', color: 0x8a94a8, fn: () => this._goMenu() }],
+    });
+    const alive = () => !this._shuttingDown && visit === this._visit && this._reconn === r;
+    r.loop = reconnectLoop({
+      token, graceS, url: serverUrl(),
+      onTick: (left, attempts) => { if (alive()) { r.left = left; r.attempts = attempts; } },
+      onSuccess: (room, client) => {
+        if (!alive()) { try { room.leave(); } catch (_) { /* ignore */ } return; }
+        this._reconn = null;
+        this.client = client;
+        this._resetWorld();
+        this.hud.closeModal();
+        this._adoptRoom(room, this._visit, { fresh: true, rejoin: true });
+        this.hud.toast('🔌 Back online — the bot handed your laptop back', '#7ed957', 2600);
+        AudioManager.reward?.();
+      },
+      onFail: (why) => {
+        if (!alive()) return;
+        this._reconn = null;
+        if (why === 'gone') this._matchOverModal();
+        else this._lostModal('Connection lost. Your laptop now belongs to a bot.', '📶 Could not reconnect');
+      },
+    });
+  }
+
+  /** Review fix 5: the room is gone (match ended / disposed while we were away). */
+  _matchOverModal() {
+    this._setScoreboard(false); this.shop?.close?.(); this.info?.close?.();
+    this.hud.modal({
+      title: '🏁 The match is over',
+      body: 'It ended while you were offline — the bot finished your shift.\nQueue up again?',
+      buttons: [
+        { label: '▶ PLAY AGAIN', color: 0x7ed957, fn: () => this._playAgain() },
+        { label: '☰ MENU', color: 0x39c2ff, fn: () => this._goMenu() },
+      ],
+    });
+  }
+
+  _reconnBody() {
+    const r = this._reconn;
+    return `Mạng lag quá, đợi xíu… ${r ? r.left : 0}s\nA bot is holding your seat${r?.attempts ? ` · attempt ${r.attempts}` : ''}`;
+  }
+
+  /** Per frame: reconnect countdown, or the stalled-link watchdog. */
+  _tickReconnect() {
+    const r = this._reconn;
+    if (r) { if (this.hud.modalOpen) this.hud.modalSet({ body: this._reconnBody() }); return; }
+    // Watchdog: the server patches ≥ 10 Hz while playing — silence means the link is dead (a dead
+    // Wi-Fi leaves the socket CLOSING without onLeave). Two stages: STALL_MS of silence → ping +
+    // one extra STALL_GRACE_MS window (a phone resuming from sleep catches up), then drop.
+    const room = this.room;
+    if (!room || this._sim || this._phase !== 'playing' || this._ended) { this._stallAt = 0; return; }
+    const quiet = Date.now() - (this._lastRxAt || Date.now());
+    if (quiet <= STALL_MS) { this._stallAt = 0; return; }
+    if (!this._stallAt) { this._stallAt = Date.now(); try { room.send('time', { t: Date.now() }); } catch (_) { /* closing */ } return; }
+    if (Date.now() - this._stallAt < STALL_GRACE_MS) return;
+    this._stallAt = 0;
+    const token = room.reconnectionToken || '';
+    this.room = null; // its late onLeave is ignored (this.room !== room)
+    try { room.connection?.close?.(); } catch (_) { /* already closing */ }
+    console.warn('[TeamMode] no server traffic — treating as a drop');
+    this._connLost(4001, token);
+  }
+
+  /** Forget queued input that names the old room's state. */
+  _dropInputs() {
+    this._moveDest = null; this._movePath = null; this._pendingOrder = null; this._pendingCast = null;
+    this._castQueue = []; this._hoverEnemy = null; this._stickDir = null; this._mouseHeld = false; this._replan = false;
+  }
+
+  /** Reconnected: the new room replays the full state — drop every view so nothing is duplicated. */
+  _resetWorld() {
+    for (const v of this.views.champs.values()) { try { v.destroy(); } catch (_) { /* gone */ } }
+    for (const v of this.views.units.values()) { try { v.destroy(); } catch (_) { /* gone */ } }
+    for (const v of this.views.structs.values()) { try { v.destroy(); } catch (_) { /* gone */ } }
+    this.views.champs.clear(); this.views.units.clear(); this.views.structs.clear();
+    this._liveCamps.clear(); this._mine.clear(); this._trailAt.clear();
+    this._dropInputs();
+    this._worldReady = false; this._pred = null; this._myPetId = null; this._meHidden = null;
+    this._bestRtt = Infinity; // fresh clock samples from the new connection
+    this._vote = null; this._voteMine = null;
+    this.hud.showVote(null);
+    this._setGray(false); this._meDead = false;
   }
 
   _startOffline(d = {}) {
@@ -306,7 +462,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const lq = new URLSearchParams(window.location.search).get('lobby');
     const lobbyMs = lq != null && Number.isFinite(Number(lq)) ? Number(lq) : 0; // v3: straight to playing
     this._sim = new OfflineSim({
-      champ: this.myChamp, name: this.playerName, lobbyMs, spells: this.mySpells,
+      champ: this.myChamp, name: this.playerName, lobbyMs, spells: this.mySpells, hat: SaveManager.getHat?.() || '',
       allies: Array.isArray(d.allies) ? d.allies : null, enemies: Array.isArray(d.enemies) ? d.enemies : null,
       emit: (type, m) => { if (!this._shuttingDown) this._onMsg(type, m ?? {}); },
     });
@@ -368,6 +524,7 @@ export default class TeamModeScene extends Phaser.Scene {
         }
         if (m.team === 'blue' || m.team === 'red') this.myTeam = this.myTeam || m.team;
         if (isChampionId(m.champ)) this.myChamp = m.champ;
+        if (Number.isFinite(m.reconnectS)) this._reconnectS = m.reconnectS; // EP-07: the server holds our seat this long
         break;
       case 'time': {
         const now = Date.now(), rtt = now - m.t;
@@ -383,6 +540,19 @@ export default class TeamModeScene extends Phaser.Scene {
         this.hud.banner({ title: String(m.title), sub: m.sub, color: m.color, big: !!m.big });
         if (m.big) AudioManager.reward?.(); else AudioManager.combo?.(2);
         break;
+      case 'vote': this._onVote(m); break;
+      case 'voteEnd': {
+        const was = this._vote;
+        this._vote = null; this._voteMine = null;
+        this.hud.showVote(null);
+        if (m.passed) this.hud.toast("🔙 Rollback approved — shipping last Friday's build", '#ffb347', 2400);
+        else if (was) this.hud.toast('Rollback rejected. The sprint continues 😩', '#ffd23f', 2400);
+        break;
+      }
+      case 'voteDeny':
+        this.hud.toast(VOTE_DENY[m.reason] || '🏳 Rollback not possible right now', '#ffb347', 2200);
+        if (!this._vote) this._voteMine = null;
+        break;
       case 'gold':
         if (Number.isFinite(m.n) && Number.isFinite(m.x) && Number.isFinite(m.y)) this.fx.gold(m.x, m.y, Math.round(m.n));
         break;
@@ -390,6 +560,7 @@ export default class TeamModeScene extends Phaser.Scene {
         this.hud.chat({ name: m.name, text: m.text, kind: m.kind, mine: !!this.localId && m.sid === this.localId });
         break;
       case 'chatHistory':
+        if (!this._wantHistory) break; // handed-over / rejoined rooms already show their chat
         if (Array.isArray(m)) for (const c of m.slice(-5)) this.hud.chat({ name: c?.name, text: c?.text, kind: c?.kind });
         break;
       default: break;
@@ -402,7 +573,7 @@ export default class TeamModeScene extends Phaser.Scene {
       if (!a) continue;
       const fv = this._viewOf(a.f), tv = this._viewOf(a.t);
       if (!fv || !tv) continue;
-      if (a.f === this.localId) this._markMine(a.t);
+      if (a.f === this.localId) { this._markMine(a.t); AudioManager.teamAttack?.(!!a.r); }
       const tp = tv.aimPoint();
       if (fv instanceof ChampionView) fv.faceTo = tp.x;
       if (!this.fx.onScreen(fv.x, fv.y, 400) && !this.fx.onScreen(tp.x, tp.y, 400)) continue;
@@ -423,6 +594,7 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _onFx(m) {
+    if (m.sid && m.sid === this.localId && m.k !== 'spell' && m.k !== 'hit' && m.k !== 'knock') this._castSfx(m.slot);
     switch (m.k) {
       case 'proj': {
         if (![m.x, m.y, m.dx, m.dy].every(Number.isFinite)) return;
@@ -506,11 +678,18 @@ export default class TeamModeScene extends Phaser.Scene {
     }
   }
 
+  _isChampSid(id) { const st = this._state(); return !!(st?.scores?.get?.(id) || st?.champions?.get?.(id)); }
+
   _onFeed(m) {
     if (!m.text) return;
     const me = this.localId;
     this.hud.feed({ text: String(m.text), color: m.color, mine: !!me && (m.a === me || m.b === me) });
-    if (me && m.b === me) { this.hud.setDeathTitle(`💀 ${m.text}`); AudioManager.failure?.(); }
+    // EP-09 highlight: the first champion death of the match (a = killer champion, b = victim).
+    if (!this._firstBloodDone && m.b && this._isChampSid(m.b)) {
+      this._firstBloodDone = true;
+      this._firstBlood = m.a && this._isChampSid(m.a) ? m.a : '';
+    }
+    if (me && m.b === me) { this.hud.setDeathTitle(`💀 ${m.text}`); if (!AudioManager.teamDeath) AudioManager.failure?.(); }
     else if (me && m.a === me) AudioManager.reward?.();
   }
 
@@ -588,6 +767,8 @@ export default class TeamModeScene extends Phaser.Scene {
       case 'KeyP': this._toggleShop(); break;
       case 'Space': this._attackNearest(); break;
       case 'KeyS': if (this._canAct()) { this._order({ type: 'stop' }); this._moveDest = null; } break;
+      case 'KeyY': if (this._vote) this._castVote(true); break;
+      case 'KeyN': if (this._vote) this._castVote(false); break;
       default: break;
     }
   }
@@ -641,12 +822,180 @@ export default class TeamModeScene extends Phaser.Scene {
     return Math.hypot(p.x - f.x, p.y - f.y) <= R.FOUNTAIN_RADIUS;
   }
 
+  // ───────────────────────── EP-21: first-buy nudge · EP-10: coaching ─────────────────────────
+  /** Next affordable-in-principle item of the champion's ⭐ recommended build (not owned, not blocked). */
+  _nextBuy(me) {
+    const build = CHAMPIONS[me.champ]?.build || [];
+    const inv = toArr(me.items);
+    for (const id of build) {
+      if (!ITEMS[id] || inv.includes(id)) continue;
+      if (buyBlocker(inv, id)) continue;
+      return ITEMS[id];
+    }
+    return null;
+  }
+
+  /** EP-21: first games — open the shop at 0:00 (waits for the async ShopPanel; gives up after 8 s). */
+  _tickShopAssist(me, now) {
+    if (now - this._shopAssistAt > 8000 || this._phase !== 'playing' || this._ended) { this._shopAssistAt = 0; return; }
+    if (!this.shop || !me || this.hud.modalOpen || this._chatActive) return;
+    this._shopAssistAt = 0;
+    if (me.dead || !this._canShop(me) || this.shop.isOpen) return;
+    this.shop.open?.();
+    this.hud.toast('🛒 Starting gold! Grab the ⭐ recommended item, then walk out (P closes)', '#ffe680', 3600);
+  }
+
+  _tickBuyNudge(me, canShop) {
+    let str = null;
+    if (me && canShop && this._phase === 'playing' && !this._ended && !this.shop?.isOpen && !this.hud.modalOpen && !this._reconn) {
+      const it = this._nextBuy(me);
+      if (it && (me.gold | 0) >= it.cost) str = `🛒 Buy ${it.emoji} ${it.name} ${this._isTouch ? '(tap)' : '(P)'}`;
+    }
+    this.hud.setBuyNudge(str);
+  }
+
+  /** First-siege coaching: contextual tips while !flags.tipsSiege — each once per match, ≥ 20 s apart. */
+  _tickCoach(st, me, srvNow, now, canShop) {
+    const c = this._coach;
+    if (!c || this._phase !== 'playing' || this._ended || this._reconn) return;
+    { // time out of base (tracked every tick, not just when a tip is due)
+      const f = FOUNTAIN[this.myTeam], p = this._pred || me;
+      const atBase = !!f && Math.hypot(p.x - f.x, p.y - f.y) <= R.FOUNTAIN_RADIUS;
+      if (atBase || me.dead) this._leftBaseAt = 0; else if (!this._leftBaseAt) this._leftBaseAt = Date.now();
+    }
+    if (now - this._playingAt < 4500 || now - c.lastAt < COACH_GAP_MS) return;
+    if (this.hud.modalOpen || this.shop?.isOpen || this._vote || this._sbOpen) return;
+    const t = st.startedAt ? srvNow - st.startedAt : 0;
+    const tip = this._coachPick(me, this._pred || me, t, canShop, st, srvNow);
+    if (!tip) return;
+    if (tip[0] === 'gold') c.goldAt = Date.now(); else c.seen.add(tip[0]); // the gold nudge repeats
+    c.lastAt = now;
+    this.hud.tip(tip[1], 8000);
+  }
+
+  _coachPick(me, p, t, canShop, st = null, srvNow = 0) {
+    const seen = this._coach.seen, T = this._isTouch;
+    const want = (id, cond, text) => (!seen.has(id) && cond ? [id, text] : null);
+    const hpPct = me.maxHp ? me.hp / me.maxHp : 1;
+    const f = FOUNTAIN[this.myTeam];
+    const atBase = !!f && Math.hypot(p.x - f.x, p.y - f.y) <= R.FOUNTAIN_RADIUS;
+    const alive = !me.dead;
+    // Round 2: gold piling up far from the shop (> 90 s out of base) → recall nudge, every ~2 min.
+    const wall = Date.now();
+    const next = this._nextBuy(me);
+    const goldTip = alive && !atBase && next && (me.gold | 0) >= next.cost && this._leftBaseAt && wall - this._leftBaseAt > 90000
+      && wall - (this._coach.goldAt || 0) > 120000 && hpPct > 0.3
+      ? ['gold', `💰 ${me.gold | 0}g burning a hole — ${T ? 'tap 🏠' : 'press B'} to recall and shop (${next.emoji} ${next.name})`] : null;
+    const epicSoon = !!st && [st.epicGoldenAt, st.epicDeadlineAt].some((at) => at > srvNow && at - srvNow < 30000);
+    return want('lowhp', alive && hpPct < 0.3 && !atBase, `🏃 Low HP? ${T ? 'Tap 🏠' : 'Press B'} to recall. Heroics at 5 HP go in the post-mortem.`)
+      || want('lv6', alive && (me.level | 0) >= R.ULT_UNLOCK_LEVEL, `⭐ Lv${R.ULT_UNLOCK_LEVEL}: R unlocked — your reply-all.`)
+      || want('dead', !alive, '💀 Dead? The shop works while you wait — spend that gold.')
+      || want('shop', alive && canShop && t > 60000 && (me.gold | 0) >= 300, `🛒 ${me.gold | 0}g at the fountain — ${T ? 'tap 🛒' : 'P'} to shop. Treat yourself.`)
+      || want('tower', alive && this._towerAlone(p), '🗼 Towers hate you personally. Let the minions take the meeting first.')
+      || want('lasthit', alive && t > 20000 && this._enemyMinionNear(p, 750), "🎯 Last hit pays. Everyone else just 'contributed'.")
+      || want('bush', alive && this._meHidden === 'hidden', "🌿 In a bush enemies can't see you — until you attack.")
+      || goldTip
+      || want('epic', alive && epicSoon, "✨ An epic monster spawns in under 30 s — group up, it pays the whole team.")
+      || want('attack', alive && t > 75000, T ? '⚔ The big ⚔ button hits the nearest enemy — no aiming needed.' : '⚔ SPACE hits the nearest enemy — no aiming needed.')
+      || want('scores', t > 150000, T ? '📊 Tap 📊 for the scoreboard — see who is carrying.' : '📊 Hold TAB for the scoreboard — see who is carrying.')
+      || want('minimap', t > 210000, T ? '🗺 Tap the minimap to walk there — jungle camps are free gold between waves.' : '🗺 Click the minimap to walk there — jungle camps are free gold between waves.');
+  }
+
+  /** Inside an enemy tower's reach with no allied minion tanking it. */
+  _towerAlone(p) {
+    const reach = (R.TOWER?.range ?? 600) + 120;
+    for (const s of this.views.structs.values()) {
+      if (s.team === this.myTeam || !s.alive || s.kind !== 'tower') continue;
+      if (Math.abs(s.x - p.x) > reach || Math.abs(s.y - p.y) > reach || Math.hypot(s.x - p.x, s.y - p.y) > reach) continue;
+      const r = R.TOWER?.range ?? 600;
+      for (const u of this.views.units.values()) {
+        if (u.team === this.myTeam && u.alive && u.kind !== 'pet' && Math.hypot(u.x - s.x, u.y - s.y) <= r) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  _enemyMinionNear(p, r) {
+    for (const u of this.views.units.values()) {
+      if (!u.alive || u.kind === 'pet' || u.team === this.myTeam || (u.team !== 'blue' && u.team !== 'red')) continue;
+      if (Math.hypot(u.x - p.x, u.y - p.y) <= r) return true;
+    }
+    return false;
+  }
+
+  _castSfx(slot) {
+    const now = this.time.now;
+    if (now - this._lastCastSfx < 150) return;
+    this._lastCastSfx = now;
+    AudioManager.teamCast?.(slot);
+  }
+
   _recall() {
     if (!this._canAct()) return;
     const me = this._me();
     if ((me.recallUntil || 0) > this._srvNow()) return;
     this._send('recall');
     this._moveDest = null;
+  }
+
+  // ───────────────────────── EP-08: rollback (concede) vote ─────────────────────────
+  _rollbackOpen(st, srvNow) {
+    return !this._sim && !!this.room && this._phase === 'playing' && !this._ended && !!st?.startedAt
+      && srvNow - st.startedAt >= (R.ROLLBACK_FROM_MS ?? 720000);
+  }
+
+  /** 🏳 button / `/rollback`: start a vote (yes), or vote yes on the running one. */
+  _rollback() {
+    if (this._sim) { this.hud.toast('🏳 No rollbacks in practice — the bots never give up', '#ffb347'); return; }
+    if (!this.room || this._phase !== 'playing' || this._ended) return;
+    if (this._vote) {
+      if (this._voteMine == null) this._castVote(true);
+      else this.hud.toast('🏳 You already voted', '#ffb347');
+      return;
+    }
+    this._voteReqAt = Date.now();
+    this._voteMine = true; // a started vote counts the starter's yes
+    this._send('vote', { yes: true });
+    AudioManager.uiClick?.();
+  }
+
+  _castVote(yes) {
+    if (!this._vote || this._voteMine != null || this._sim) return;
+    this._voteMine = !!yes;
+    this._send('vote', { yes: !!yes });
+    AudioManager.uiClick?.();
+    this.hud.showVote({ ...this._vote, mine: this._voteMine }, this._srvNow(), R.ROLLBACK_VOTE_MS);
+  }
+
+  /** s→team `vote { yes, no, need, endsAt, by }` — a new vote (endsAt changed) resets our ballot. */
+  _onVote(m) {
+    if (!Number.isFinite(m.endsAt)) return;
+    // Re-sent payload after a (re)join: `mine` = this seat already voted (direction unknown).
+    if (m.mine === true) this._voteMine = typeof this._voteMine === 'boolean' ? this._voteMine : 'voted';
+    else if (m.mine === false) this._voteMine = null;
+    else if (!this._vote || this._vote.endsAt !== m.endsAt) {
+      const iStarted = Date.now() - this._voteReqAt < 4000;
+      this._voteMine = iStarted ? true : null;
+    }
+    if (!this._vote || this._vote.endsAt !== m.endsAt) {
+      const iStarted = Date.now() - this._voteReqAt < 4000 || m.mine === true;
+      if (!iStarted) {
+        this.hud.banner({ title: '🏳 ROLLBACK THE RELEASE?', sub: `${String(m.by || 'A teammate').slice(0, 18)} wants last Friday's build back (${m.yes | 0}/${m.need | 0})`, color: '#ffb347' });
+        AudioManager.paChime?.();
+      }
+    }
+    this._vote = { yes: m.yes | 0, no: m.no | 0, need: m.need | 0 || (R.ROLLBACK_NEED ?? 4), endsAt: m.endsAt, by: m.by };
+    this.hud.showVote({ ...this._vote, mine: this._voteMine }, this._srvNow(), R.ROLLBACK_VOTE_MS);
+  }
+
+  _tickVote(st, srvNow) {
+    this.hud.setRollbackVisible(this._rollbackOpen(st, srvNow) && !this._vote && !this._reconn);
+    if (!this._vote) return;
+    if (srvNow > this._vote.endsAt + 2500 || this._phase !== 'playing') { // voteEnd lost → close quietly
+      this._vote = null; this._voteMine = null; this.hud.showVote(null); return;
+    }
+    if (++this._voteKey % 6 === 0) this.hud.showVote({ ...this._vote, mine: this._voteMine }, srvNow, R.ROLLBACK_VOTE_MS);
   }
 
   // ───────────────────────── orders + casts ─────────────────────────
@@ -686,7 +1035,11 @@ export default class TeamModeScene extends Phaser.Scene {
     const me = this._me(), p = this._pred || me;
     const reach = (me.range || 300) + 160;
     const t = this._nearestEnemyTo(p.x, p.y, reach, true) || this._nearestEnemyTo(p.x, p.y, reach, false, true);
-    if (!t) { this.hud.toast('No enemy in range', '#ff8a8a'); return; }
+    if (!t) { // round 2: SPACE spam → one toast per ~3 s
+      const now = this.time.now;
+      if (now - (this._noEnemyAt || -1e9) > 3000) { this._noEnemyAt = now; this.hud.toast('No enemy in range', '#ff8a8a'); }
+      return;
+    }
     this._attackOrder(t);
   }
 
@@ -835,6 +1188,7 @@ export default class TeamModeScene extends Phaser.Scene {
     // World motion runs on REAL elapsed time: Phaser clamps `delta` to 16.7 ms
     // while the window is unfocused, which would slow prediction vs the server.
     const pnow = performance.now();
+    if (this._lastPnow && pnow - this._lastPnow > STALL_MS) { this._lastRxAt = Date.now(); this._stallAt = 0; } // frozen tab resumed
     const dt = Math.min(0.1, Math.max(0, (pnow - (this._lastPnow || pnow)) / 1000));
     this._lastPnow = pnow;
     const now = this.time.now;
@@ -857,6 +1211,7 @@ export default class TeamModeScene extends Phaser.Scene {
         this.hud.setChampion(me0.champ, me0.team);
         try { this.shop?.setChampion?.(me0.champ); } catch (_) { /* optional extra */ }
       }
+      if (st.custom) this._wasCustom = true; // remembered for PLAY AGAIN after the room is gone
       this._syncPhase(st);
       if (this.myTeam && WORLD_PHASES.has(this._phase)) this._syncWorld(st, dt, now, srvNow);
     }
@@ -877,6 +1232,14 @@ export default class TeamModeScene extends Phaser.Scene {
     const canShop = this._canShop(me);
     this.hud.update({ st, me, myId: this.localId, srvNow, now, mePos: this._pred, view, canShop, phase: this._phase, hidden: this._meHidden });
     if (me && this.shop) this.shop.update({ gold: me.gold | 0, items: toArr(me.items), canShop });
+    this._tickReconnect();
+    if (st) this._tickVote(st, srvNow);
+    if (now >= (this._slowTickAt || 0)) {
+      this._slowTickAt = now + 250;
+      if (this._shopAssistAt && now >= this._shopAssistAt) this._tickShopAssist(me, now);
+      this._tickBuyNudge(me, canShop);
+      if (st && me) this._tickCoach(st, me, srvNow, now, canShop);
+    }
     if (this._sbOpen && this.scoreboard && now >= (this._sbAt || 0)) { this._sbAt = now + 250; this.scoreboard.update(st, this.localId); }
     this._updateInfo(false);
     if (now - this._minePrunedAt > 5000) {
@@ -897,7 +1260,9 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!world) { this.shop?.close?.(); this.info?.close?.(); }
     if (ph === 'playing' && prev !== 'playing') {
       this._playingAt = this.time.now;
-      this.hud.toast(this._isTouch ? 'Joystick to move · ⚔ attack · skills + D/F auto-aim · ℹ info' : 'Right-click: move / attack · Q W E R: skills · D F: spells · C: info · B: recall · P: shop', '#7ec8ff');
+      this.hud.toast(this._isTouch ? 'Joystick to move · ⚔ attack · skills + D/F auto-aim · ℹ info' : 'Right-click: move / attack · Q W E R: skills · D F: spells · C: info · B: recall · P: shop', '#7ec8ff', 4200);
+      // EP-21: the first games open the shop at 0:00 (starting gold is meant to be spent).
+      if (this._shopAssist) this._shopAssistAt = this.time.now + 900; // fired from update once the shop module is loaded
     }
     if (ph === 'ended') this._onEnded(st);
   }
@@ -923,7 +1288,8 @@ export default class TeamModeScene extends Phaser.Scene {
         v.sync(s);
         if (was && !v.alive) {
           this.fx.explosion(v.x, v.y - v.height * 0.4, v.kind === 'core');
-          if (this.fx.onScreen(v.x, v.y, 200)) this.cameras.main.shake(280, 0.005);
+          if (this.fx.onScreen(v.x, v.y, 200)) shakeCam(this, 280, 0.005);
+          AudioManager.towerDown?.(v.team === this.myTeam);
         }
       }
       v._seen = f;
@@ -1009,9 +1375,36 @@ export default class TeamModeScene extends Phaser.Scene {
       if (!v.dead && !v._culled) this._fadeOutChamp(v); else v.destroy();
       this._onVanish(id);
     }
+    if (f % 4 === 0) this._layoutPlates();
     // The bush you stand in thins out so you can see yourself.
     this.map.setBushFocus(this._pred && me && !me.dead ? bushAt(this._pred.x, this._pred.y) : '');
     this._worldReady = true;
+  }
+
+  /** Round 2: nameplates of champions standing close together stack upward instead of
+   *  overlapping (you keep yours in place); in a > 4-champion crowd the others shrink a bit. */
+  _layoutPlates() {
+    const list = this._plateList || (this._plateList = []);
+    list.length = 0;
+    for (const v of this.views.champs.values()) if (!v.dead && !v._culled && !v._gone) list.push(v);
+    list.sort((a, b) => (b.isMe - a.isMe) || (b.y - a.y));
+    const placed = this._platePlaced || (this._platePlaced = []);
+    placed.length = 0;
+    for (const v of list) {
+      let dy = 0;
+      for (let k = 0; k < 4; k++) {
+        const py = v.y + dy;
+        let hit = false;
+        for (let i = 0; i < placed.length; i += 2) if (Math.abs(placed[i] - v.x) < 120 && Math.abs(placed[i + 1] - py) < 34) { hit = true; break; }
+        if (!hit) break;
+        dy -= 34;
+      }
+      v.plateDy = dy;
+      placed.push(v.x, v.y + dy);
+      let near = 0;
+      for (const o of list) if (o !== v && Math.abs(o.x - v.x) < 200 && Math.abs(o.y - v.y) < 200) near++;
+      v.setPlateScale?.(near >= 4 && !v.isMe ? 0.82 : 1);
+    }
   }
 
   _inCull(x, y) { const c = this._cull; return x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1; }
@@ -1083,6 +1476,7 @@ export default class TeamModeScene extends Phaser.Scene {
     v.sync(c, srvNow, now);
     if (!wasDead && v.dead) {
       this.fx.champDeath(v.x, v.y, teamColor(v.team));
+      if (isMe || this.fx.onScreen(v.x, v.y, 100)) AudioManager.teamDeath?.(isMe);
       return;
     }
     if (wasDead && !v.dead) { this.fx.respawn(c.x, c.y, teamColor(v.team)); return; }
@@ -1439,7 +1833,18 @@ export default class TeamModeScene extends Phaser.Scene {
     }));
     rows.sort((a, b) => (a.team === b.team ? b.kills - a.kills || a.deaths - b.deaths : (a.team === this.myTeam ? -1 : 1)));
     // state + localSid let EndScreen fill any player missing from rows from state.scores (v4 §3.5).
-    const payload = { winner: st.winner, myTeam: this.myTeam, rows, state: st, localSid: this.localId };
+    // EP-09: practice never touches the W/L record; winReason → rollback subtitle; first blood +
+    // duration feed the "YOUR SHIFT" highlights and the copied result.
+    const durationMs = st.startedAt ? Math.max(0, this._srvNow() - st.startedAt) : 0;
+    const payload = {
+      winner: st.winner, myTeam: this.myTeam, rows, state: st, localSid: this.localId,
+      practice: !!this._sim, winReason: String(st.winReason || ''), firstBlood: this._firstBlood || '', durationMs,
+    };
+    try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
+    this._reconn = null;
+    this._vote = null; this.hud.showVote(null); this.hud.setRollbackVisible(false); this.hud.setBuyNudge(null);
+    // EP-10: coaching retires after COACH_MATCHES finished matches.
+    if (this._coach && this._gamesPlayed + 1 >= COACH_MATCHES) { try { SaveManager.setFlag?.('tipsSiege', true); } catch (_) { /* old save */ } }
     if (st.winner && st.winner === this.myTeam) AudioManager.victory?.(); else AudioManager.failure?.();
     // Let the victory banner + core explosion play before the end screen covers them.
     this.time.delayedCall(2200, () => {
@@ -1449,6 +1854,7 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _showEndScreen(payload) {
+    try { this.hud.clearTransient(); this.fx.clearNumbers(); } catch (_) { /* cosmetic */ }
     try { this.endScreen.show(payload); } catch (e) {
       console.warn('[TeamMode] EndScreen.show failed, using fallback:', e?.message);
       new FallbackEndScreen(this, { onPlayAgain: () => this._playAgain(), onMenu: () => this._goMenu() }).show(payload);
@@ -1491,7 +1897,9 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!this._chatActive) return;
     const text = (this._chatEl?.value || '').trim();
     const now = Date.now();
-    if (send && text && now - this._lastChatAt >= 600) { this._lastChatAt = now; this._send('chat', { text: text.slice(0, 140) }); }
+    if (send && /^\/(rollback|ff|surrender)$/i.test(text)) this._rollback(); // EP-08 chat shortcut
+    else if (send && /^\/(yes|no)$/i.test(text)) this._castVote(/yes/i.test(text));
+    else if (send && text && now - this._lastChatAt >= 600) { this._lastChatAt = now; this._send('chat', { text: text.slice(0, 140) }); }
     this._chatActive = false;
     if (this._chatEl) { this._chatEl.value = ''; this._chatEl.style.display = 'none'; this._chatEl.blur(); }
     if (this.input?.keyboard) {
@@ -1503,10 +1911,13 @@ export default class TeamModeScene extends Phaser.Scene {
   // ───────────────────────── leaving ─────────────────────────
   _goMenu() { this._cleanup(); this.scene.start('MenuScene'); }
   // Custom-room players go back to the rooms screen (keep the group together); quick play → lobby.
+  // Round 2: an online quick match re-queues straight away (TeamLobbyScene { autoQueue }).
   _playAgain() {
-    const custom = !!this._state()?.custom;
+    const custom = !!(this._state()?.custom || this._wasCustom);
+    const online = !this._sim;
     this._cleanup();
-    this.scene.start(custom ? 'TeamCustomScene' : 'TeamLobbyScene', custom ? { name: this.playerName } : undefined);
+    if (custom) this.scene.start('TeamCustomScene', { name: this.playerName });
+    else this.scene.start('TeamLobbyScene', online ? { autoQueue: true } : undefined);
   }
 
   _cleanup() {
@@ -1514,6 +1925,9 @@ export default class TeamModeScene extends Phaser.Scene {
     this._cleanedVisit = this._visit;
     // Flag first so Colyseus callbacks firing during room.leave() become no-ops.
     this._shuttingDown = true;
+    try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
+    this._reconn = null; this._vote = null;
+    document.removeEventListener('visibilitychange', this._onVis);
     this.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, this._onAdded);
     this.events.off(Phaser.Scenes.Events.PRE_RENDER, this._classifyCams, this);
     this._camQ.length = 0;

@@ -94,8 +94,9 @@ export class HUD {
   }
 
   _abbrev(name) {
-    const map = { 'Claude Haiku': 'HKU', 'Claude Sonnet': 'SON', 'Claude Opus': 'OPUS',
-                  'ChatGPT': 'GPT', 'GitHub Copilot': 'COP', 'Cursor': 'CUR' };
+    // Short labels for the office-named skills (src/data/skills.js, EP-22 rename)
+    const map = { 'Intern Bot': 'INT', 'Espresso Bot': 'ESP', 'Senior Review': 'SR',
+                  'Hot Desk': 'DESK', 'All-Hands Ping': 'PING' };
     return map[name] ?? name.slice(0, 3).toUpperCase();
   }
 }

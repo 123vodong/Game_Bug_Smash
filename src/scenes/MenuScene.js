@@ -1,19 +1,29 @@
 // MenuScene — title screen for BUG SMASH: Save the Deadline.
-// The background already contains the title, stickman, bugs, code editor,
-// DEADLINE sticky, DAILY MISSION panel and DEV TIP card.
-// This scene ONLY adds the interactive PLAY / SETTINGS / CREDITS buttons.
+// The background already contains the title, stickman, bugs and code editor.
+// This scene adds the buttons (PLAY · Personal / Team · SETTINGS / CAREER / LEVELS),
+// the daily-missions + DEV TIP cards, and the first-run welcome card.
 import { SaveManager } from '../core/SaveManager.js';
+import { Progress } from '../core/Progress.js';
 import { TOTAL_LEVELS } from '../data/levels.js';
 import { AudioManager } from '../core/AudioManager.js';
-import { TIPS_DEFAULT } from '../data/tips.js';
-import { missionsForDay, dayKey } from '../data/missions.js';
+import { TIPS_DEFAULT, TIPS_REAL } from '../data/tips.js';
+import { MISSION_MODES, dayKey } from '../data/missions.js';
 import { HATS, isHatUnlocked } from '../data/cosmetics.js';
+import { SettingsPanel } from '../ui/SettingsPanel.js';
+import { ProfilePanel } from '../ui/ProfilePanel.js';
+import { LevelSelectPanel } from '../ui/LevelSelectPanel.js';
+import { WelcomePanel } from '../ui/WelcomePanel.js';
 
-// Same host logic as MultiPlayScene's SERVER_URL, but HTTP for the stats API.
+// Stats API on the game server — same host rules as MultiPlayScene's SERVER_URL /
+// Team Mode's teamServerUrl(): `?server=ws(s)://…` override, the :8000 python static
+// server → :2567, otherwise the page's own host + port (the server serves the static files).
 const STATS_URL = (() => {
   const loc = window.location;
-  if (loc.protocol === 'https:') return `${loc.origin}/api/stats`;
-  return `http://${loc.hostname || 'localhost'}:2567/api/stats`;
+  const o = new URLSearchParams(loc.search).get('server');
+  if (o && /^wss?:\/\//.test(o)) return o.replace(/^ws/, 'http').replace(/\/+$/, '') + '/api/stats';
+  if (loc.port === '8000') return `http://${loc.hostname || 'localhost'}:2567/api/stats`;
+  if (loc.protocol === 'http:' || loc.protocol === 'https:') return `${loc.origin}/api/stats`;
+  return 'http://localhost:2567/api/stats';
 })();
 
 const NEON_GREEN  = 0x39ff14;
@@ -36,7 +46,9 @@ export default class MenuScene extends Phaser.Scene {
     // Background (do not modify)
     this.add.image(W / 2, H / 2, 'menu-bg').setDisplaySize(W, H).setDepth(-10);
 
-    AudioManager.setMuted(SaveManager.isMuted());
+    AudioManager.applySaved();   // mute + volume from the save
+    this._modal = null;          // open panel (menu keys are ignored while one is up)
+    this._starting = false;
 
     // Subtle ambient particles drifting up
     this._spawnNeonParticles();
@@ -51,11 +63,57 @@ export default class MenuScene extends Phaser.Scene {
     // Tiny corner hint (bottom-left)
     this._drawCornerInfo(W, H);
 
-    // Keyboard
-    this.input.keyboard.on('keydown-ENTER', () => this._startGame());
-    this.input.keyboard.on('keydown-M', () => this._toggleMute());
+    // Keyboard (ignored while a panel is open)
+    this.input.keyboard.on('keydown-ENTER', () => { if (!this._modalOpen()) this._startGame(); });
+    this.input.keyboard.on('keydown-M', () => { if (!this._modalOpen()) this._toggleMute(); });
+    this.input.keyboard.on('keydown-L', () => { if (!this._modalOpen()) this._openLevels(); });
 
     this.cameras.main.fadeIn(300, 0, 0, 0);
+
+    // First run: welcome card with the name field (EP-13). Existing players skip it.
+    if (!SaveManager.getFlag('welcomeSeen')) {
+      const c = SaveManager.getCareer();
+      const veteran = SaveManager.getPlayerName() || c.sessions > 0 || c.teamGames > 0 || c.teamPractice > 0
+        || SaveManager.getUnlockedIndex() > 0;
+      if (veteran) SaveManager.setFlag('welcomeSeen', true);
+      else this.time.delayedCall(350, () => { if (!this._starting) this._openWelcome(); });
+    }
+  }
+
+  // ============================================================ PANELS
+  _modalOpen() { return !!(this._modal && !this._modal.closed); }
+
+  _openPanel(make) {
+    if (this._modalOpen() || this._starting) return null;
+    this._modal = make(() => { this._modal = null; this._refreshAfterPanel(); });
+    return this._modal;
+  }
+
+  _openWelcome() {
+    this._openPanel(() => WelcomePanel.open(this, {
+      mode: 'welcome',
+      onChoice: (choice, name) => {
+        this._modal = null;
+        this._nameDisplay?.setText(this._nameLabelText(name));
+        if (choice === 'campaign') this._startLevel(0);
+        else if (choice === 'online') this.scene.start('MultiPlayScene');
+      },
+    }));
+  }
+
+  _openSettings(tab = 'settings') { this._openPanel((onClose) => SettingsPanel.open(this, { tab, onClose })); }
+  _openCareer() { this._openPanel((onClose) => ProfilePanel.open(this, { onClose })); }
+  _openLevels() {
+    this._openPanel((onClose) => LevelSelectPanel.open(this, {
+      onClose, onPlay: (i) => { this._modal = null; this._startLevel(i); },
+    }));
+  }
+
+  /** A panel may have changed the hat / name → redraw the small bits. */
+  _refreshAfterPanel() {
+    if (!this.sys.isActive()) return;
+    this._nameDisplay?.setText(this._nameLabelText(SaveManager.getPlayerName()));
+    this._careerText?.setText(this._careerLine());
   }
 
   // ============================================================ BUTTONS
@@ -128,30 +186,37 @@ export default class MenuScene extends Phaser.Scene {
       duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
-    // SETTINGS — smaller, neon teal (moved lower to make room for MP row)
+    // Bottom row: SETTINGS · CAREER · LEVELS (narrow enough to leave the bottom-left text clear).
     const subY = H * 0.90;
     const settings = this._roundedNeonButton({
-      x: W / 2 - 100, y: subY, w: 180, h: 50, radius: 14,
-      label: 'SETTINGS', fontSize: 16,
+      x: W / 2 - 172, y: subY, w: 160, h: 50, radius: 14,
+      label: 'SETTINGS', fontSize: 15,
       color: NEON_TEAL, iconKind: 'gear',
     });
-    settings.on('pointerup', () => this._toast('Settings panel coming soon'));
+    settings.on('pointerup', () => this._openSettings());
 
-    // CREDITS — smaller, neon teal (matches SETTINGS in target)
-    const credits = this._roundedNeonButton({
-      x: W / 2 + 100, y: subY, w: 180, h: 50, radius: 14,
-      label: 'CREDITS', fontSize: 16,
-      color: NEON_TEAL, iconKind: 'user',
+    const career = this._roundedNeonButton({
+      x: W / 2, y: subY, w: 160, h: 50, radius: 14,
+      label: 'CAREER', fontSize: 15,
+      color: NEON_YELLOW, iconKind: 'user',
     });
-    credits.on('pointerup', () => this._toast('Built with Phaser 3 + WebAudio · 2026'));
+    career.on('pointerup', () => this._openCareer());
 
-    // Small unobtrusive "prototype" link in the bottom-left corner.
-    const proto = this.add.text(16, H - 10, '▶ try platformer prototype', {
+    const levels = this._roundedNeonButton({
+      x: W / 2 + 172, y: subY, w: 160, h: 50, radius: 14,
+      label: 'LEVELS', fontSize: 15,
+      color: NEON_TEAL, iconKind: 'grid',
+    });
+    levels.on('pointerup', () => this._openLevels());
+
+    // About / credits link (bottom-left). The platformer prototype is no longer linked here
+    // (reachable by URL only — coordinator wires ?scene=platformer in main.js).
+    const about = this.add.text(16, H - 10, 'ⓘ about · credits', {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff',
     }).setOrigin(0, 0.5).setDepth(11).setInteractive({ useHandCursor: true });
-    proto.on('pointerover', () => proto.setColor('#ffffff'));
-    proto.on('pointerout',  () => proto.setColor('#7ec8ff'));
-    proto.on('pointerup',   () => this.scene.start('PlatformerScene'));
+    about.on('pointerover', () => about.setColor('#ffffff'));
+    about.on('pointerout',  () => about.setColor('#7ec8ff'));
+    about.on('pointerup',   () => this._openSettings('about'));
 
     // ---------- Multiplayer entry cluster (bottom-right) ----------
     // Display-name line ("name: <click to edit>") sits above the green link.
@@ -162,6 +227,7 @@ export default class MenuScene extends Phaser.Scene {
     this._nameDisplay.on('pointerover', () => this._nameDisplay.setColor('#ffffff'));
     this._nameDisplay.on('pointerout',  () => this._nameDisplay.setColor('#aab0c0'));
     this._nameDisplay.on('pointerup',   () => this._promptForName());
+    this._nameDisplay.setPadding(10, 8, 0, 8); // bigger tap target on phones
 
   }
 
@@ -192,13 +258,11 @@ export default class MenuScene extends Phaser.Scene {
   }
 
   _promptForName() {
-    // Simple prompt — Phaser doesn't have built-in text input; using window.prompt
-    // is the lowest-effort cross-platform solution and good enough for v0.
-    const current = SaveManager.getPlayerName() || '';
-    const next = window.prompt('Enter your display name (max 16 chars):', current);
-    if (next == null) return; // user cancelled
-    const clean = SaveManager.setPlayerName(next);
-    this._nameDisplay.setText(this._nameLabelText(clean));
+    // DOM name card (IME-safe, works with phone keyboards) — replaces window.prompt.
+    this._openPanel((onClose) => WelcomePanel.open(this, {
+      mode: 'rename', onClose,
+      onDone: (clean) => { this._modal = null; this._nameDisplay.setText(this._nameLabelText(clean)); },
+    }));
   }
 
   /**
@@ -349,6 +413,12 @@ export default class MenuScene extends Phaser.Scene {
       g.strokeCircle(-6, 0, 5.5);
       g.strokeCircle( 6, 0, 5.5);
       c.add(g);
+    } else if (kind === 'grid') {
+      // 3×2 level tiles
+      const g = this.add.graphics();
+      g.fillStyle(0xffffff, 1);
+      for (let r = 0; r < 2; r++) for (let q = 0; q < 3; q++) g.fillRoundedRect(-11 + q * 8, -7 + r * 8, 6, 6, 1.5);
+      c.add(g);
     } else if (kind === 'swords') {
       // Two crossed sword silhouettes (simple X with hilts)
       const g = this.add.graphics();
@@ -370,11 +440,9 @@ export default class MenuScene extends Phaser.Scene {
   // ============================================================ HOLOGRAM PANELS
   /** Floating DAILY MISSION hologram card (right side, mid). */
   _drawDailyMission(W, H) {
-    // Real daily missions (same 3 for everyone today), progress from SaveManager.
+    // Real daily missions (same 3 for everyone today: 2 Personal + 1 Team-or-Campaign).
     const day = dayKey();
-    const missions = missionsForDay(day);
-    const daily = SaveManager.getDaily(day);
-    const { streak, day: streakDay } = SaveManager.getStreak();
+    const missions = Progress.today();
 
     const panelW = 240, panelH = 172;  // left edge stays clear of the title art
     const x = W - panelW / 2 - 14;
@@ -388,7 +456,7 @@ export default class MenuScene extends Phaser.Scene {
     c.add(this.add.rectangle(0, 0, panelW - 8, panelH - 8, 0, 0).setStrokeStyle(1, NEON_CYAN, 0.4));
     c.add(this.add.rectangle(0, -panelH / 2 + 14, panelW - 16, 18, NEON_CYAN, 0.18));
 
-    const title = this.add.text(0, -panelH / 2 + 14, 'DAILY MISSIONS · ONLINE', {
+    const title = this.add.text(0, -panelH / 2 + 14, 'DAILY MISSIONS', {
       fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 13, color: '#ffd23f',
       stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
@@ -399,21 +467,27 @@ export default class MenuScene extends Phaser.Scene {
     const startY = -panelH / 2 + 44;
     missions.forEach((m, i) => {
       const yy = startY + i * 30;
-      const done = !!daily.done[m.id];
+      const done = m.done;
       if (done) doneCount++;
-      const prog = Math.min(m.goal, daily.progress[m.id] || 0);
+      const prog = m.progress;
       const check = this.add.text(-panelW / 2 + 10, yy, done ? '✓' : '○', {
         fontFamily: 'Arial Black, sans-serif', fontSize: done ? 16 : 13,
         color: done ? '#7ed957' : '#5a7a90', stroke: '#000', strokeThickness: 2,
       }).setOrigin(0, 0.5);
       if (done) check.setShadow(0, 0, '#39ff14', 6, true, true);
-      const text = this.add.text(-panelW / 2 + 28, yy, m.text, {
-        fontFamily: 'Consolas, monospace', fontSize: 11, color: done ? '#8fa8b8' : '#ffffff',
-      }).setOrigin(0, 0.5);
+      // Mode icon: 🌐 Personal · ⚔️ Team 5v5 · 🎯 Campaign
+      const icon = this.add.text(-panelW / 2 + 36, yy, (MISSION_MODES[m.mode] || MISSION_MODES.arena).icon, {
+        fontSize: 12,
+      }).setOrigin(0.5).setAlpha(done ? 0.6 : 1);
       const pr = this.add.text(panelW / 2 - 10, yy, done ? 'done' : `${prog}/${m.goal}`, {
         fontFamily: 'Consolas, monospace', fontSize: 11, color: done ? '#7ed957' : '#00cfff',
       }).setOrigin(1, 0.5);
-      c.add([check, text, pr]);
+      const text = this.add.text(-panelW / 2 + 48, yy, m.text, {
+        fontFamily: 'Consolas, monospace', fontSize: 11, color: done ? '#8fa8b8' : '#ffffff',
+      }).setOrigin(0, 0.5);
+      const room = panelW - 48 - 16 - pr.width;   // squeeze long mission names instead of overlapping
+      if (text.width > room) text.setScale(room / text.width, 1);
+      c.add([check, icon, text, pr]);
     });
 
     // Progress bar = missions completed today; streak = consecutive full days.
@@ -423,8 +497,8 @@ export default class MenuScene extends Phaser.Scene {
     if (frac > 0) {
       c.add(this.add.rectangle(-barW / 2, panelH / 2 - 26, barW * frac, 4, NEON_CYAN, 1).setOrigin(0, 0.5));
     }
-    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-    const live = streak > 0 && (streakDay === day || streakDay === dayKey(yesterday));
+    const streak = SaveManager.getLiveStreak(day);
+    const live = streak > 0;
     c.add(this.add.text(-panelW / 2 + 14, panelH / 2 - 13, live ? `🔥 ${streak}-day streak` : 'finish all 3 to start a streak', {
       fontFamily: 'Consolas, monospace', fontSize: 10, color: live ? '#ffb347' : '#5a7a90',
     }).setOrigin(0, 0.5));
@@ -436,6 +510,10 @@ export default class MenuScene extends Phaser.Scene {
       targets: halo, alpha: { from: 0.20, to: 0.42 },
       duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
+    // Tap the card → CAREER · TODAY (details + streak hats).
+    const hit = this.add.rectangle(0, 0, panelW, panelH, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    hit.on('pointerup', () => this._openPanel((onClose) => ProfilePanel.open(this, { tab: 'today', onClose })));
+    c.add(hit);
   }
 
   /** Small DEV TIP holographic card (bottom-right). */
@@ -472,22 +550,28 @@ export default class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     c.add(tipText);
 
-    this._currentTipIdx = Math.floor(Math.random() * TIPS_DEFAULT.length);
-    const setTip = (i) => tipText.setText(`"${TIPS_DEFAULT[i]}"`);
-    setTip(this._currentTipIdx);
+    // Real tips and jokes alternate 1:1 (EP-13); each pool is shuffled so nothing repeats soon.
+    const shuffle = (a) => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+    const pools = { real: shuffle(TIPS_REAL), joke: shuffle(TIPS_DEFAULT) };
+    const idx = { real: 0, joke: 0 };
+    let useReal = true;   // first card is a real tip
+    const nextTip = () => {
+      const k = useReal ? 'real' : 'joke';
+      useReal = !useReal;
+      const pool = pools[k];
+      const t = pool[idx[k] % pool.length];
+      idx[k]++;
+      return k === 'real' ? `💡 ${t}` : `"${t}"`;
+    };
+    tipText.setText(nextTip());
 
     this._tipRotateEvt = this.time.addEvent({
-      delay: 5000, loop: true,
+      delay: 6000, loop: true,
       callback: () => {
-        // Fade out → swap → fade in (skip ahead avoiding repeats)
         this.tweens.add({
           targets: tipText, alpha: 0, duration: 300,
           onComplete: () => {
-            let next;
-            do { next = Math.floor(Math.random() * TIPS_DEFAULT.length); }
-            while (next === this._currentTipIdx && TIPS_DEFAULT.length > 1);
-            this._currentTipIdx = next;
-            setTip(next);
+            tipText.setText(nextTip());
             this.tweens.add({ targets: tipText, alpha: 1, duration: 400 });
           },
         });
@@ -525,29 +609,35 @@ export default class MenuScene extends Phaser.Scene {
   }
 
   _drawCornerInfo(W, H) {
-    const unlocked = SaveManager.getUnlockedIndex();
-    const cleared  = Math.min(unlocked, TOTAL_LEVELS);
-    const best     = SaveManager.getHighScore();
+    const c = SaveManager.getCareer();
+    const stars = c.campaignStars;
     const txt = this.add.text(28, H - 24,
-      `levels ${cleared}/${TOTAL_LEVELS}   best ${best}   [M] mute  [ENTER] play`, {
+      `levels ${Math.min(c.campaignLevels, TOTAL_LEVELS)}/${TOTAL_LEVELS} ★${stars}   [L] levels  [M] mute  [ENTER] play`, {
       fontFamily: 'Consolas, monospace', fontSize: 11, color: '#ffffff',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0, 0.5).setDepth(46);
     txt.setAlpha(0.7);
 
-    // Online career — lifetime MP stats + hat collection (cosmetics only).
+    // Career across modes + hat collection (cosmetics only). Opens the CAREER panel.
+    this._careerText = this.add.text(28, H - 42, this._careerLine(), {
+      fontFamily: 'Consolas, monospace', fontSize: 11, color: '#ffd23f',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0, 0.5).setDepth(46).setAlpha(0.85).setInteractive({ useHandCursor: true });
+    this._careerText.on('pointerup', () => this._openCareer());
+  }
+
+  /** One short line — it shares the bottom-left with the SETTINGS button's glow (x ≥ 390). */
+  _careerLine() {
     const c = SaveManager.getCareer();
     const hats = HATS.filter((h) => h.unlock && isHatUnlocked(h, c)).length;
     const total = HATS.length - 1;
-    // Kept short: it shares the bottom-left with the SETTINGS button's glow (x ≥ 430).
-    const line = (c.bugs > 0 || c.sessions > 0)
-      ? `career · ${c.bugs} bugs · ${c.kos} KOs · Lv${c.maxLevel} · ${c.bosses} bosses · hats ${hats}/${total}`
-      : `online: AI coworkers + ${total} hats to unlock 🎩`;
-    const career = this.add.text(28, H - 42, line, {
-      fontFamily: 'Consolas, monospace', fontSize: 11, color: '#ffd23f',
-      stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0, 0.5).setDepth(46);
-    career.setAlpha(0.8);
+    const played = c.bugs > 0 || c.sessions > 0 || c.teamGames > 0 || c.teamPractice > 0 || c.campaignLevels > 0;
+    if (!played) return `career: ${total} hats to unlock across every mode 🎩`;
+    const parts = [];
+    if (c.bugs || c.sessions) parts.push(`${c.bugs} bugs`);
+    if (c.teamGames) parts.push(`siege ${c.teamWins}W/${c.teamGames}`);
+    parts.push(`hats ${hats}/${total}`);
+    return `career · ${parts.join(' · ')}`;
   }
 
   // ============================================================ ACTIONS
@@ -572,12 +662,20 @@ export default class MenuScene extends Phaser.Scene {
   }
 
   _startGame() {
-    AudioManager.uiClick();
+    // PLAY = next unplayed level (or 1-1 once the campaign is done). LEVELS picks any open level.
     let idx = SaveManager.getUnlockedIndex();
     if (idx >= TOTAL_LEVELS) idx = 0;
+    this._startLevel(idx);
+  }
+
+  _startLevel(idx) {
+    if (this._starting) return;
+    this._starting = true;
+    AudioManager.uiClick();
+    const i = Math.max(0, Math.min(TOTAL_LEVELS - 1, idx | 0));
     this.cameras.main.fadeOut(400, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('HuntScene', { levelIndex: idx });
+      this.scene.start('HuntScene', { levelIndex: i });
     });
   }
 

@@ -332,7 +332,7 @@ class BossFight {
       this.retargetAt = now + 1500;
       let best = null, bestD = 1700;
       st.players.forEach((p, sid) => {
-        if (p.broken) return;
+        if (p.broken || p.away) return; // away (reconnect grace) = ignored
         const d = Math.hypot(p.x - b.x, p.y - b.y);
         if (d < bestD) { bestD = d; best = sid; }
       });
@@ -367,7 +367,7 @@ class BossFight {
       this.nextSlamAt = now + cfg.slamEveryMs[pi];
       const near = [];
       st.players.forEach((p) => {
-        if (!p.broken && Math.hypot(p.x - b.x, p.y - b.y) < 750) near.push(p);
+        if (!p.broken && !p.away && Math.hypot(p.x - b.x, p.y - b.y) < 750) near.push(p);
       });
       if (near.length) {
         const first = tgt && near.includes(tgt) ? tgt : pick(near);
@@ -421,7 +421,7 @@ class BossFight {
     const cfg = this.cfg;
     room.broadcast('bossSlamHit', { x: Math.round(s.x), y: Math.round(s.y), r: s.r });
     room.state.players.forEach((p, sid) => {
-      if (p.broken) return;
+      if (p.broken || p.away) return;
       const dx = p.x - s.x, dy = p.y - s.y;
       const d = Math.hypot(dx, dy);
       if (d > s.r) return;

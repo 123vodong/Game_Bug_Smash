@@ -12,26 +12,27 @@ import { StickmanRenderer } from '../render/StickmanRenderer.js';
 import { MPOverlay } from '../ui/MPOverlay.js';
 import { MPBossView } from '../entities/MPBossView.js';
 import { HATS, hatById, isHatUnlocked, newlyUnlockedHats } from '../data/cosmetics.js';
-import { missionsForDay, dayKey } from '../data/missions.js';
+import { missionsForDay, dayKey, MISSION_MODES } from '../data/missions.js';
+import { Progress } from '../core/Progress.js';
+import { fxPrefsChanged } from '../core/FxPrefs.js';
+import { SettingsPanel } from '../ui/SettingsPanel.js';
 
 // Toggle: use the new procedural skeleton renderer instead of static SVG textures.
 // Set to FALSE — we use the SP-mode SVGs directly. They have correct one-handed
 // laptop hold, jump pose without rotation, and the look the user prefers.
 const USE_PROCEDURAL_STICKMAN = false;
 
-// WebSocket URL — auto-detects based on how the page was loaded:
-//   - HTTPS production (Render): `wss://<same-host>` (no port — platform's
-//     reverse proxy handles routing both static + WS on 443)
-//   - HTTP local dev via Python http.server on :8000: `ws://<host>:2567`
-//   - HTTP local dev hitting the Colyseus port directly: `ws://<host>:2567`
+// WebSocket URL — same rules as Team Mode's teamServerUrl() (src/ui/moba/uiKit.js):
+//   - `?server=ws(s)://…` override (playtests against a side server)
+//   - the :8000 python static server → Colyseus on :2567
+//   - otherwise the page's own host + port (the Colyseus server serves the
+//     static files too), wss on https.
 const SERVER_URL = (() => {
   const loc = window.location;
-  if (loc.protocol === 'https:') {
-    // Production — wss on the same origin, no explicit port
-    return `wss://${loc.hostname}`;
-  }
-  // Local dev — always point to Colyseus on :2567
-  return `ws://${loc.hostname || 'localhost'}:2567`;
+  const o = new URLSearchParams(loc.search).get('server');
+  if (o && /^wss?:\/\//.test(o)) return o;
+  if (loc.port === '8000') return `ws://${loc.hostname || 'localhost'}:2567`;
+  return `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host || 'localhost:2567'}`;
 })();
 console.log('[MP] SERVER_URL =', SERVER_URL, '· loaded from', window.location.href);
 const MOVE_SPEED = 240; // px/sec — same feel as Hunter
@@ -536,11 +537,20 @@ const CODE_SNIPPETS = {
     ],
   ],
 };
-// Must mirror server's LEVEL_XP_THRESHOLDS so smoothScale can interpolate
-// the size growth between levels based on actual XP progress.
-const LEVEL_XP_THRESHOLDS = [0, 150, 600, 1800, 4500, 10000];
-// Mirror server BROKEN_DURATION_MS so the client countdown matches
-const BROKEN_DURATION_MS = 20000;
+// Mirror of server/game/rules.js LEVEL_XP_THRESHOLDS (EP-20: Lv2 at 60 XP) —
+// unavoidable: smoothScale + the "next promotion in N XP" bar need the curve.
+const LEVEL_XP_THRESHOLDS = [0, 60, 600, 1800, 4500, 10000];
+// Fallback only — the FIXING countdown reads the synced `player.brokenUntil`
+// (server epoch ms). Used if an older server doesn't sync it.
+const BROKEN_FALLBACK_MS = 20000;
+// Mirror of the server's new-session ×2 bug-XP window (EP-20, 3 min) — display only.
+const NEW_SESSION_BOOST_MS = 180000;
+// Dead-link watchdog (same idea as TeamModeScene): silence → nudge → drop.
+const STALL_MS = 4000;
+const STALL_GRACE_MS = 2500;
+const RECONNECT_ATTEMPT_MS = 5000;   // a hung reconnect (offline) counts as failed after this
+// Close codes that mean "we left on purpose" — no reconnect (§3.3).
+const NO_RECONNECT_CODES = new Set([1000, 4000]);
 
 // ---- Atlas (optional) — Mixamo-rendered 8-direction frames ----
 // Frame name format: `{action}_{dir}_{frame:04d}` (see MIXAMO_ATLAS_BREAKDOWN).
@@ -660,6 +670,13 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._predictUntil = 0;
     this.room = null;
     this.localId = null;
+    this.client = null;
+    this._reconnectS = 0;          // grace window from 'welcome' (§3.3); 0 = no reconnect
+    this._reconnecting = false;
+    this._clockedOut = false;
+    this._tipsStarted = false;
+    // Session tally for the Shift Report (survives reconnects, reset per visit)
+    this._sess = { bugs: 0, kos: 0, deaths: 0, peakLevel: 1, bosses: 0, goldens: 0, bestCombo: 0, bestScore: 0 };
 
     // ----- Camera + world bounds -----
     // World coords go (0,0) → (WORLD_W, WORLD_H). The canvas is a viewport.
@@ -697,10 +714,13 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._status = this.add.text(12, statusY, 'connecting…', {
       fontFamily: 'Consolas, monospace', fontSize: 13, color: '#7ec8ff',
     }).setScrollFactor(0).setDepth(50);
-    this._hint = this.add.text(12, H - 20, 'move = click/arrows · SPACE smash · Q dash · W shield · E jump · R ult · ENTER chat · ESC menu', {
+    const touchDev = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    this._hint = this.add.text(12, H - 20, touchDev
+      ? 'left thumb = move · tap a bug to smash · ☰ = break room'
+      : 'move = click/arrows · SPACE smash · Q dash · W shield · E jump · R ult · ENTER chat · M mute · ESC clock out', {
       fontFamily: 'Consolas, monospace', fontSize: 11, color: '#888a99',
     }).setScrollFactor(0).setDepth(50);
-    this._playerListText = this.add.text(W - 12, 10, '', {
+    this._playerListText = this.add.text(W - 12, 56, '', {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#aab0c0', align: 'right',
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(50);
 
@@ -725,10 +745,22 @@ export default class MultiPlayScene extends Phaser.Scene {
       .setStrokeStyle(1, 0x7ec8ff, 0.45).setScrollFactor(0).setDepth(50);
     this._localEnergyFill = this.add.rectangle(W / 2 - 138, hudEnergyY, 276, 6, 0x39c2ff, 1)
       .setOrigin(0, 0.5).setScrollFactor(0).setDepth(50);
-    this._localLevelBadge = this.add.text(W / 2, hudHealthY - 14, 'Lv1 · Intern', {
+    // XP bar (thin, gold) just above HEALTH + "next promotion in N XP" (EP-23)
+    const hudXpY = hudHealthY - 9;
+    this._localXpBg = this.add.rectangle(W / 2, hudXpY, 280, 5, 0x000000, 0.65)
+      .setStrokeStyle(1, 0xffd23f, 0.35).setScrollFactor(0).setDepth(50);
+    this._localXpFill = this.add.rectangle(W / 2 - 139, hudXpY, 0, 3, 0xffd23f, 1)
+      .setOrigin(0, 0.5).setScrollFactor(0).setDepth(50);
+    this._localLevelBadge = this.add.text(W / 2, hudXpY - 12, 'Lv1 · Intern', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 13, color: '#ffd23f',
       stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(50);
+    // EP-20: new sessions earn ×2 bug XP for 3 min (server-side; mirrored here
+    // only to show the badge — the kill popups already carry the doubled XP).
+    this._xpBoostText = this.add.text(W / 2 + 150, hudXpY, '', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 12, color: '#7ed957',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(50);
 
     // Combo HUD (left side, mid-height) for the local player
     this._comboText = this.add.text(20, H / 2, '', {
@@ -740,8 +772,10 @@ export default class MultiPlayScene extends Phaser.Scene {
       stroke: '#000', strokeThickness: 4,
     }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(50).setAlpha(0);
 
-    // Prime audio on first user interaction (browsers require it)
-    AudioManager.setMuted(false);
+    // Respect the saved mute + volume (§3.4); prime audio on first interaction
+    AudioManager.setMuted(SaveManager.isMuted?.() ?? false);
+    const vol = SaveManager.getSettings?.()?.volume;
+    if (Number.isFinite(vol)) AudioManager.setVolume?.(vol);
     this.input.once('pointerdown', () => AudioManager.prime?.());
     this.input.keyboard.once('keydown', () => AudioManager.prime?.());
 
@@ -842,18 +876,23 @@ export default class MultiPlayScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => {
       // While the chat input is focused, ESC just closes it (doesn't quit).
       if (this._chatActive) { this._closeChat(false); return; }
-      this._leaveAndGoMenu();
+      this._onEscape();
+    });
+    this.input.keyboard.on('keydown-M', () => {
+      if (this._chatActive || this._nameEntryActive || this._overlay?.extModal) return; // panel owns its Sound switch
+      this._toggleMute();
     });
 
     // ENTER toggles the chat input (MOBA convention). During name entry the
     // box's own handler owns ENTER, so we no-op here.
     this.input.keyboard.on('keydown-ENTER', () => {
-      if (this._nameEntryActive) return;
+      if (this._nameEntryActive || this._overlay.modalOpen) return;
       if (this._chatActive) this._closeChat(true); else this._openChat();
     });
 
-    this.input.on('pointerdown', (p) => {
+    this.input.on('pointerdown', (p, over) => {
       if (this._nameEntryActive) return; // name box open — swallow world clicks
+      if (this._overlay.modalOpen || this._uiHit(over)) return; // card / ☰ / mission pill
       if (this._actionButtonsHit(p)) return;
       if (this._chatBtnHit(p)) return;   // tap on the chat button — not a move
       if (this._overChatPanel(p)) {      // start drag-scrolling the log
@@ -869,6 +908,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._dragLastAt = 0;
     this.input.on('pointermove', (p) => {
       if (this._nameEntryActive) return; // name box open — ignore drag-to-move
+      if (this._overlay.modalOpen) return;
       if (this._chatDrag && p.isDown) {  // drag-scroll the chat log
         this._chatScroll = this._chatDrag.s0 + Math.round((p.y - this._chatDrag.y0) / this._chatLineH);
         this._renderChatLog();
@@ -892,15 +932,17 @@ export default class MultiPlayScene extends Phaser.Scene {
     //   R     = Deadline Break (ult)
     // Skill keys are suppressed while typing in chat (mouse-driven actions keep
     // working — the game continues underneath the chat box, LoL-style).
-    this.input.keyboard.on('keydown-SPACE', () => { if (!this._chatActive) this._triggerAction('smash'); });
-    this.input.keyboard.on('keydown-Q',     () => { if (!this._chatActive) this._castSkill('q'); });
-    this.input.keyboard.on('keydown-W',     () => { if (!this._chatActive) this._castSkill('w'); });
-    this.input.keyboard.on('keydown-E',     () => { if (!this._chatActive) this._castSkill('e'); });
-    this.input.keyboard.on('keydown-R',     () => { if (!this._chatActive) this._castSkill('r'); });
+    const playKeys = () => !this._chatActive && !this._overlay.modalOpen;
+    this.input.keyboard.on('keydown-SPACE', () => { if (playKeys()) this._triggerAction('smash'); });
+    this.input.keyboard.on('keydown-Q',     () => { if (playKeys()) this._castSkill('q'); });
+    this.input.keyboard.on('keydown-W',     () => { if (playKeys()) this._castSkill('w'); });
+    this.input.keyboard.on('keydown-E',     () => { if (playKeys()) this._castSkill('e'); });
+    this.input.keyboard.on('keydown-R',     () => { if (playKeys()) this._castSkill('r'); });
 
     this._buildActionButtons();
     this._buildChat();
     if (this._isTouch) this._buildJoystick();
+    this._buildMenuButton();
 
     // ----- Name entry, then connect -----
     // Show an in-canvas box so the player can confirm/edit their display name
@@ -916,347 +958,419 @@ export default class MultiPlayScene extends Phaser.Scene {
       this._connect();
     });
 
-    // Clean up on scene shutdown (and keep play time when the tab is closed)
-    this._onPageHide = () => this._flushPlayTime();
+    // Clean up on scene shutdown (and keep play time when the tab is closed).
+    // Mobile Safari often skips pagehide, so also flush when the tab is hidden,
+    // and every 30 s so a crash loses at most half a minute (EP-23).
+    // Closing the tab = leave on purpose (consented) so we don't hang around as
+    // `away` for the 20 s reconnect grace.
+    this._onPageHide = () => {
+      this._flushPlayTime();
+      if (this.room && !this._shuttingDown) {
+        const r = this.room;
+        this.room = null;
+        try { r.leave(); } catch (_) { /* ignore */ }
+        this._playClockAt = 0; // no room → stop counting play time (bfcache restore would add idle time)
+      }
+    };
+    this._onVisibility = () => {
+      if (document.visibilityState === 'hidden') this._flushPlayTime();
+      // A phone waking from sleep must not look like a dead link to the watchdog
+      else { this._lastRxAt = Date.now(); this._stallAt = 0; }
+    };
+    // The OS says we're offline → don't wait for the watchdog
+    this._onOffline = () => { if (this.room && !this._shuttingDown) this._declareDrop('browser offline'); };
+    window.addEventListener('offline', this._onOffline);
+    // Back from the bfcache after pagehide left the room → offer REJOIN instead of a frozen arena
+    this._onPageShow = (e) => {
+      if (e.persisted && !this._shuttingDown && !this.room && this._joinedAt && !this._clockedOut && !this._overlay.modalOpen) {
+        this._showConnLostCard('Welcome back — you were logged off.');
+      }
+    };
     window.addEventListener('pagehide', this._onPageHide);
+    window.addEventListener('pageshow', this._onPageShow);
+    document.addEventListener('visibilitychange', this._onVisibility);
+    clearInterval(this._playMsTimer);
+    this._playMsTimer = setInterval(() => { if (!this._shuttingDown) this._flushPlayTime(); }, 30000);
     this.events.once('shutdown', () => {
       window.removeEventListener('pagehide', this._onPageHide);
+      window.removeEventListener('pageshow', this._onPageShow);
+      window.removeEventListener('offline', this._onOffline);
+      document.removeEventListener('visibilitychange', this._onVisibility);
+      clearInterval(this._playMsTimer);
       this._cleanup();
     });
   }
 
   async _connect() {
     if (typeof Colyseus === 'undefined') {
-      this._status.setText('connection failed: Colyseus client not loaded');
-      this._status.setColor('#ff8a8a');
+      this._showConnFailCard('Colyseus client not loaded');
       return;
     }
+    this._status.setText('connecting…').setColor('#7ec8ff');
     try {
       this.client = new Colyseus.Client(SERVER_URL);
       const room = await this.client.joinOrCreate('arena', { name: this.playerName, hat: this.playerHat });
       // ESC pressed while "connecting…" — don't leave a ghost player in the arena.
-      if (this._shuttingDown) { try { room.leave(); } catch (_) { /* ignore */ } return; }
-      this.room = room;
-      this.localId = this.room.sessionId;
-      this._joinedAt = Date.now();
-      this._playClockAt = Date.now();
-      // A session counts after 20 s in the arena (unlocks the first hat). Uses a
-      // wall-clock timer (Phaser's clock pauses in background tabs), and runs on
-      // a timer because most players close the tab rather than pressing ESC.
-      this._sessionTimer = setTimeout(() => {
-        if (this._shuttingDown || this._sessionCounted) return;
-        this._sessionCounted = true;
-        this._careerAdd('sessions', 1);
-      }, 20000);
-      this._status.setText(`connected · room ${this.room.roomId} · you = ${this.playerName}`);
-      this._status.setColor('#7ed957');
+      if (this._shuttingDown || this._clockedOut) { try { room.leave(); } catch (_) { /* ignore */ } return; }
+      // EP-23: no "connected · room …" debug line — the status text only speaks up on trouble.
+      this._status.setText('');
+      if (!this._joinedAt) {
+        this._joinedAt = Date.now();
+        // A session counts after 20 s in the arena (unlocks the first hat). Uses a
+        // wall-clock timer (Phaser's clock pauses in background tabs), and runs on
+        // a timer because most players close the tab rather than pressing ESC.
+        this._sessionTimer = setTimeout(() => {
+          if (this._shuttingDown || this._sessionCounted) return;
+          this._sessionCounted = true;
+          this._careerAdd('sessions', 1);
+          // Tips stop after the 2nd counted session (or once replayed via settings)
+          if ((this._career.sessions | 0) >= 2) SaveManager.setFlag?.('tipsArena', true);
+        }, 20000);
+      }
+      this._adoptRoom(room);
+      this._startTipsOnce();
+      this._refreshMissions();
+    } catch (err) {
+      if (this._shuttingDown || this._clockedOut) return;
+      console.warn('[MP] join failed:', err?.message || err);
+      this._showConnFailCard(err?.message || String(err));
+    }
+  }
 
-      // Chat — server broadcasts every message to the whole room.
-      this.room.onMessage('chat', (m) => {
-        if (this._shuttingDown || !m) return;
-        this._addChatMessage(m);
-      });
-      // Recent history for late joiners — sent once on request. These predate us,
-      // so sid is null → they render as "others" (cyan) unless PM/bot.
-      this.room.onMessage('chatHistory', (arr) => {
-        if (this._shuttingDown || !Array.isArray(arr)) return;
-        for (const m of arr) this._addChatMessage({ sid: null, name: m.name, text: m.text, kind: m.kind, history: true });
-      });
-      this._registerDramaHandlers();
-      this.room.send('hello'); // → 'welcome' (clock + event table) + 'chatHistory'
+  /**
+   * Wire every state + message handler to `room` (fresh join or a §3.3
+   * reconnect). Callbacks are guarded by room identity, so a stale room that
+   * still fires after a reconnect can never touch the new views.
+   */
+  _adoptRoom(room) {
+    this.room = room;
+    this.localId = room.sessionId;
+    this._roomToken = room.reconnectionToken || '';
+    // Dead-link watchdog input: any patch or message counts as "the link is alive"
+    this._lastRxAt = Date.now();
+    this._stallAt = 0;
+    room.onStateChange(() => { if (this.room === room) this._lastRxAt = Date.now(); });
+    if (!this._playClockAt) this._playClockAt = Date.now();
+    const live = () => !this._shuttingDown && this.room === room;
 
-      // Colyseus 0.16 callback API: get a callback proxy via getStateCallbacks(room),
-      // then subscribe through $(room.state).<field> and $(child).onChange(...)
-      const $ = Colyseus.getStateCallbacks(this.room);
+    // Chat — server broadcasts every message to the whole room.
+    this.room.onMessage('chat', (m) => {
+      if (!live() || !m) return;
+      this._addChatMessage(m);
+    });
+    // Recent history for late joiners — sent once on request. These predate us,
+    // so sid is null → they render as "others" (cyan) unless PM/bot.
+    this.room.onMessage('chatHistory', (arr) => {
+      if (!live() || !Array.isArray(arr)) return;
+      for (const m of arr) this._addChatMessage({ sid: null, name: m.name, text: m.text, kind: m.kind, history: true });
+    });
+    this._registerDramaHandlers();
+    this.room.send('hello'); // → 'welcome' (clock + event table) + 'chatHistory'
 
-      $(this.room.state).players.onAdd((player, sessionId) => {
-        if (this._shuttingDown) return;
-        this._spawnRemote(sessionId, player);
-        $(player).onChange(() => {
-          if (this._shuttingDown) return;
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          if (sessionId !== this.localId) {
-            r.target.x = player.x;
-            r.target.y = player.y;
-          } else if (this.time.now > (this._predictUntil || 0)) {
-            // The server moved us (boss slam / ult knockback / stun) — adopt it.
-            // Normal latency drift is far below the threshold; dash/roll
-            // predictions are exempt while their tween + echo are in flight.
-            if (Math.hypot(player.x - this.localPos.x, player.y - this.localPos.y) > 90) {
-              this.localPos.x = player.x;
-              this.localPos.y = player.y;
-              this._moveTarget = null;
-            }
+    // Colyseus 0.16 callback API: get a callback proxy via getStateCallbacks(room),
+    // then subscribe through $(room.state).<field> and $(child).onChange(...)
+    const $ = Colyseus.getStateCallbacks(this.room);
+
+    $(this.room.state).players.onAdd((player, sessionId) => {
+      if (!live()) return;
+      this._spawnRemote(sessionId, player);
+      $(player).onChange(() => {
+        if (!live()) return;
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        if (sessionId !== this.localId) {
+          r.target.x = player.x;
+          r.target.y = player.y;
+        } else if (this.time.now > (this._predictUntil || 0)) {
+          // The server moved us (boss slam / ult knockback / stun) — adopt it.
+          // Normal latency drift is far below the threshold; dash/roll
+          // predictions are exempt while their tween + echo are in flight.
+          if (Math.hypot(player.x - this.localPos.x, player.y - this.localPos.y) > 90) {
+            this.localPos.x = player.x;
+            this.localPos.y = player.y;
+            this._moveTarget = null;
           }
-          r.label.setText(this._nameLabel(player));
-        });
-        // Refresh leaderboard only when score changes
-        $(player).listen('score', (score) => {
-          this._refreshPlayerList();
-          if (sessionId === this.localId) this._careerMax('bestScore', score | 0, 'score');
-        });
-        $(player).listen('hat', (hat) => {
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          r.hatText.setText(hatById(hat).emoji);
-          r._lastSmoothScale = undefined; // re-layout the label stack around the hat
-        });
-        $(player).listen('invulnUntil', (v) => {
-          const r = this.remotePlayers.get(sessionId);
-          if (r) r.invulnUntil = Number(v) || 0;
-        });
-
-        // Local-player combo HUD — only animate when our own combo changes
+        }
+        r.label.setText(this._nameLabel(player));
+      });
+      // Refresh leaderboard only when score changes
+      $(player).listen('score', (score) => {
+        this._refreshPlayerList();
         if (sessionId === this.localId) {
-          $(player).listen('combo', (newCombo, oldCombo) => {
-            this._onLocalComboChange(newCombo | 0, oldCombo | 0);
-            if ((newCombo | 0) > 0) this._careerMax('bestCombo', newCombo | 0, 'combo');
+          this._sess.bestScore = Math.max(this._sess.bestScore, score | 0);
+          this._careerMax('bestScore', score | 0, 'score');
+        }
+      });
+      $(player).listen('hat', (hat) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        r.hatText.setText(hatById(hat).emoji);
+        r._lastSmoothScale = undefined; // re-layout the label stack around the hat
+      });
+      $(player).listen('invulnUntil', (v) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (r) r.invulnUntil = Number(v) || 0;
+      });
+
+      // Local-player combo HUD — only animate when our own combo changes
+      if (sessionId === this.localId) {
+        $(player).listen('combo', (newCombo, oldCombo) => {
+          this._onLocalComboChange(newCombo | 0, oldCombo | 0);
+          if ((newCombo | 0) > 0) {
+            this._sess.bestCombo = Math.max(this._sess.bestCombo, newCombo | 0);
+            this._careerMax('bestCombo', newCombo | 0, 'combo');
+          }
+        });
+      }
+
+      // Growth fields — keep r.* mirrored so the render loop can react each frame
+      $(player).listen('level', (lv) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        const old = r.level;
+        r.level = lv | 0;
+        r.title.setText(levelTitle(r.level));
+        if (sessionId === this.localId && lv > old) {
+          // Local level-up: chime + brief scale pop
+          AudioManager.combo?.(3);
+          this.tweens.add({
+            targets: r.sprite, scaleX: r.sprite.scaleX * 1.2, scaleY: r.sprite.scaleY * 1.2,
+            duration: 140, yoyo: true,
+          });
+          this._overlay.toast(`⭐ PROMOTED to ${levelTitle(lv)}!`, '#ffd23f');
+          this._careerMax('maxLevel', lv | 0, 'level');
+        }
+        if (sessionId === this.localId) this._sess.peakLevel = Math.max(this._sess.peakLevel, lv | 0);
+      });
+      // EP-01: dropped connection inside the reconnect grace → 📶 over the head
+      $(player).listen('away', (away) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        r.away = !!away;
+        r.awayText?.setVisible(r.away);
+        this._refreshPlayerList();
+      });
+      // EP-02: server epoch ms when the laptop is fixed (compare with _srvNow())
+      $(player).listen('brokenUntil', (v) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (r) r.brokenUntil = Number(v) || 0;
+      });
+      $(player).listen('xp',        (xp) => { const r = this.remotePlayers.get(sessionId); if (r) r.xp = xp | 0; });
+      $(player).listen('energy',    (e) => { const r = this.remotePlayers.get(sessionId); if (r) r.energy = e | 0; });
+      $(player).listen('maxEnergy', (m) => { const r = this.remotePlayers.get(sessionId); if (r) r.maxEnergy = m | 0; });
+      $(player).listen('health',    (h) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        const prev = r.health | 0;
+        const next = h | 0;
+        if (next < prev && prev > 0) {
+          this._spawnHitFlash(r);
+          // Floating damage number above the hit player — red for the damage
+          // YOU take, gold for damage dealt to enemy players.
+          this._spawnDamageNumber(r.container.x, r.container.y - 42, prev - next, {
+            kind: sessionId === this.localId ? 'self' : 'player',
           });
         }
-
-        // Growth fields — keep r.* mirrored so the render loop can react each frame
-        $(player).listen('level', (lv) => {
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          const old = r.level;
-          r.level = lv | 0;
-          r.title.setText(levelTitle(r.level));
-          if (sessionId === this.localId && lv > old) {
-            // Local level-up: chime + brief scale pop
-            AudioManager.combo?.(3);
-            this.tweens.add({
-              targets: r.sprite, scaleX: r.sprite.scaleX * 1.2, scaleY: r.sprite.scaleY * 1.2,
-              duration: 140, yoyo: true,
-            });
-            this._overlay.toast(`⭐ PROMOTED to ${levelTitle(lv)}!`, '#ffd23f');
-            this._careerMax('maxLevel', lv | 0, 'level');
-          }
-        });
-        $(player).listen('xp',        (xp) => { const r = this.remotePlayers.get(sessionId); if (r) r.xp = xp | 0; });
-        $(player).listen('energy',    (e) => { const r = this.remotePlayers.get(sessionId); if (r) r.energy = e | 0; });
-        $(player).listen('maxEnergy', (m) => { const r = this.remotePlayers.get(sessionId); if (r) r.maxEnergy = m | 0; });
-        $(player).listen('health',    (h) => {
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          const prev = r.health | 0;
-          const next = h | 0;
-          if (next < prev && prev > 0) {
-            this._spawnHitFlash(r);
-            // Floating damage number above the hit player — red for the damage
-            // YOU take, gold for damage dealt to enemy players.
-            this._spawnDamageNumber(r.container.x, r.container.y - 42, prev - next, {
-              kind: sessionId === this.localId ? 'self' : 'player',
-            });
-          }
-          r.health = next;
-        });
-        $(player).listen('maxHealth', (m) => { const r = this.remotePlayers.get(sessionId); if (r) r.maxHealth = m | 0; });
-        $(player).listen('stunnedUntil', (v) => {
-          const r = this.remotePlayers.get(sessionId);
-          if (r) r.stunnedUntil = Number(v) || 0; // epoch ms — `| 0` overflowed int32
-        });
-        $(player).listen('shielded',  (s) => {
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          const was = r.shielded;
-          r.shielded = !!s;
-          if (r.shielded && !was) {
-            // Shield activated — pulse the disc on
-            r.shieldDisc.setVisible(true).setAlpha(0.85).setScale(0.7);
-            this.tweens.add({
-              targets: r.shieldDisc, scaleX: 1, scaleY: 1,
-              duration: 220, ease: 'Back.easeOut',
-            });
-          } else if (!r.shielded && was) {
-            // Shield ended (consumed or expired) — burst-out + crack effect
-            this._spawnShieldBreak(r.container.x, r.container.y);
-            this.tweens.add({
-              targets: r.shieldDisc, alpha: 0, scaleX: 1.4, scaleY: 1.4,
-              duration: 200, ease: 'Cubic.easeOut',
-              onComplete: () => r.shieldDisc.setVisible(false).setScale(1),
-            });
-          }
-        });
-        $(player).listen('broken_seq', () => {
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          r.broken = !!player.broken;
-          if (r.broken) {
-            r.brokenStartAt = this.time.now;
-            r.fixingGroup.setVisible(true).setAlpha(1);
-            AudioManager.failure?.();
-            this._spawnBrokenBurst(r.container.x, r.container.y);
-          } else {
-            r.fixingGroup.setVisible(false);
-            AudioManager.skillPickup?.('buff');
-          }
-          this._refreshPlayerList(); // 💻✖ tag on/off
-        });
-
-        // Remote action playback — every time action_seq changes, trigger that
-        // player's pose for the matching duration. (Local player's actions are
-        // animated immediately in _triggerAction so we skip ourselves here.)
-        $(player).listen('action_seq', () => {
-          if (sessionId === this.localId) return;
-          const r = this.remotePlayers.get(sessionId);
-          if (!r) return;
-          const k = player.action;
-          const dur = (k === 'parry') ? 620
-                   : (k === 'jump')  ? 420
-                   : (k === 'kick')  ? 260
-                                     : 130;
-          r.action = k;
-          r.actionUntil = this.time.now + dur;
-          r.actionStartAt = this.time.now;
-        });
-        this._refreshPlayerList();
+        r.health = next;
       });
-      $(this.room.state).players.onRemove((_player, sessionId) => {
-        if (this._shuttingDown) return;
-        this._despawnRemote(sessionId);
-        this._refreshPlayerList();
+      $(player).listen('maxHealth', (m) => { const r = this.remotePlayers.get(sessionId); if (r) r.maxHealth = m | 0; });
+      $(player).listen('stunnedUntil', (v) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (r) r.stunnedUntil = Number(v) || 0; // epoch ms — `| 0` overflowed int32
+      });
+      $(player).listen('shielded',  (s) => {
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        const was = r.shielded;
+        r.shielded = !!s;
+        if (r.shielded && !was) {
+          // Shield activated — pulse the disc on
+          r.shieldDisc.setVisible(true).setAlpha(0.85).setScale(0.7);
+          this.tweens.add({
+            targets: r.shieldDisc, scaleX: 1, scaleY: 1,
+            duration: 220, ease: 'Back.easeOut',
+          });
+        } else if (!r.shielded && was) {
+          // Shield ended (consumed or expired) — burst-out + crack effect
+          this._spawnShieldBreak(r.container.x, r.container.y);
+          this.tweens.add({
+            targets: r.shieldDisc, alpha: 0, scaleX: 1.4, scaleY: 1.4,
+            duration: 200, ease: 'Cubic.easeOut',
+            onComplete: () => r.shieldDisc.setVisible(false).setScale(1),
+          });
+        }
+      });
+      $(player).listen('broken_seq', () => {
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        r.broken = !!player.broken;
+        if (r.broken) {
+          r.brokenStartAt = this.time.now;
+          r.fixingGroup.setVisible(true).setAlpha(1);
+          AudioManager.failure?.();
+          this._spawnBrokenBurst(r.container.x, r.container.y);
+        } else {
+          r.fixingGroup.setVisible(false);
+          AudioManager.skillPickup?.('buff');
+        }
+        this._refreshPlayerList(); // 💻✖ tag on/off
       });
 
-      // Round state subscriptions
-      $(this.room.state).listen('phase', () => this._onPhaseChange());
-      $(this.room.state).listen('round', () => this._onPhaseChange());
+      // Remote action playback — every time action_seq changes, trigger that
+      // player's pose for the matching duration. (Local player's actions are
+      // animated immediately in _triggerAction so we skip ourselves here.)
+      $(player).listen('action_seq', () => {
+        if (sessionId === this.localId) return;
+        const r = this.remotePlayers.get(sessionId);
+        if (!r) return;
+        const k = player.action;
+        const dur = (k === 'parry') ? 620
+                 : (k === 'jump')  ? 420
+                 : (k === 'kick')  ? 260
+                                   : 130;
+        r.action = k;
+        r.actionUntil = this.time.now + dur;
+        r.actionStartAt = this.time.now;
+      });
+      this._refreshPlayerList();
+    });
+    $(this.room.state).players.onRemove((_player, sessionId) => {
+      if (!live()) return;
+      this._despawnRemote(sessionId);
+      this._refreshPlayerList();
+    });
 
-      // ----- Office Chaos: world events, crown, boss -----
-      $(this.room.state).listen('event', (id, prev) => {
-        if (this._shuttingDown) return;
-        this._onEventChange(id || '', prev || '');
-      });
-      $(this.room.state).listen('crownSid', (sid) => {
-        if (this._shuttingDown) return;
-        this._crownSid = sid || '';
-        this._refreshPlayerList();
-      });
-      $(this.room.state).bosses.onAdd((boss, id) => {
-        if (this._shuttingDown) return;
-        this._bossView.add(id, boss);
-        $(boss).onChange(() => { if (!this._shuttingDown) this._bossView.sync(boss); });
-        $(boss).listen('hp', (hp, old) => { if (!this._shuttingDown) this._bossView.onHp(hp | 0, old == null ? null : old | 0); });
-        $(boss).listen('phase', (ph) => { if (!this._shuttingDown) this._bossView.onPhase(ph | 0); });
-        $(boss).listen('alive', (alive) => { if (!this._shuttingDown && alive === false) this._bossView.onDeath(); });
-      });
-      $(this.room.state).bosses.onRemove(() => {
-        if (!this._shuttingDown) this._bossView.remove();
-      });
+    // Round state subscriptions
+    $(this.room.state).listen('phase', () => this._onPhaseChange());
+    $(this.room.state).listen('round', () => this._onPhaseChange());
 
-      // ----- BUGS -----
-      $(this.room.state).bugs.onAdd((bug, id) => {
-        if (this._shuttingDown) return;
-        this._spawnBug(id, bug);
-        const r0 = this.remoteBugs.get(id);
-        if (r0) { r0.hitSeq = bug.hit_seq | 0; r0.hp = bug.hp | 0; }
-        // Per-hit flash (non-fatal): server bumps hit_seq for every hit
-        $(bug).listen('hit_seq', (seq) => {
-          const r = this.remoteBugs.get(id);
-          if (!r || !r.alive || !r.sprite || !r.sprite.scene) return;
-          if (seq === r.hitSeq) return;
-          r.hitSeq = seq;
-          this._spawnBugHitFlash(r);
-        });
-        // Floating damage number (MOBA-style) — derive the amount from the HP
-        // delta the server synced. Covers both chip hits and the killing blow.
-        $(bug).listen('hp', (newHp, oldHp) => {
-          const r = this.remoteBugs.get(id);
-          if (!r) return;
-          const prevHp = (oldHp == null) ? (r.hp | 0) : (oldHp | 0);
-          const dmg = prevHp - (newHp | 0);
-          r.hp = newHp | 0;
-          if (dmg > 0 && r.sprite && r.sprite.scene) {
-            this._spawnDamageNumber(bug.x, bug.y - 20, dmg, { kind: 'bug' });
-          }
-        });
-        $(bug).onChange(() => {
-          const r = this.remoteBugs.get(id);
-          if (!r) return;
-          // Update interpolation target instead of snapping the sprite.
-          r.target.x = bug.x;
-          r.target.y = bug.y;
-          // Hidden state — bug dove away, render faded + can't be hit
-          if (bug.hidden !== r.hidden) {
-            r.hidden = bug.hidden;
-            if (bug.hidden) {
-              r.sprite.x = bug.x; r.sprite.y = bug.y;
-              this.tweens.add({ targets: r.sprite, alpha: 0.18, scale: 0.7, duration: 220 });
-            } else {
-              this.tweens.add({ targets: r.sprite, alpha: 1, scale: 1, duration: 220 });
-            }
-          }
-          if (bug.alive === false && r.alive) {
-            r.alive = false;
-            AudioManager.bugKill?.();
-            this._spawnBugDeathEffect(bug.kind, bug.x, bug.y);
-            // Spawn a persistent corpse so the kill is visible ≥ 5 s,
-            // independent of how fast the server removes the bug entity.
-            this._spawnBugCorpse(bug.kind, bug.x, bug.y);
-            this.tweens.add({
-              targets: r.sprite,
-              alpha: 0, scaleX: r.sprite.scaleX * 1.6, scaleY: r.sprite.scaleY * 0.4,
-              duration: 240, ease: 'Cubic.easeOut',
-              onComplete: () => r.sprite.setVisible(false),
-            });
-          }
-        });
-      });
-      $(this.room.state).bugs.onRemove((_bug, id) => {
+    // ----- Office Chaos: world events, crown, boss -----
+    $(this.room.state).listen('event', (id, prev) => {
+      if (!live()) return;
+      this._onEventChange(id || '', prev || '');
+    });
+    $(this.room.state).listen('crownSid', (sid) => {
+      if (!live()) return;
+      this._crownSid = sid || '';
+      this._refreshPlayerList();
+    });
+    $(this.room.state).bosses.onAdd((boss, id) => {
+      if (!live()) return;
+      this._bossView.add(id, boss);
+      $(boss).onChange(() => { if (live()) this._bossView.sync(boss); });
+      $(boss).listen('hp', (hp, old) => { if (live()) this._bossView.onHp(hp | 0, old == null ? null : old | 0); });
+      $(boss).listen('phase', (ph) => { if (live()) this._bossView.onPhase(ph | 0); });
+      $(boss).listen('alive', (alive) => { if (live() && alive === false) this._bossView.onDeath(); });
+    });
+    $(this.room.state).bosses.onRemove(() => {
+      if (live()) this._bossView.remove();
+    });
+
+    // ----- BUGS -----
+    $(this.room.state).bugs.onAdd((bug, id) => {
+      if (!live()) return;
+      this._spawnBug(id, bug);
+      const r0 = this.remoteBugs.get(id);
+      if (r0) { r0.hitSeq = bug.hit_seq | 0; r0.hp = bug.hp | 0; }
+      // Per-hit flash (non-fatal): server bumps hit_seq for every hit
+      $(bug).listen('hit_seq', (seq) => {
         const r = this.remoteBugs.get(id);
-        if (r) { r.sprite.destroy(); this.remoteBugs.delete(id); }
+        if (!r || !r.alive || !r.sprite || !r.sprite.scene) return;
+        if (seq === r.hitSeq) return;
+        r.hitSeq = seq;
+        this._spawnBugHitFlash(r);
       });
+      // Floating damage number (MOBA-style) — derive the amount from the HP
+      // delta the server synced. Covers both chip hits and the killing blow.
+      $(bug).listen('hp', (newHp, oldHp) => {
+        const r = this.remoteBugs.get(id);
+        if (!r) return;
+        const prevHp = (oldHp == null) ? (r.hp | 0) : (oldHp | 0);
+        const dmg = prevHp - (newHp | 0);
+        r.hp = newHp | 0;
+        if ((newHp | 0) > r.maxHp) r.maxHp = newHp | 0;
+        this._syncBugHpLabel(r);
+        if (dmg > 0 && r.sprite && r.sprite.scene) {
+          this._spawnDamageNumber(bug.x, bug.y - 20, dmg, { kind: 'bug' });
+        }
+      });
+      $(bug).onChange(() => {
+        const r = this.remoteBugs.get(id);
+        if (!r) return;
+        // Update interpolation target instead of snapping the sprite.
+        r.target.x = bug.x;
+        r.target.y = bug.y;
+        // Hidden state — bug dove away, render faded + can't be hit
+        if (bug.hidden !== r.hidden) {
+          r.hidden = bug.hidden;
+          if (bug.hidden) {
+            r.sprite.x = bug.x; r.sprite.y = bug.y;
+            this.tweens.add({ targets: r.sprite, alpha: 0.18, scale: 0.7, duration: 220 });
+          } else {
+            this.tweens.add({ targets: r.sprite, alpha: 1, scale: 1, duration: 220 });
+          }
+        }
+        if (bug.alive === false && r.alive) {
+          r.alive = false;
+          AudioManager.bugKill?.();
+          this._spawnBugDeathEffect(bug.kind, bug.x, bug.y);
+          // Spawn a persistent corpse so the kill is visible ≥ 5 s,
+          // independent of how fast the server removes the bug entity.
+          this._spawnBugCorpse(bug.kind, bug.x, bug.y);
+          this.tweens.add({
+            targets: r.sprite,
+            alpha: 0, scaleX: r.sprite.scaleX * 1.6, scaleY: r.sprite.scaleY * 0.4,
+            duration: 240, ease: 'Cubic.easeOut',
+            onComplete: () => r.sprite.setVisible(false),
+          });
+        }
+      });
+    });
+    $(this.room.state).bugs.onRemove((_bug, id) => {
+      const r = this.remoteBugs.get(id);
+      if (r) { r.sprite.destroy(); this.remoteBugs.delete(id); }
+    });
 
-      // ----- HEALTH PICKUPS -----
-      $(this.room.state).pickups.onAdd((pickup, id) => {
-        if (this._shuttingDown) return;
-        this._spawnPickupSprite(id, pickup);
-        $(pickup).listen('alive', (newVal) => {
-          if (this._shuttingDown) return;
-          if (newVal === false) this._consumePickupSprite(id);
-        });
+    // ----- HEALTH PICKUPS -----
+    $(this.room.state).pickups.onAdd((pickup, id) => {
+      if (!live()) return;
+      this._spawnPickupSprite(id, pickup);
+      $(pickup).listen('alive', (newVal) => {
+        if (!live()) return;
+        if (newVal === false) this._consumePickupSprite(id);
       });
-      $(this.room.state).pickups.onRemove((_pickup, id) => {
-        const r = this.remotePickups.get(id);
-        if (r && r.sprite) { r.sprite.destroy(); }
-        this.remotePickups.delete(id);
-      });
+    });
+    $(this.room.state).pickups.onRemove((_pickup, id) => {
+      const r = this.remotePickups.get(id);
+      if (r && r.sprite) { r.sprite.destroy(); }
+      this.remotePickups.delete(id);
+    });
 
-      // ----- MAP OBSTACLES -----
-      $(this.room.state).obstacles.onAdd((ob, id) => {
-        if (this._shuttingDown) return;
-        this._spawnObstacleSprite(id, ob);
-      });
-      $(this.room.state).obstacles.onRemove((_ob, id) => {
-        if (this._shuttingDown) return;
-        const rec = this.remoteObstacles.get(id);
-        if (!rec) return;
-        this.remoteObstacles.delete(id);
-        this._spawnObstacleBreakBurst(rec);
-        rec.gfx.destroy();
-      });
+    // ----- MAP OBSTACLES -----
+    $(this.room.state).obstacles.onAdd((ob, id) => {
+      if (!live()) return;
+      this._spawnObstacleSprite(id, ob);
+    });
+    $(this.room.state).obstacles.onRemove((_ob, id) => {
+      if (!live()) return;
+      const rec = this.remoteObstacles.get(id);
+      if (!rec) return;
+      this.remoteObstacles.delete(id);
+      this._spawnObstacleBreakBurst(rec);
+      rec.gfx.destroy();
+    });
 
-      // ----- TOXIC CLOUDS -----
-      $(this.room.state).clouds.onAdd((cloud, id) => {
-        if (this._shuttingDown) return;
-        this._spawnCloudSprite(id, cloud);
-      });
-      $(this.room.state).clouds.onRemove((_cloud, id) => {
-        const r = this.remoteClouds && this.remoteClouds.get(id);
-        if (r) { r.gfx.destroy(); this.remoteClouds.delete(id); }
-      });
+    // ----- TOXIC CLOUDS -----
+    $(this.room.state).clouds.onAdd((cloud, id) => {
+      if (!live()) return;
+      this._spawnCloudSprite(id, cloud);
+    });
+    $(this.room.state).clouds.onRemove((_cloud, id) => {
+      const r = this.remoteClouds && this.remoteClouds.get(id);
+      if (r) { r.gfx.destroy(); this.remoteClouds.delete(id); }
+    });
 
-      this.room.onLeave(() => {
-        // Fires ~1 RTT after a consented leave — the scene may already be gone.
-        if (this._shuttingDown || !this._status?.scene) return;
-        this._status.setText('disconnected');
-        this._status.setColor('#ff8a8a');
-      });
-    } catch (err) {
-      this._status.setText('connection failed: ' + (err?.message || err));
-      this._status.setColor('#ff8a8a');
-      console.error(err);
-    }
+    room.onLeave((code) => this._onRoomLeave(room, code));
   }
 
   _spawnRemote(sessionId, playerState) {
@@ -1348,7 +1462,11 @@ export default class MultiPlayScene extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5);
     const fixingGroup = this.add.container(0, 0, [fixingBg, fixingTxt, fixingCountdown]).setVisible(false);
-    c.add([shadow, aura, ring, shieldDisc, sprite, hatText, label, title, healthBg, healthFill, energyBg, energyFill, levelRingBg, levelRingArc, levelText, fixingGroup, stunStar, crownText]);
+    // EP-16: "away" (connection dropped, inside the reconnect grace) — 📶 over the head
+    const awayText = this.add.text(0, -130, '📶 lagging…', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 12, color: '#7ec8ff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setVisible(!!playerState.away);
+    c.add([shadow, aura, ring, shieldDisc, sprite, hatText, label, title, healthBg, healthFill, energyBg, energyFill, levelRingBg, levelRingArc, levelText, fixingGroup, stunStar, crownText, awayText]);
     this.remotePlayers.set(sessionId, {
       container: c, label, sprite, stickman, color: playerState.color,
       hatText, crownText, isBot: !!playerState.isBot,
@@ -1362,6 +1480,8 @@ export default class MultiPlayScene extends Phaser.Scene {
       levelRingBg, levelRingArc, levelText,
       fixingGroup, fixingBg, fixingTxt, fixingCountdown,
       brokenStartAt: 0,
+      brokenUntil: Number(playerState.brokenUntil) || 0,
+      awayText, away: !!playerState.away,
       level: playerState.level | 0,
       xp: playerState.xp | 0,
       energy: playerState.energy | 0,
@@ -1372,6 +1492,41 @@ export default class MultiPlayScene extends Phaser.Scene {
       shielded: !!playerState.shielded,
       stunnedUntil: Number(playerState.stunnedUntil) || 0,
     });
+  }
+
+  /** Show "HP n" under a bug only when it's damaged or hovered (and has >1 HP). */
+  _syncBugHpLabel(r) {
+    const t = r?.hpText;
+    if (!t || !t.scene) return;
+    const show = r.alive !== false && r.maxHp > 1 && r.hp > 0
+      && (r.hp < r.maxHp || r._hovered);
+    if (show) {
+      const str = `HP ${r.hp}`;
+      if (t.text !== str) t.setText(str);
+    }
+    if (t.visible !== show) t.setVisible(show);
+  }
+
+  _updateBugHover() {
+    const p = this.input.activePointer;
+    let best = null;
+    if (!this._isTouch && p && !this._overlay.modalOpen) {
+      const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+      let bestD = 40;
+      this.remoteBugs.forEach((b, id) => {
+        if (!b.alive || b.hidden) return;
+        const d = Math.hypot(b.x - wp.x, b.y - wp.y);
+        if (d < bestD) { bestD = d; best = id; }
+      });
+    }
+    // The locked attack target counts as "hovered" too
+    if (best == null && this._attackTarget?.type === 'bug') best = this._attackTarget.id;
+    if (best === this._hoverBugId) return;
+    const prev = this.remoteBugs.get(this._hoverBugId);
+    if (prev) { prev._hovered = false; this._syncBugHpLabel(prev); }
+    this._hoverBugId = best;
+    const cur = this.remoteBugs.get(best);
+    if (cur) { cur._hovered = true; this._syncBugHpLabel(cur); }
   }
 
   _cssColor(hex) {
@@ -1951,11 +2106,12 @@ export default class MultiPlayScene extends Phaser.Scene {
       fontFamily: 'Consolas, monospace', fontSize: 10, color: '#ffffff',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5);
-    if (bugState.hp > 1) hpText.setText(`HP ${bugState.hp}`);
+    // EP-23: HP label only when the bug is damaged or hovered (no wall of numbers)
+    hpText.setVisible(false);
     c.add([shadow, body, hpText]);
     c._body = body; c._hpText = hpText;
     this.remoteBugs.set(id, {
-      sprite: c,
+      sprite: c, hpText, maxHp: bugState.hp | 0, hp: bugState.hp | 0,
       x: bugState.x, y: bugState.y,
       target: { x: bugState.x, y: bugState.y },
       alive: true, hidden: false, kind: bugState.kind, golden,
@@ -1970,7 +2126,7 @@ export default class MultiPlayScene extends Phaser.Scene {
   _triggerAction(kind, opts = {}) {
     const now = this.time.now;
     if (now < this._smashCooldownUntil) return;
-    if (!this.room) return;
+    if (!this.room || !this._socketOpen()) return;
     const meS = this.room.state?.players?.get(this.localId);
     if (meS && (Number(meS.stunnedUntil) || 0) > this._srvNow()) return; // stunned
 
@@ -2104,7 +2260,7 @@ export default class MultiPlayScene extends Phaser.Scene {
 
   /** Send a skill cast to the server. Gated by energy + broken state only. */
   _castSkill(slot) {
-    if (!this.room) return;
+    if (!this.room || !this._socketOpen()) return;
     const meState = this.room.state.players?.get(this.localId);
     if (!meState || meState.broken) return;
     if ((Number(meState.stunnedUntil) || 0) > this._srvNow()) return; // stunned
@@ -2668,11 +2824,12 @@ export default class MultiPlayScene extends Phaser.Scene {
     // Capture TOUCH on left half of the screen → start joystick.
     // Mouse clicks are ignored so the click-to-move handler runs unimpeded
     // on laptops that have touch capability.
-    this.input.on('pointerdown', (p) => {
+    this.input.on('pointerdown', (p, over) => {
       // Any touch pointer (not the mouse) on the left half drives the knob.
       // Don't gate on p.pointerType — some mobile browsers leave it unset,
       // which silently killed the joystick.
       if (!this._isJoystickTouch(p)) return;
+      if (this._overlay?.modalOpen || this._nameEntryActive || this._uiHit(over)) return;
       if (this._stick.activeId != null) return;
       if (this._actionButtonsHit(p)) return;
       this._stick.activeId = p.id;
@@ -2839,12 +2996,13 @@ export default class MultiPlayScene extends Phaser.Scene {
   }
 
   _onLocalComboChange(newCombo, oldCombo) {
-    if (newCombo <= 0) {
-      // Faded out
+    // EP-23: a "combo" of 1 is just a kill — the COMBO text starts at ×2.
+    if (newCombo < 2) {
       this._comboText.setText('');
       this._comboMultText.setText('');
       this._comboText.setAlpha(0);
       this._comboMultText.setAlpha(0);
+      if (newCombo > 0) AudioManager.bugKill?.();
       return;
     }
     const color = comboColor(newCombo);
@@ -2899,7 +3057,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (st?.players) {
       const arr = [];
       st.players.forEach((p, sid) => arr.push({
-        sid, name: p.name, score: p.score | 0, level: p.level | 0, bot: !!p.isBot, broken: !!p.broken,
+        sid, name: p.name, score: p.score | 0, level: p.level | 0, bot: !!p.isBot, broken: !!p.broken, away: !!p.away,
       }));
       arr.sort((a, b) => b.score - a.score);
       const TOP = 8;
@@ -2907,7 +3065,7 @@ export default class MultiPlayScene extends Phaser.Scene {
         const me = (e.sid === this.localId) ? ' ← you' : '';
         const crown = (e.sid === this._crownSid) ? '👑 ' : '';
         const bot = e.bot ? '🤖' : '';
-        const tag = e.broken ? '💻✖' : `Lv${e.level || 1}`;
+        const tag = (e.away ? '📶 ' : '') + (e.broken ? '💻✖' : `Lv${e.level || 1}`);
         return `${rank}. ${crown}${bot}${e.name} · ${tag} · ${e.score}${me}`;
       };
       lines.push(st.bounty > 0 ? `LEADERBOARD · 👑 bounty ${st.bounty}` : 'LEADERBOARD');
@@ -2916,6 +3074,14 @@ export default class MultiPlayScene extends Phaser.Scene {
       if (myIdx >= TOP) lines.push('…', row(arr[myIdx], myIdx + 1));
     }
     this._playerListText.setText(lines.join('\n'));
+    // Round 2: dark backing so world nameplates passing underneath don't collide
+    if (!this._playerListBg) {
+      this._playerListBg = this.add.rectangle(0, 0, 10, 10, 0x05080f, 0.6)
+        .setOrigin(1, 0).setScrollFactor(0).setDepth(49.5);
+    }
+    const t = this._playerListText;
+    this._playerListBg.setVisible(lines.length > 0)
+      .setPosition(t.x + 6, t.y - 4).setSize(t.width + 12, t.height + 8);
   }
 
   update(_, dtMs) {
@@ -3016,7 +3182,7 @@ export default class MultiPlayScene extends Phaser.Scene {
 
       // Send move to server at ~20 Hz (not while stunned — it would be rejected)
       const now = this.time.now;
-      if (this.room && !stunned && now - this._lastSentAt > 50) {
+      if (this.room && this._socketOpen() && !stunned && now - this._lastSentAt > 50) {
         this._lastSentAt = now;
         this.room.send('move', { x: this.localPos.x, y: this.localPos.y });
       }
@@ -3180,6 +3346,7 @@ export default class MultiPlayScene extends Phaser.Scene {
         r.levelText.y   = badgeY;
         r._stackTop = STACK;
         if (r.crownText) r.crownText.y = STACK - 52;
+        if (r.awayText) r.awayText.y = STACK - 50;
         // Force redraw of the arc next frame at the new Y
         r._lastBadgeXp = -1;
       }
@@ -3313,9 +3480,16 @@ export default class MultiPlayScene extends Phaser.Scene {
         }
         // Subtle alpha pulse on the sprite/container while fixing
         r.sprite.setAlpha(0.75 + 0.25 * Math.sin(now / 180));
-        const elapsed = now - (r.brokenStartAt || now);
-        const remain = Math.max(0, (BROKEN_DURATION_MS - elapsed) / 1000);
-        r.fixingCountdown.setText(`${remain.toFixed(1)}s`);
+        // EP-02: the server's brokenUntil is the truth; the local estimate is
+        // only for an older server that doesn't sync it.
+        let remainMs;
+        if (r.brokenUntil > 0) remainMs = r.brokenUntil - srvNow;
+        else {
+          const dur = (sid === this.localId && this._localBrokenMs) || BROKEN_FALLBACK_MS;
+          remainMs = dur - (now - (r.brokenStartAt || now));
+        }
+        const cd = `${Math.max(0, remainMs / 1000).toFixed(1)}s`;
+        if (r.fixingCountdown.text !== cd) r.fixingCountdown.setText(cd);
         r.fixingGroup.y = Math.sin(now / 220) * 2;
       } else if (r._brokenApplied) {
         r._brokenApplied = false;
@@ -3347,6 +3521,7 @@ export default class MultiPlayScene extends Phaser.Scene {
 
     // ----- Office Chaos overlays -----
     this._overlay.update(now, this.room?.state);
+    this._tickWatchdog();
     this._bossView.update(dtMs);
     this._updateObjectiveArrow(now);
 
@@ -3367,11 +3542,22 @@ export default class MultiPlayScene extends Phaser.Scene {
         const eRatio = Math.max(0, Math.min(1, me.energy / Math.max(1, me.maxEnergy)));
         this._localEnergyFill.width = 276 * eRatio;
 
-        const badgeKey = `${me.level}|${me.broken ? 1 : 0}`;
+        const badgeKey = `${me.level}|${me.broken ? 1 : 0}|${me.xp | 0}`;
         if (badgeKey !== this._localBadgeKey) {
           this._localBadgeKey = badgeKey;
-          const broken = me.broken ? '  ·  FIXING LAPTOP' : '';
-          this._localLevelBadge.setText(`Lv${me.level} · ${levelTitle(me.level)}${broken}`);
+          // EP-23: gold XP bar + "next promotion in N XP"
+          const lv = Math.max(1, me.level | 0);
+          const idx = Math.min(LEVEL_XP_THRESHOLDS.length - 1, lv - 1);
+          const isMax = idx === LEVEL_XP_THRESHOLDS.length - 1;
+          let prog = 1, nextStr = 'MAX LEVEL';
+          if (!isMax) {
+            const a = LEVEL_XP_THRESHOLDS[idx], b = LEVEL_XP_THRESHOLDS[idx + 1];
+            prog = Math.max(0, Math.min(1, ((me.xp | 0) - a) / Math.max(1, b - a)));
+            nextStr = `next promotion in ${Math.max(0, b - (me.xp | 0))} XP`;
+          }
+          this._localXpFill.width = 278 * prog;
+          const tail = me.broken ? 'FIXING LAPTOP' : nextStr;
+          this._localLevelBadge.setText(`Lv${lv} · ${levelTitle(lv)}  ·  ${tail}`);
           this._localLevelBadge.setColor(me.broken ? '#ff8a8a' : '#ffd23f');
         }
       }
@@ -3379,6 +3565,22 @@ export default class MultiPlayScene extends Phaser.Scene {
 
     // ----- Skill cooldown UI -----
     this._updateSkillCooldowns();
+
+    // ----- Bug HP on hover (mouse) + mission tracker refresh (both throttled) -----
+    if (now - (this._hoverCheckAt || 0) > 100) {
+      this._hoverCheckAt = now;
+      // ×2 XP badge for the first 3 min of the session (EP-20)
+      const boostLeft = this._joinedAt && this.room ? NEW_SESSION_BOOST_MS - (Date.now() - this._joinedAt) : 0;
+      const bstr = boostLeft > 0
+        ? `×2 XP · ${Math.floor(boostLeft / 60000)}:${String(Math.floor((boostLeft % 60000) / 1000)).padStart(2, '0')}`
+        : '';
+      if (this._xpBoostText.text !== bstr) this._xpBoostText.setText(bstr);
+      this._updateBugHover();
+      if (this._missionsDirty && now - (this._missionsAt || 0) > 500) {
+        this._missionsAt = now;
+        this._refreshMissions();
+      }
+    }
 
     // ----- Minimap (throttled to ~15 Hz; entity-dense redraws are expensive) -----
     const tNow = this.time.now;
@@ -3549,7 +3751,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (!this._chatActive) return;
     if (send) {
       const t = (this._chatDomInput.value || '').trim();
-      if (t && this.room) { try { this.room.send('chat', { text: t }); } catch (_) {} }
+      if (t && this.room && this._socketOpen()) { try { this.room.send('chat', { text: t }); } catch (_) {} }
     }
     this._chatActive = false;
     this._chatDomInput.value = '';
@@ -3588,6 +3790,8 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._chatLineObjs.length = 0;
 
     const total = this._chatHistory.length;
+    if (!this._chatBg) this._chatBg = this.add.graphics().setScrollFactor(0).setDepth(53);
+    this._chatBg.clear();
     if (total === 0) { this._chatScrollHint.setVisible(false); return; }
 
     const viewN = this._chatViewN;
@@ -3613,6 +3817,14 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (topIdx > 0) hint += '▲ older';
     if (this._chatScroll > 0) hint += (hint ? '   ' : '') + 'newer ▼';
     this._chatScrollHint.setText(hint).setVisible(!!hint);
+    // Round 2: a dark backing so chat reads over the busy code background
+    if (this._chatLineObjs.length) {
+      let left = Infinity, top = Infinity;
+      for (const t of this._chatLineObjs) { left = Math.min(left, t.x - t.width); top = Math.min(top, t.y - t.height); }
+      const pad = 6, right = this._chatX + pad;
+      this._chatBg.fillStyle(0x05080f, 0.62)
+        .fillRoundedRect(left - pad, top - pad, right - (left - pad), this._chatBaseY - top + pad * 2 - 2, 6);
+    }
   }
 
   /** True when the pointer is over the chat log's scroll region (and there's a log). */
@@ -3636,6 +3848,9 @@ export default class MultiPlayScene extends Phaser.Scene {
     const MAX = 16;
     this._nameEntryActive = true;
     let value = String(defaultName || '').slice(0, MAX);
+    // Round 2: the first-run welcome already asked for the name — don't ask twice.
+    // Keep the box for the hat picker + JOIN, but show the name read-only.
+    const nameLocked = !!SaveManager.getFlag?.('welcomeSeen') && !!(SaveManager.getPlayerName?.() || '').trim();
 
     const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(100);
 
@@ -3652,7 +3867,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     panel.lineStyle(3, 0x39c2ff, 0.9);
     panel.strokeRoundedRect(px, py, panelW, panelH, 16);
 
-    const title = this.add.text(W / 2, py + 36, 'ENTER YOUR NAME', {
+    const title = this.add.text(W / 2, py + 36, nameLocked ? 'READY TO CLOCK IN?' : 'ENTER YOUR NAME', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 24, color: '#ffd23f',
       stroke: '#000', strokeThickness: 5,
     }).setOrigin(0.5);
@@ -3674,9 +3889,16 @@ export default class MultiPlayScene extends Phaser.Scene {
       delay: 480, loop: true, callback: () => cursor.setVisible(!cursor.visible),
     });
 
-    const hint = this.add.text(W / 2, fieldY + 42, 'type a name · ENTER to join · ESC to cancel', {
+    const hint = this.add.text(W / 2, fieldY + 42, nameLocked
+      ? 'change your name in 👤 CAREER on the menu · ENTER to join · ESC to cancel'
+      : 'type a name · ENTER to join · ESC to cancel', {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#888a99',
     }).setOrigin(0.5);
+    if (nameLocked) {
+      field.setFillStyle(0x0a0e16, 1).setStrokeStyle(0);
+      valueText.setText(`👋 ${value}`).setOrigin(0.5, 0.5).setX(W / 2).setColor('#ffd23f');
+      cursor.setVisible(false).setAlpha(0);
+    }
 
     // ── Hat picker (cosmetic, unlocked by career stats) ──
     const career = this._career || SaveManager.getCareer();
@@ -3729,7 +3951,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     overlay.add([dim, panel, title, field, valueText, cursor, hint,
       hatHeader, hatEmoji, hatName, hatInfo, leftArrow, rightArrow, btn, btnLabel]);
 
-    const refresh = () => { valueText.setText(value); placeCursor(); };
+    const refresh = () => { if (nameLocked) return; valueText.setText(value); placeCursor(); };
 
     const keyHandler = (ev) => {
       const k = ev.key;
@@ -3737,6 +3959,7 @@ export default class MultiPlayScene extends Phaser.Scene {
       if (k === 'Escape')    return; // global ESC handler leaves to the menu
       if (k === 'ArrowLeft')  { cycleHat(-1); return; }
       if (k === 'ArrowRight') { cycleHat(1); return; }
+      if (nameLocked) return;
       if (k === 'Backspace') { value = value.slice(0, -1); refresh(); return; }
       // Printable single chars only (space..~), respect max length.
       if (k.length === 1 && value.length < MAX && /^[\x20-\x7E]$/.test(k)) {
@@ -3799,9 +4022,14 @@ export default class MultiPlayScene extends Phaser.Scene {
   /** Server → client drama messages (feed, banners, rewards, boss telegraphs). */
   _registerDramaHandlers() {
     const room = this.room;
-    const on = (type, fn) => room.onMessage(type, (m) => { if (!this._shuttingDown) fn(m || {}); });
+    const on = (type, fn) => room.onMessage(type, (m) => {
+      if (this._shuttingDown || this.room !== room) return;
+      this._lastRxAt = Date.now();
+      fn(m || {});
+    });
     on('welcome', (m) => {
       if (Number.isFinite(m.serverNow)) this._clockOffset = m.serverNow - Date.now();
+      if (Number.isFinite(m.reconnectS)) this._reconnectS = Math.max(0, m.reconnectS);
       if (m.events) this._eventDefs = m.events;
       const cur = this.room?.state?.event;
       if (cur) this._overlay.setEvent(this._eventDefs[cur] || { title: cur });
@@ -3829,19 +4057,23 @@ export default class MultiPlayScene extends Phaser.Scene {
       const gain = m.gain | 0;
       // (The golden bug's XP pops via its 'reward' message instead.)
       if (gain > 0 && m.kind !== 'bug-golden') this._spawnXpPopup(`+${gain}`, '#ffe680', gain >= 50);
+      this._sess.bugs++;
       this._careerAdd('bugs', 1, 'bugs');
     });
     on('ko', () => {
       this._spawnXpPopup('💻 KO!', '#ff8a8a', true);
+      this._sess.kos++;
       this._careerAdd('kos', 1, 'kos');
     });
     on('reward', (m) => {
       const xp = m.xp | 0;
       if (m.kind === 'boss') {
         this._overlay.toast(`🚀 Deadline shipped! +${xp} XP (${m.share | 0}% of the damage)`, '#7ed957', 3400);
+        this._sess.bosses++;
         this._careerAdd('bosses', 1, 'bosses');
       } else if (m.kind === 'golden') {
         this._overlay.toast(`✨ You fixed the CEO's bug! +${xp} XP`, '#ffd700', 3400);
+        this._sess.goldens++;
         this._careerAdd('goldens', 1, 'goldens');
       } else if (m.kind === 'bounty') {
         this._overlay.toast(`💰 Bounty claimed! +${xp} XP`, '#ffd700', 3000);
@@ -3850,7 +4082,12 @@ export default class MultiPlayScene extends Phaser.Scene {
       AudioManager.reward?.();
     });
     on('brokenBy', (m) => {
-      this._overlay.toast(`💻 Laptop broken by ${m.by || 'something'} — fixing for 20s…`, '#ff8a8a', 3400);
+      // EP-02: broken time scales with level; the server says how long (ms).
+      const ms = Number(m.ms) > 0 ? Number(m.ms) : BROKEN_FALLBACK_MS;
+      this._localBrokenMs = ms;
+      const kept = m.kept ? ' Career kept 👍' : '';
+      this._overlay.toast(`💻 Laptop broken by ${m.by || 'something'} — IT says ${Math.round(ms / 1000)}s. IT is lying.${kept}`, '#ff8a8a', 3400);
+      this._sess.deaths++;
       this._careerAdd('deaths', 1);
     });
     on('crowned', (m) => {
@@ -3862,18 +4099,25 @@ export default class MultiPlayScene extends Phaser.Scene {
     on('pickup', () => this._careerAdd('pickups', 1, 'pickups'));
     on('bossSlam', (m) => this._bossView.slam(m));
     on('bossSlamHit', (m) => this._bossView.slamHit(m));
+  }
 
-    // First sessions: a few onboarding tips
-    if ((this._career.sessions | 0) < 2) {
-      this._overlay.startTips([
-        '🐞 Click a bug — or press SPACE next to it — to smash it',
-        '💚 Green + pickups heal you and refill energy',
-        '⚡ Q dash · W shield · E jump · R ult — skills cost energy',
-        '📢 Listen to the PM: world events change the rules',
-        '👑 Break the Tech Lead\'s laptop to claim their bounty',
-        '💻 Health 0 = broken laptop: back to Intern for 20s',
-      ]);
-    }
+  /** First sessions: a few onboarding tips (once per visit; flag `tipsArena`). */
+  _startTipsOnce() {
+    if (this._tipsStarted) return;
+    this._tipsStarted = true;
+    const seen = SaveManager.getFlag ? !!SaveManager.getFlag('tipsArena') : (this._career.sessions | 0) >= 2;
+    if (seen) return;
+    const touch = !!this._isTouch;
+    this._overlay.startTips([
+      touch ? '🐞 Tap a bug to run over and smash it' : '🐞 Click a bug — or press SPACE next to it — to smash it',
+      '⭐ Bugs give XP — fill the gold bar to get promoted (and bigger)',
+      '💚 Green + pickups heal you and refill energy',
+      touch ? '⚡ DASH · SHIELD · JUMP · ULT buttons cost energy' : '⚡ Q dash · W shield · E jump · R ult — skills cost energy',
+      '📢 Listen to the PM: world events change the rules',
+      '👑 Break the Tech Lead\'s laptop to claim their bounty',
+      '💻 Health 0 = broken laptop: back to Intern for a few seconds (longer the higher you climb)',
+      touch ? '☰ top-right = break room · clock out for your Shift Report' : '☰ or ESC = break room · clock out for your Shift Report',
+    ]);
   }
 
   _onEventChange(id, prev) {
@@ -3883,38 +4127,435 @@ export default class MultiPlayScene extends Phaser.Scene {
     if (prev && prev !== id && this._joinedAt) this._dailyTrack('events', 1);
   }
 
+  // Career + daily missions go through Progress (§3.4) so missions/hats toast
+  // the same way in every mode.
   _careerAdd(key, n = 1, daily = null) {
-    const before = this._career;
-    this._career = SaveManager.addCareer(key, n);
-    this._announceUnlocks(before, this._career);
-    if (daily) this._dailyTrack(daily, n);
+    this._announce(Progress.add(key, n, daily ? { daily } : {}));
   }
 
   _careerMax(key, value, daily = null) {
-    const before = this._career;
-    if (value > (before[key] || 0)) {
-      this._career = SaveManager.maxCareer(key, value);
-      this._announceUnlocks(before, this._career);
-    }
-    if (daily) this._dailyTrack(daily, value);
+    // Skip the localStorage round-trip when nothing can change.
+    if (!daily && value <= (this._career[key] || 0)) return;
+    this._announce(Progress.max(key, value, daily ? { daily } : {}));
   }
 
   _dailyTrack(metric, value) {
-    // A session can run past midnight — switch to the new day's missions.
-    const k = dayKey();
-    if (k !== this._dayKey) { this._dayKey = k; this._missions = missionsForDay(k); }
-    const done = SaveManager.trackDaily(this._dayKey, this._missions, metric, value);
-    for (const m of done) {
+    this._announce(Progress.track(metric, value));
+  }
+
+  _announce(res) {
+    this._career = SaveManager.getCareer();
+    for (const m of res?.missions || []) {
       this._overlay.toast(`✅ Daily mission complete: ${m.text}`, '#7ed957', 3400);
       AudioManager.reward?.();
     }
-  }
-
-  _announceUnlocks(before, after) {
-    for (const h of newlyUnlockedHats(before, after)) {
+    for (const h of res?.hats || []) {
       this._overlay.toast(`🎉 New hat unlocked: ${h.emoji} ${h.name} — wear it next time you join`, '#ffd23f', 3800);
       AudioManager.reward?.();
     }
+    this._missionsDirty = true;
+  }
+
+  /** Re-render the HUD mission tracker from today's progress. */
+  _refreshMissions() {
+    this._missionsDirty = false;
+    const rows = (Progress.today?.() || []).map((m) => ({
+      icon: (MISSION_MODES?.[m.mode || 'arena'] || {}).icon || '▫',
+      text: m.text, cur: m.progress | 0, goal: m.goal, done: !!m.done,
+      mine: !m.mode || m.mode === 'arena',
+    }));
+    this._overlay.setMissions(rows);
+  }
+
+  _uiHit(over) { return !!over && over.some((o) => o && o._uiBlock); }
+
+  /** False between a socket drop and onLeave (avoids "WebSocket is CLOSING" spam). */
+  _socketOpen() {
+    const ws = this.room?.connection?.transport?.ws;
+    return !ws || ws.readyState === 1;
+  }
+
+  // ───────────────────────── Session arc: ☰ / clock out / Shift Report (EP-15) ─────────────────────────
+
+  _buildMenuButton() {
+    const W = this.scale.width;
+    const x = W - 30, y = 28;
+    const c = this.add.container(x, y).setScrollFactor(0).setDepth(52);
+    const ring = this.add.circle(0, 0, 20, 0x05080f, 0.75).setStrokeStyle(2, 0x7ec8ff, 0.9);
+    const icon = this.add.text(0, -1, '☰', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 20, color: '#e8f4ff',
+    }).setOrigin(0.5);
+    c.add([ring, icon]);
+    // Generous hit zone for thumbs; pointerup so the press can't leak into the card
+    const hit = this.add.zone(x, y, 60, 60).setScrollFactor(0).setDepth(53).setInteractive({ useHandCursor: true });
+    hit._uiBlock = true;
+    hit.on('pointerup', () => {
+      if (this._overlay.modalOpen || this._nameEntryActive || this._chatActive) return;
+      AudioManager.uiClick?.();
+      this._openBreakRoom();
+    });
+  }
+
+  /** ESC: back out of whatever is open; otherwise ask to clock out. */
+  _onEscape() {
+    if (this._nameEntryActive) { this._leaveAndGoMenu(); return; }
+    if (this._reconnecting) return;                     // the veil has its own MENU button
+    if (this._overlay.extModal) return;                 // SettingsPanel closes itself on ESC
+    const card = this._overlay._card;
+    if (card) {
+      const k = card.opts.kind;
+      if (k === 'sub') this._openBreakRoom();
+      else if (k === 'pause' || k === 'confirm') this._overlay.closeCard();
+      else this._leaveAndGoMenu();                     // report / failure cards
+      return;
+    }
+    if (!this.room) { this._leaveAndGoMenu(); return; } // still connecting
+    this._confirmClockOut();
+  }
+
+  _openBreakRoom() {
+    this._overlay.card({
+      kind: 'pause', title: '☕ BREAK ROOM', titleColor: '#7ec8ff',
+      sub: "The office doesn't pause — the bugs keep crawling while you're in here.",
+      buttons: [
+        [
+          { label: '▶ RESUME', color: 0x2f8a3a, onClick: () => this._overlay.closeCard() },
+          { label: '⚙ SETTINGS', color: 0x2d6cdf, onClick: () => this._openSharedSettings('settings') },
+          { label: '🎮 CONTROLS', color: 0x2d6cdf, onClick: () => this._openSharedSettings('controls') },
+        ],
+        [{ label: '🚪 CLOCK OUT', color: 0xa83232, onClick: () => this._confirmClockOut() }],
+      ],
+    });
+  }
+
+  _confirmClockOut() {
+    this._overlay.card({
+      kind: 'confirm', title: 'Clock out already?', titleColor: '#ffd23f',
+      sub: "Your stickman stays at the office. Your score doesn't.",
+      buttons: [
+        { label: 'KEEP SMASHING', color: 0x2f8a3a, onClick: () => this._overlay.closeCard() },
+        { label: 'CLOCK OUT', color: 0xa83232, onClick: () => this._clockOut() },
+      ],
+    });
+  }
+
+  /** The menu's SettingsPanel (client-meta, EP-12) over the arena; falls back to the mini cards. */
+  _openSharedSettings(tab) {
+    if (!SettingsPanel?.open) { if (tab === 'controls') this._openControlsCard(); else this._openSettingsCard(); return; }
+    this._overlay.closeCard();
+    this._overlay.extModal = true;            // blocks world input like our own cards
+    try {
+      SettingsPanel.open(this, {
+        tab,
+        onClose: () => {
+          this._overlay.extModal = false;
+          if (!this._shuttingDown && !this._clockedOut && !this._reconnecting) this._openBreakRoom();
+        },
+      });
+    } catch (e) {
+      console.warn('[MP] SettingsPanel failed, using the mini card', e);
+      this._overlay.extModal = false;
+      if (tab === 'controls') this._openControlsCard(); else this._openSettingsCard();
+    }
+  }
+
+  _openSettingsCard() {
+    const st = SaveManager.getSettings?.() || { volume: 0.8, shake: true, flashes: true };
+    const muted = !!SaveManager.isMuted?.();
+    const set = (patch) => {
+      const next = SaveManager.setSettings?.(patch) || { ...st, ...patch };
+      if ('volume' in patch) AudioManager.setVolume?.(next.volume);
+      fxPrefsChanged?.();
+      AudioManager.uiClick?.();
+      this._openSettingsCard();
+    };
+    const vol = Math.round((st.volume ?? 0.8) * 100);
+    this._overlay.card({
+      kind: 'sub', title: '⚙ SETTINGS', titleColor: '#7ec8ff',
+      body: `Sound   ${muted ? 'OFF (muted)' : 'ON'}\nVolume  ${vol}%\nShake   ${st.shake ? 'ON' : 'OFF'}\nFlashes ${st.flashes ? 'ON' : 'OFF'}`,
+      bodyAlign: 'left',
+      foot: 'M = mute anywhere in the arena',
+      buttons: [
+        [
+          { label: muted ? '🔊 UNMUTE' : '🔇 MUTE', color: 0x2d6cdf, onClick: () => { this._toggleMute(true); this._openSettingsCard(); } },
+          { label: 'VOL −', color: 0x2d6cdf, onClick: () => set({ volume: Math.max(0, Math.round((st.volume - 0.1) * 10) / 10) }) },
+          { label: 'VOL +', color: 0x2d6cdf, onClick: () => set({ volume: Math.min(1, Math.round((st.volume + 0.1) * 10) / 10) }) },
+        ],
+        [
+          { label: `SHAKE ${st.shake ? 'ON' : 'OFF'}`, color: 0x3a4a68, onClick: () => set({ shake: !st.shake }) },
+          { label: `FLASHES ${st.flashes ? 'ON' : 'OFF'}`, color: 0x3a4a68, onClick: () => set({ flashes: !st.flashes }) },
+          { label: '◀ BACK', color: 0x2f8a3a, onClick: () => this._openBreakRoom() },
+        ],
+      ],
+    });
+  }
+
+  _openControlsCard() {
+    const body = this._isTouch
+      ? 'Left thumb ......... move (joystick)\nTap a bug ......... walk over + smash\nTap a player ...... PvP smash\nSMASH button ...... smash what\'s near\nDASH / SHIELD / JUMP / ULT ... skills (cost energy)\n💬 ................ chat\n☰ ................ break room'
+      : 'Click ground / arrows .. move\nClick a bug ........... walk over + smash\nSPACE ................. smash\nQ dash · W shield · E jump · R ult\nENTER ................. chat\nM ..................... mute\nESC / ☰ ............... break room / clock out';
+    this._overlay.card({
+      kind: 'sub', title: '🎮 CONTROLS', titleColor: '#7ec8ff', body, bodyAlign: 'left',
+      foot: 'Health 0 = broken laptop · Tech Lead 👑 carries a bounty · events change the rules',
+      buttons: [{ label: '◀ BACK', color: 0x2f8a3a, onClick: () => this._openBreakRoom() }],
+    });
+  }
+
+  _toggleMute(silent = false) {
+    const m = AudioManager.toggleMute();
+    SaveManager.setMuted(m);
+    if (!silent) this._overlay.toast(m ? '🔇 MUTED (M)' : '🔊 SOUND ON (M)', '#ffd23f', 1200);
+  }
+
+  /** Leave the arena on purpose and show the Shift Report. */
+  _clockOut() {
+    if (this._clockedOut) return;
+    this._clockedOut = true;
+    this._endReconnectTimers();
+    // < 20 s on the clock isn't a session (no first-hat unlock after leaving)
+    clearTimeout(this._sessionTimer);
+    this._overlay.hideVeil();
+    this._flushPlayTime();
+    this._playClockAt = 0;
+    const room = this.room;
+    this.room = null;                               // our own onLeave becomes a no-op
+    try { room?.leave(); } catch (_) { /* ignore */ }
+    if ((this._career.sessions | 0) >= 2) SaveManager.setFlag?.('tipsArena', true);
+    this._showShiftReport();
+  }
+
+  _shiftReportData() {
+    const ss = this._sess;
+    const ms = this._joinedAt ? Date.now() - this._joinedAt : 0;
+    const mins = Math.floor(ms / 60000), secs = Math.floor((ms % 60000) / 1000);
+    const career = SaveManager.getCareer();
+    // Closest locked hat (by % done)
+    let nextHat = null, bestFrac = -1;
+    for (const h of HATS) {
+      if (!h.unlock || isHatUnlocked(h, career)) continue;
+      const cur = career[h.unlock.stat] || 0;
+      const frac = cur / h.unlock.at;
+      if (frac > bestFrac) { bestFrac = frac; nextHat = { h, cur }; }
+    }
+    const streak = (SaveManager.getLiveStreak?.(dayKey()) ?? 0) | 0;
+    let verdict;
+    if (ss.kos >= 3) verdict = `HR would like a word about those ${ss.kos} KOs.`;
+    else if (ss.deaths === 0 && ms >= 60000) verdict = 'Zero burnouts. Suspicious.';
+    else if (ss.peakLevel >= 3) verdict = "Promoted to 'person who fixes the printer'.";
+    else verdict = 'Hôm nay chăm chỉ ghê, sếp thấy hết rồi.';
+    return { ss, mins, secs, nextHat, streak, verdict, missions: Progress.today?.() || [] };
+  }
+
+  _showShiftReport() {
+    const d = this._shiftReportData();
+    const ss = d.ss;
+    const lines = [
+      `🐞 Bugs fixed ....... ${ss.bugs}`,
+      `⭐ Peak title ....... ${levelTitle(ss.peakLevel)} (Lv${ss.peakLevel})`,
+      `💻 KOs .............. ${ss.kos}`,
+      `🔧 Burnouts ......... ${ss.deaths}`,
+      `⏱  Time on shift .... ${d.mins}m ${String(d.secs).padStart(2, '0')}s`,
+    ];
+    if (ss.bosses) lines.push(`🚀 Deadlines shipped . ${ss.bosses}`);
+    if (ss.goldens) lines.push(`✨ CEO bugs ......... ${ss.goldens}`);
+    lines.push('', 'TODAY\'S MISSIONS');
+    for (const m of d.missions) {
+      const icon = (MISSION_MODES?.[m.mode || 'arena'] || {}).icon || '▫';
+      lines.push(`${m.done ? '✅' : icon} ${m.text} · ${m.done ? 'done' : `${m.progress}/${m.goal}`}`);
+    }
+    if (d.nextHat) lines.push('', `Next hat: ${d.nextHat.h.emoji} ${d.nextHat.h.name} ${Math.min(d.nextHat.cur, d.nextHat.h.unlock.at)}/${d.nextHat.h.unlock.at}`);
+    this._overlay.card({
+      kind: 'report', title: '🧾 SHIFT REPORT', titleColor: '#7ed957', w: 620,
+      sub: `“${d.verdict}”`, body: lines.join('\n'), bodyAlign: 'left',
+      foot: d.streak > 0 ? `🔥 ${d.streak}-day mission streak` : 'Finish all 3 daily missions to start a streak 🔥',
+      buttons: [
+        { label: '📋 COPY', color: 0x3a4a68, onClick: () => this._copyShiftReport(d) },
+        { label: '🔁 BACK TO WORK', color: 0x2f8a3a, onClick: () => { this._cleanup(); this.scene.restart(); } },
+        { label: 'MENU', color: 0x2d6cdf, onClick: () => this._leaveAndGoMenu() },
+      ],
+    });
+  }
+
+  _copyShiftReport(d) {
+    const url = `${window.location.origin}${window.location.pathname}`;
+    const text = `🐞 Bug Smash shift: ${d.ss.bugs} bugs · peak ${levelTitle(d.ss.peakLevel)} · ${d.ss.kos} KOs · 🔥${d.streak}-day streak — ${url}`;
+    const done = () => this._overlay._card?.setFoot('📋 Copied! Paste it in the group chat.');
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+        done();
+      } catch (_) { this._overlay._card?.setFoot(text); }
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  }
+
+  // ───────────────────────── Connection: failure cards + reconnect (EP-16, §3.3) ─────────────────────────
+
+  _showConnFailCard(detail) {
+    this._status.setText('');
+    this._overlay.card({
+      kind: 'fail', title: "Server's down. Classic Friday.", titleColor: '#ff8a8a',
+      sub: 'Could not reach the office server.', foot: detail ? String(detail).slice(0, 120) : '',
+      buttons: [
+        { label: '🔁 RETRY', color: 0x2f8a3a, onClick: () => { this._overlay.closeCard(); this._connect(); } },
+        { label: '🎯 PLAY CAMPAIGN', color: 0x2d6cdf, onClick: () => { this._cleanup(); this.scene.start('HuntScene'); } },
+        { label: 'MENU', color: 0x3a4a68, onClick: () => this._leaveAndGoMenu() },
+      ],
+    });
+  }
+
+  _showConnLostCard(why = '') {
+    this._overlay.card({
+      kind: 'fail', title: why || 'Connection lost.', titleColor: '#ff8a8a',
+      sub: 'Your seat timed out — the bugs won this round.',
+      buttons: [
+        { label: '🔁 REJOIN', color: 0x2f8a3a, onClick: () => { this._overlay.closeCard(); this._resetWorldViews(); this._connect(); } },
+        { label: '🧾 CLOCK OUT', color: 0xa83232, onClick: () => { this._clockedOut = true; this._showShiftReport(); } },
+        { label: 'MENU', color: 0x3a4a68, onClick: () => this._leaveAndGoMenu() },
+      ],
+    });
+  }
+
+  /**
+   * Dead-link watchdog (port of TeamModeScene's). A real Wi-Fi drop leaves the
+   * socket "open" with no onLeave, so the screen just froze. The arena patches
+   * ~12 Hz (bugs always move): STALL_MS of silence → nudge the server, then one
+   * STALL_GRACE_MS window (a sleepy phone catches up) → treat it as a drop.
+   */
+  _tickWatchdog() {
+    const room = this.room;
+    if (!room || this._reconnecting || this._clockedOut || this._shuttingDown) { this._stallAt = 0; return; }
+    const quiet = Date.now() - (this._lastRxAt || Date.now());
+    if (quiet <= STALL_MS) { this._stallAt = 0; return; }
+    if (!this._stallAt) {
+      this._stallAt = Date.now();
+      // Nudge with a harmless 'move' (the arena has no 'time' handler, and an
+      // unregistered type would get us kicked).
+      try { if (this._socketOpen()) room.send('move', { x: this.localPos.x, y: this.localPos.y }); } catch (_) { /* closing */ }
+      return;
+    }
+    if (Date.now() - this._stallAt < STALL_GRACE_MS) return;
+    this._declareDrop(`no server traffic for ${Math.round(quiet / 1000)}s`);
+  }
+
+  /** We decided the link is dead (watchdog / offline event): close it and reconnect. */
+  _declareDrop(why) {
+    const room = this.room;
+    if (!room) return;
+    this._stallAt = 0;
+    const token = room.reconnectionToken || this._roomToken;
+    this.room = null;                      // its late onLeave is ignored (this.room !== room)
+    try { room.connection?.close?.(); } catch (_) { /* already closing */ }
+    console.warn('[MP] treating as a drop:', why);
+    this._flushPlayTime();
+    this._playClockAt = 0;
+    if (this._reconnectS > 0 && token && this.client) this._startReconnect(token);
+    else this._showConnLostCard();
+  }
+
+  _onRoomLeave(room, code) {
+    if (this._shuttingDown || this._clockedOut || this.room !== room) return;
+    this.room = null;
+    this._flushPlayTime();
+    this._playClockAt = 0;
+    const token = room.reconnectionToken || this._roomToken;
+    console.warn('[MP] left the room, code', code);
+    if (!NO_RECONNECT_CODES.has(code) && this._reconnectS > 0 && token && this.client) {
+      this._startReconnect(token);
+    } else {
+      this._showConnLostCard();
+    }
+  }
+
+  _startReconnect(token) {
+    this._reconnecting = true;
+    this._overlay.closeCard();
+    if (this._chatActive) this._closeChat(false);
+    this._stickDir = null; this._moveTarget = null;
+    if (this._attackTarget) { this._attackTarget = null; this._hideSelectionRing(); }
+    const deadline = Date.now() + this._reconnectS * 1000;
+    const title = () => `📶 Wi-Fi went to lunch — reconnecting… ${Math.max(0, Math.ceil((deadline - Date.now()) / 1000))}s`;
+    const veil = this._overlay.showVeil(title(), 'Mạng lag quá, đợi xíu…', () => this._leaveAndGoMenu());
+    this._reconnTick = setInterval(() => { if (!this._shuttingDown) veil.setTitle(title()); }, 250);
+    const droppedAt = Date.now();
+    let busy = false, gone = 0, expired = 0;
+    const attempt = () => {
+      if (this._shuttingDown || !this._reconnecting || busy) return;
+      if (Date.now() > deadline) { this._finishReconnect(null); return; }
+      busy = true;
+      let settled = false;
+      // Offline, a reconnect request just hangs — race it so the loop keeps going.
+      const hang = setTimeout(() => { if (!settled) { settled = true; busy = false; } }, RECONNECT_ATTEMPT_MS);
+      this.client.reconnect(token).then((room) => {
+        clearTimeout(hang); settled = true; busy = false;
+        // (may land after the race timed out — a success is still a success)
+        this._finishReconnect(room);
+      }, (e) => {
+        clearTimeout(hang);
+        if (!settled) { settled = true; busy = false; }
+        const msg = String(e?.message || e);
+        console.warn('[MP] reconnect attempt failed:', msg);
+        // Room disposed (4212): 3 in a row → it's gone.
+        gone = (e?.code === 4212 || /disposed|not found/i.test(msg)) ? gone + 1 : 0;
+        // Token "expired" (4214) is ALSO what the server says before it has noticed
+        // our dead socket (its ping timeout is ~6–9 s) — only believe it later on.
+        expired = (e?.code === 4214 || /expired|consumed/i.test(msg)) ? expired + 1 : 0;
+        if (gone >= 3 || (expired >= 3 && Date.now() - droppedAt > 12000)) {
+          this._finishReconnect(null, "Couldn't rejoin — your seat timed out.");
+        }
+      });
+    };
+    this._reconnFirst = setTimeout(attempt, 600); // let the server notice the drop first
+    this._reconnTimer = setInterval(attempt, 2000);
+  }
+
+  _endReconnectTimers() {
+    clearTimeout(this._reconnFirst);
+    clearInterval(this._reconnTimer);
+    clearInterval(this._reconnTick);
+    this._reconnecting = false;
+  }
+
+  _finishReconnect(room, why = '') {
+    if (!this._reconnecting || this._shuttingDown) {
+      // A late attempt landed after we gave up / left — don't leave a ghost seat
+      if (room) { try { room.leave(); } catch (_) { /* ignore */ } }
+      return;
+    }
+    this._endReconnectTimers();
+    this._overlay.hideVeil();
+    if (!room) { this._showConnLostCard(why); return; }
+    // Full resync: drop every view, then let the new room's state replay onAdd.
+    this._resetWorldViews();
+    this._adoptRoom(room);
+    this._overlay.toast("🔌 Back online — 'just restarting my router'", '#7ed957', 2600);
+  }
+
+  /** Destroy every server-driven view so a fresh state replay can't duplicate sprites. */
+  _resetWorldViews() {
+    this.remotePlayers.forEach((r) => r.container?.destroy());
+    this.remotePlayers.clear();
+    this.remoteBugs.forEach((r) => r.sprite?.destroy());
+    this.remoteBugs.clear();
+    this.remotePickups.forEach((r) => r.sprite?.destroy());
+    this.remotePickups.clear();
+    this.remoteClouds.forEach((r) => r.gfx?.destroy());
+    this.remoteClouds.clear();
+    this.remoteObstacles.forEach((r) => r.gfx?.destroy());
+    this.remoteObstacles.clear();
+    this._bossView?.remove();
+    this._crownSid = '';
+    this._moveTarget = null;
+    if (this._attackTarget) { this._attackTarget = null; this._hideSelectionRing(); }
+    this._hoverBugId = null;
+    this.cameras.main.stopFollow();
+    this._overlay.clearEvent();
+    this._resultsOverlay?.setVisible(false);
+    this._onLocalComboChange(0, 0);
+    this._localBadgeKey = null;
   }
 
   /** Floating "+XP" above the local player (world-space). */
@@ -3994,6 +4635,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     // the async room.leave() disconnect window become no-ops.
     this._shuttingDown = true;
     clearTimeout(this._sessionTimer);
+    this._endReconnectTimers();
     this._flushPlayTime();
     try { this.room?.leave(); } catch (_) { /* ignore */ }
     this.room = null;

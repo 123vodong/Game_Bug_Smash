@@ -40,7 +40,7 @@ const PET_R = 18;
 const isStruct = (e) => e.kind === 'tower' || e.kind === 'core';
 
 export class OfflineSim {
-  constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null }) {
+  constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null, hat = '' }) {
     this.localId = 'me';
     // Visibility filter on everything sent to the local player (blue).
     this.emit = (type, m) => {
@@ -70,6 +70,7 @@ export class OfflineSim {
     const me = this._addChamp('me', 'blue', CHAMPIONS[champ] ? champ : 'pixel', name || 'You', false);
     const sp = Array.isArray(spells) && validSpellPair(spells[0], spells[1]) ? spells : DEFAULT_SPELLS;
     me.spellD = sp[0]; me.spellF = sp[1];
+    me.hat = typeof hat === 'string' ? hat.slice(0, 16) : ''; // EP-11 cosmetic (ChampionView renders it)
     for (const s of STRUCTURES) {
       const hp = s.kind === 'core' ? R.CORE.hp : R.TOWER.hp[s.tier];
       this.state.structures.set(s.id, {
@@ -133,7 +134,7 @@ export class OfflineSim {
       dead: false, respawnAt: 0, kills: 0, deaths: 0, assists: 0, cs: 0, items: ['', '', '', '', '', ''],
       cdQ: 0, cdW: 0, cdE: 0, cdR: 0, locked: true, spellD: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[0],
       spellF: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[1], cdD: 0, cdF: 0, stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, shield: 0, buffs: '',
-      recallUntil: 0, action: 'idle', action_seq: 0, targetId: '',
+      recallUntil: 0, action: 'idle', action_seq: 0, targetId: '', hat: '',
       _order: null, _atkAt: 0, _role: role || def.lane, _buffs: {}, _shieldUntil: 0, _thinkAt: 0, _coffeeUntil: 0,
       _ghostUntil: 0, _spMsUntil: 0, _spMsPct: 0, _ignite: null,
     };
@@ -188,7 +189,12 @@ export class OfflineSim {
       }
     }
     for (const camp of CAMPS) this._spawnCamp(camp);
-    this._spawnEpic('golden'); this._spawnEpic('deadline');
+    // EP-21: epics spawn on the online schedule (firstSpawnMs) — the HUD timers count down like online.
+    for (const kind of ['golden', 'deadline']) {
+      const at = this.t + R.EPICS[kind].firstSpawnMs;
+      if (kind === 'golden') st.epicGoldenAt = at; else st.epicDeadlineAt = at;
+      this._timers.push([at, () => this._spawnEpic(kind)]);
+    }
     st.champions.forEach((c) => this._spawnPet(c));
     this._waveAt = this.t + 1500;
     this.emit('announce', { title: '⚔️ SHIP IT!', sub: 'Offline practice — bots fill every seat', color: '#ffd23f', big: true });

@@ -8,11 +8,13 @@
 // ROOM mode (phase 'room', no timer): two columns × 5 seats (humans by name, 👑 host, "(you)";
 //   empty = "🤖 bot will fill"), JOIN BLUE / JOIN RED → 'side' {team}, host-only START → 'startNow',
 //   LEAVE, room name + code with COPY.
-//   keys: ← / 1 blue · → / 2 red · ENTER start (host) · C copy code · ESC leave
+//   keys: ← / 1 blue · → / 2 red · ENTER start (host) · C copy code · I copy invite link · ESC leave
 // Phase 'select' (or later) → scene.start('TeamSelectScene', { room, name, champ, clockOffset, clockRtt,
 //   dropMsg, custom: true, roomName }) — same handoff conventions as TeamLobbyScene (catch-all
 //   message handler kept until TeamSelectScene registers its own; clock sample handed over).
 // room.leave() only on LEAVE / back / scene shutdown without handoff.
+// EP-11 (Experience Pass 1): join option `hat`; started with { joinCode } (invite deep link
+// `?room=<roomId>`, main.js) → joins that room right away; 🔗 INVITE copies `<origin>/?room=<id>`.
 // NOTE: we never send 'hello' here (answered once per client; TeamModeScene needs that 'welcome').
 import { TEAM_INFO, TEAM_SIZE, ROOM_NAME_MAX, ROOM_MAX_HUMANS } from '../../shared/moba/rules.js';
 import { SaveManager } from '../core/SaveManager.js';
@@ -81,6 +83,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._onKey = null;
     this._ignoreKeysUntil = 0;
     this._guestName = null;
+    this._naming = false;
   }
 
   create() {
@@ -93,12 +96,49 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._buildList();
     this._bindKeys();
     this._fetchRooms();
+    // EP-11 invite link: join the room straight away (once — the URL param is dropped so a reload
+    // or a later visit to this screen doesn't re-join a stale room).
+    const code = String(this._data.joinCode || '');
+    if (/^[A-Za-z0-9_-]{3,40}$/.test(code)) {
+      this._data.joinCode = '';
+      this._invited = code;
+      try {
+        const u = new URL(window.location.href);
+        if (u.searchParams.has('room')) { u.searchParams.delete('room'); window.history.replaceState(null, '', u.toString()); }
+      } catch (_) { /* no history API */ }
+      // Round 2: a friend without a saved name picks one first (else they'd land as Guest-xxxx).
+      this.time.delayedCall(200, () => { if (!this._shuttingDown) this._joinInvite(code); });
+    }
     this._refreshEvt = this.time.addEvent({
       delay: REFRESH_MS, loop: true,
       callback: () => { if (this._mode === 'list' && !this._busy && !this._modal) this._fetchRooms(); },
     });
     this.events.once('shutdown', () => this._cleanup());
     this.cameras.main.fadeIn(220, 0, 0, 0);
+  }
+
+  /** Invite join: ask for a name first when none is saved (WelcomePanel 'rename' card; CANCEL = guest). */
+  async _joinInvite(code) {
+    if (SaveManager.getPlayerName?.()) { this._connect('join', code); return; }
+    let Panel = null;
+    try { Panel = (await import('../ui/WelcomePanel.js')).WelcomePanel || null; } catch (_) { Panel = null; }
+    if (this._shuttingDown) return;
+    if (!Panel?.open) { this._connect('join', code); return; }
+    this._naming = true;
+    const go = (name) => {
+      if (this._shuttingDown || !this._naming) return;
+      this._naming = false;
+      this._ignoreKeysUntil = this.time.now + 200;
+      if (name) { this._data.name = name; this._name = this._playerName(); this._whoT?.setText(`👤 ${clipName(this._name, 16)}`); }
+      this._connect('join', code);
+    };
+    try {
+      Panel.open(this, { mode: 'rename', onDone: (name) => go(name), onClose: () => go('') });
+      this._toast('👋 You were invited! Pick a name, then you join the room', '#7ed957', 3200);
+    } catch (e) {
+      console.warn('[TeamCustom] name prompt failed:', e?.message);
+      go('');
+    }
   }
 
   _playerName() {
@@ -129,7 +169,7 @@ export default class TeamCustomScene extends Phaser.Scene {
       fontFamily: FONT_TITLE, fontSize: 34, color: '#ffffff', stroke: '#000000', strokeThickness: 6,
     }).setOrigin(0.5).setDepth(5);
     glow(this._title, '#00d9ff', 12);
-    this._subtitle = this.add.text(cx, 72, 'create a room, invite friends with the code, pick a side — the host starts any time', {
+    this._subtitle = this.add.text(cx, 72, 'create a room, invite friends with a 🔗 link or the code, pick a side — the host starts any time', {
       fontFamily: FONT_MONO, fontSize: 12, color: '#8fa3bf', padding: { y: 2 },
     }).setOrigin(0.5).setDepth(5);
     this._backBtn = makeButton(this, {
@@ -138,7 +178,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     });
     this._backBtn.root.setDepth(10);
     this.add.text(84, 68, 'ESC', { fontFamily: FONT_MONO, fontSize: 10, color: '#4f6380' }).setOrigin(0.5).setDepth(10);
-    this.add.text(this.W - 24, 30, `👤 ${clipName(this._name, 16)}`, {
+    this._whoT = this.add.text(this.W - 24, 30, `👤 ${clipName(this._name, 16)}`, {
       fontFamily: FONT_MONO, fontSize: 12, color: '#ffd23f', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(1, 0.5).setDepth(10);
     this._toastT = this.add.text(cx, 612, '', {
@@ -530,7 +570,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     if (typeof Colyseus === 'undefined') { this._toast('The Colyseus client did not load — check your connection', '#ff8a8a'); return; }
     const b = this._openBusy(kind === 'create' ? 'CREATING ROOM…' : 'JOINING ROOM…');
     b.sub.setText(kind === 'create' ? `"${arg}"` : `code ${arg}`);
-    const opts = { name: this._name };
+    const opts = { name: this._name, hat: SaveManager.getHat?.() || '' }; // EP-11 cosmetic hat
     if (this._data.champ) opts.champ = this._data.champ;
     try {
       const client = new Colyseus.Client(teamServerUrl());
@@ -546,7 +586,8 @@ export default class TeamCustomScene extends Phaser.Scene {
       const msg = String(e?.message || e || 'unknown error');
       console.warn('[TeamCustom] connect failed:', msg);
       let nice = msg;
-      if (/not found|invalid|no rooms/i.test(msg)) nice = kind === 'join' ? `No open room with code "${arg}"` : msg;
+      if (kind === 'join' && arg === this._invited) nice = 'That invite expired — the room is gone or the match already started';
+      else if (/not found|invalid|no rooms/i.test(msg)) nice = kind === 'join' ? `No open room with code "${arg}"` : msg;
       else if (/locked|full/i.test(msg)) nice = 'That room is full or the match already started';
       else if (/fetch|network|ECONN|offline|failed/i.test(msg)) nice = "Can't reach the server";
       this._toast(`⚠ ${nice}`, '#ff8a8a', 3400);
@@ -593,13 +634,16 @@ export default class TeamCustomScene extends Phaser.Scene {
       fontFamily: FONT_TITLE, fontSize: 30, color: '#ffffff', stroke: '#000000', strokeThickness: 6,
     }).setOrigin(0.5);
     glow(this._rmName, '#00d9ff', 12);
-    this._rmCode = this.add.text(cx - 30, 74, '', {
+    this._rmCode = this.add.text(cx - 90, 74, '', {
       fontFamily: FONT_MONO, fontSize: 15, color: '#cfe3f5', backgroundColor: '#0d1320', padding: { x: 10, y: 5 },
     }).setOrigin(0.5);
     this._copyBtn = makeButton(this, {
       x: 0, y: 74, w: 96, h: 32, label: '📋 COPY', color: NEON.purple, fontSize: 12, onClick: () => this._copyCode(),
     });
-    root.add([this._rmName, this._rmCode, this._copyBtn.root]);
+    this._inviteBtn = makeButton(this, {
+      x: 0, y: 74, w: 132, h: 32, label: '🔗 COPY INVITE', color: NEON.green, fontSize: 12, onClick: () => this._copyInvite(),
+    });
+    root.add([this._rmName, this._rmCode, this._copyBtn.root, this._inviteBtn.root]);
 
     this._cols = {};
     for (const team of ['blue', 'red']) {
@@ -662,7 +706,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._mode = 'list';
     if (this._roomRoot) { this._roomRoot.destroy(); this._roomRoot = null; }
     this._title.setText('CUSTOM ROOMS');
-    this._subtitle.setText('create a room, invite friends with the code, pick a side — the host starts any time');
+    this._subtitle.setText('create a room, invite friends with a 🔗 link or the code, pick a side — the host starts any time');
     this._listRoot.setVisible(true);
     setTreeInput(this._listRoot, true);
     this._ignoreKeysUntil = this.time.now + 150;
@@ -725,6 +769,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._rmName.setText(`🏠 ${clipName(s.roomName || 'Custom room', ROOM_NAME_MAX)}`);
     this._rmCode.setText(`code  ${this._room.roomId}`);
     this._copyBtn.root.x = this._rmCode.x + this._rmCode.width / 2 + 62;
+    this._inviteBtn.root.x = this._copyBtn.root.x + 48 + 12 + 66;
     for (const team of ['blue', 'red']) {
       const col = this._cols[team], list = s.sides[team], L = col.L;
       col.count.setText(`${list.length}/${PER_SIDE}`);
@@ -786,21 +831,44 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._renderRoom(true);
   }
 
+  async _clip(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch (_) { return false; }
+    }
+  }
+
   async _copyCode() {
     const code = this._room?.roomId;
     if (!code) return;
-    let ok = false;
-    try { await navigator.clipboard.writeText(code); ok = true; } catch (_) {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = code; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select();
-        ok = document.execCommand('copy');
-        ta.remove();
-      } catch (_) { ok = false; }
-    }
+    const ok = await this._clip(code);
     if (this._shuttingDown) return;
     this._toast(ok ? `📋 Code ${code} copied — send it to your friends` : `Code: ${code} (copy it by hand)`, ok ? '#7ed957' : '#ffd23f');
+  }
+
+  /** EP-11: a link that drops a friend straight into this room (main.js handles ?room=). */
+  inviteUrl() {
+    const code = this._room?.roomId;
+    if (!code) return '';
+    const loc = window.location;
+    const keep = new URLSearchParams(loc.search).get('server'); // custom server stays in the link
+    return `${loc.origin}${loc.pathname}?room=${encodeURIComponent(code)}${keep ? `&server=${encodeURIComponent(keep)}` : ''}`;
+  }
+
+  async _copyInvite() {
+    const url = this.inviteUrl();
+    if (!url) return;
+    const ok = await this._clip(url);
+    if (this._shuttingDown) return;
+    this._lastInvite = url;
+    this._toast(ok ? '🔗 Invite link copied — paste it in Zalo / Messenger' : `Invite: ${url}`, ok ? '#7ed957' : '#ffd23f', ok ? 2600 : 6000);
+    AudioManager.uiClick();
   }
 
   _handoff() {
@@ -825,7 +893,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     const kb = this.input.keyboard;
     if (!kb) return;
     this._onKey = (ev) => {
-      if (this._shuttingDown || this._leaving) return;
+      if (this._shuttingDown || this._leaving || this._naming) return;
       if (this.time.now < this._ignoreKeysUntil) return;
       const k = ev.key;
       if (this._modal) {
@@ -839,6 +907,7 @@ export default class TeamCustomScene extends Phaser.Scene {
         else if (k === 'ArrowRight' || k === '2') this._side('red');
         else if (k === 'Enter') this._startNow();
         else if (k === 'c' || k === 'C') this._copyCode();
+        else if (k === 'i' || k === 'I') this._copyInvite();
         else if (k === 'Escape') this._leaveRoom();
         return;
       }

@@ -34,7 +34,20 @@ Sources of truth in code:
 | PvP start roll | `aggression-score × 0.07` per think (~3/s), targets ≤ 400 px, own HP ≥ 60% |
 | Fairness | never start fights with human Lv1, or humans > 1 level below (unless crowned) · ≤ 2 bots per human · forgive a Lv≤2 human's first 2 hits in 6 s · no R ult or Q dash that would clip a bystander human |
 
-### World events (`server/data/events.js`)
+### Experience Pass 1 (2026-11-18) — reconnect, broken time, Rollback vote
+| Lever | Value | Where |
+|---|---|---|
+| Arena reconnect grace | 20 s | `server/game/rules.js` RECONNECT_GRACE_S |
+| Broken (defeat) time by growth level | 8 / 10 / 12 / 15 / 18 / 20 s (Intern → Super Senior), level at the moment you fall | `server/game/rules.js` BROKEN_MS_BY_LEVEL |
+| Away (in grace) | frozen; bots, bugs, clouds, boss ignore them; **humans can still hit them** | `ArenaRoom.onLeave` |
+| XP curve (EP-20) | Lv2 at **60** XP (was 150) · 600 · 1800 · 4500 · 10000 | `server/game/rules.js` LEVEL_XP_THRESHOLDS |
+| New-session boost (EP-20) | ×2 bug-kill XP for a human's first 3 min (reconnect keeps the start time; bots never) | `server/game/rules.js` NEW_SESSION_XP_MUL / _MS |
+| Warm bot start XP (EP-20) | 0–240, squared-random (was 0–450) | `server/game/rules.js` BOT_WARM_XP_MAX |
+| Boss KO during truce (EP-20) | broken as usual, but no level/XP/score reset and no bug spew | `ArenaRoom._enterBroken` |
+| Team reconnect grace | 60 s (a bot holds the seat meanwhile) | `server/game/moba/tuning.js` TEAM_RECONNECT_GRACE_S |
+| Rollback (concede) vote | from 12:00 · open 20 s · 3 min cooldown · 4 of 5 yes and no human "no" | `shared/moba/rules.js` ROLLBACK_* |
+
+## World events (`server/data/events.js`)
 | Event | Duration | Modifiers |
 |---|---|---|
 | 🚨 Prod Down | 24 s | spawn every 150 ms, max 130 bugs, ×1.5 XP, +16 bugs around humans |

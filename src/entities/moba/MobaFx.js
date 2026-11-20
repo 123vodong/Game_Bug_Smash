@@ -11,7 +11,7 @@
 // Everything high-frequency (particles, numbers, projectile parts) comes from
 // fixed-size pools — nothing grows without bound. Rare effects (telegraphs,
 // skull popups) are created and destroyed.
-import { D, FONT, clamp, LOOKS } from './mobaGfx.js';
+import { D, FONT, clamp, LOOKS, shakeCam, calmPrefs } from './mobaGfx.js';
 
 const MAX_PARTS = 260, MAX_PARTS_LOW = 110;
 const MAX_NUMS = 44, MAX_NUMS_LOW = 22;
@@ -95,7 +95,7 @@ export class MobaFx {
   // ───────────────────────── numbers ─────────────────────────
   /** Floating text (damage, heal, gold). Culled when off-screen. */
   number(x, y, str, kind = 'dealt') {
-    if (!this.onScreen(x, y, 40)) return;
+    if (this.quiet || !this.onScreen(x, y, 40)) return;
     const st = NUM_STYLE[kind] || NUM_STYLE.dealt;
     if (this.nums.length >= this._maxNums) {
       const old = this.nums.shift();
@@ -115,6 +115,13 @@ export class MobaFx {
     const jx = (Math.random() - 0.5) * 28;
     txt.setVisible(true).setDepth(D.numbers).setPosition(x + jx, y).setAlpha(1).setScale(0.5);
     this.nums.push({ txt, x: x + jx, y, t: 0, life: st.life, rise: st.rise });
+  }
+
+  /** Round 2: the end screen is up — drop floating numbers and stop new ones. */
+  clearNumbers() {
+    this.quiet = true;
+    for (const n of this.nums) { n.txt.setVisible(false); this.numPool.push(n.txt); }
+    this.nums.length = 0;
   }
 
   // ───────────────────────── projectiles ─────────────────────────
@@ -331,9 +338,10 @@ export class MobaFx {
   explosion(x, y, big) {
     if (!this.onScreen(x, y, 300)) return;
     const R = big ? 240 : 150;
-    this.part(x, y, { tint: 0xffe2a0, add: true, s0: R, s1: R * 2.4, a0: 1, life: 0.35 });
+    const calm = !calmPrefs().flashes; // EP-10: settings.flashes off → no white-out burst
+    this.part(x, y, { tint: 0xffe2a0, add: true, s0: R, s1: R * 2.4, a0: calm ? 0.3 : 1, life: 0.35 });
     for (let i = 0; i < 3; i++) {
-      this.part(x, y, { tex: 'moba-ring', tint: i ? 0xff9a3c : 0xffffff, add: true, s0: 40, s1: R * (2 + i * 0.6), a0: 1, life: 0.45 + i * 0.12, delay: i * 0.06 });
+      this.part(x, y, { tex: 'moba-ring', tint: i || calm ? 0xff9a3c : 0xffffff, add: true, s0: 40, s1: R * (2 + i * 0.6), a0: 1, life: 0.45 + i * 0.12, delay: i * 0.06 });
     }
     for (let i = 0; i < (big ? 30 : 20); i++) {
       const a = Math.random() * Math.PI * 2, v = 200 + Math.random() * 380;
@@ -427,7 +435,7 @@ export class MobaFx {
     if (!m.wall) return;
     if (vis) {
       const ix = x1, iy = y1 - 40;
-      this.part(ix, iy, { tint: 0xffffff, add: true, s0: 50, s1: 150, a0: 0.95, life: 0.22, delay: ms });
+      if (calmPrefs().flashes) this.part(ix, iy, { tint: 0xffffff, add: true, s0: 50, s1: 150, a0: 0.95, life: 0.22, delay: ms });
       this.part(ix, iy, { tex: 'moba-ring', tint: 0xffd23f, add: true, s0: 30, s1: 170, a0: 1, life: 0.35, delay: ms });
       for (let i = 0; i < 10; i++) {
         const a = Math.random() * Math.PI * 2, v = 160 + Math.random() * 200;
@@ -445,7 +453,7 @@ export class MobaFx {
       }).setOrigin(0.5).setDepth(D.numbers).setScale(0.4).setAngle((Math.random() - 0.5) * 24);
       s.tweens.add({ targets: t, scale: 1, duration: 140, ease: 'Back.easeOut' });
       s.tweens.add({ targets: t, y: t.y - 50, alpha: 0, delay: 520, duration: 420, onComplete: () => t.destroy() });
-      if (mine) s.cameras.main.shake(180, 0.007);
+      if (mine) shakeCam(s, 180, 0.007);
     });
   }
 

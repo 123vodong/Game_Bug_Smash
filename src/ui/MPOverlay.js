@@ -12,6 +12,14 @@ const FEED_LINE_H = 17;
 const FEED_MAX = 6;
 const FEED_TTL_MS = 9000;
 
+/** setScrollFactor(0) on a container AND every descendant — Phaser hit-tests
+ *  container children with their own scroll factor, so a screen-pinned card
+ *  whose children keep factor 1 stops taking clicks once the camera scrolls. */
+function pinToScreen(obj) {
+  obj.setScrollFactor?.(0);
+  if (obj.list) for (const ch of obj.list) pinToScreen(ch);
+}
+
 export class MPOverlay {
   constructor(scene) {
     this.scene = scene;
@@ -44,6 +52,198 @@ export class MPOverlay {
       fontFamily: 'Consolas, monospace', fontSize: 13, color: '#e8f4ff',
       backgroundColor: 'rgba(5,12,24,0.82)', padding: { x: 12, y: 6 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(57).setAlpha(0);
+
+    this._feedTop = FEED_Y;
+    this._card = null;          // the open modal card (depth 100), if any
+    this._veil = null;          // reconnect veil
+    this._missionPill = null;   // collapsible daily-mission tracker
+  }
+
+  /** True while a modal card or the reconnect veil is up (world input is blocked). */
+  get modalOpen() { return !!(this._card || this._veil || this.extModal); }
+
+  // ───────────────────────── modal cards ─────────────────────────
+  /**
+   * Centered modal card. opts: { title, titleColor?, sub?, body?, bodyColor?, foot?,
+   * buttons: [{ label, color?, onClick }], w? }. Replaces any open card.
+   * Returns { c, setBody(text), setFoot(text) }.
+   */
+  card(opts = {}) {
+    this.closeCard();
+    const s = this.scene, W = this.W, H = this.H;
+    const c = s.add.container(0, 0).setScrollFactor(0).setDepth(100);
+    const dim = s.add.rectangle(0, 0, W, H, 0x02040a, 0.72).setOrigin(0).setInteractive();
+    dim._uiBlock = true;
+    const pw = Math.min(opts.w || 560, W - 32);
+    const title = s.add.text(W / 2, 0, opts.title || '', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 26, color: opts.titleColor || '#ffd23f',
+      stroke: '#000', strokeThickness: 5, align: 'center', wordWrap: { width: pw - 40 },
+    }).setOrigin(0.5, 0);
+    const sub = s.add.text(W / 2, 0, opts.sub || '', {
+      fontFamily: 'Consolas, monospace', fontSize: 14, color: '#c8d3e6', align: 'center',
+      wordWrap: { width: pw - 48 },
+    }).setOrigin(0.5, 0);
+    const body = s.add.text(W / 2, 0, opts.body || '', {
+      fontFamily: 'Consolas, monospace', fontSize: 15, color: opts.bodyColor || '#ffffff',
+      align: opts.bodyAlign || 'center', lineSpacing: 5, wordWrap: { width: pw - 48 },
+    }).setOrigin(0.5, 0);
+    const foot = s.add.text(W / 2, 0, opts.foot || '', {
+      fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff', align: 'center',
+      wordWrap: { width: pw - 48 },
+    }).setOrigin(0.5, 0);
+    // buttons: one row [b, b] or several rows [[b, b], [b]]
+    const rawRows = opts.buttons || [];
+    const rowSpecs = rawRows.length && Array.isArray(rawRows[0]) ? rawRows : (rawRows.length ? [rawRows] : []);
+    const rows = rowSpecs.map((row) => {
+      const bw = Math.min(200, (pw - 40 - (row.length - 1) * 10) / Math.max(1, row.length));
+      return { bw, items: row.map((b) => this._cardButton(b, bw)) };
+    });
+    const btns = rows.flatMap((r) => r.items);
+    const panel = s.add.graphics();
+    c.add([dim, panel, title, sub, body, foot, ...btns.map((b) => b.c)]);
+
+    const layout = () => {
+      const gap = 12;
+      const btnRows = rows.length;
+      const hTitle = title.height, hSub = sub.text ? sub.height + gap : 0;
+      const hBody = body.text ? body.height + gap : 0, hFoot = foot.text ? foot.height + gap : 0;
+      const ph = Math.min(H - 16, 28 + hTitle + gap + hSub + hBody + hFoot + btnRows * 56 + 14);
+      const top = Math.max(8, H / 2 - ph / 2);
+      panel.clear();
+      panel.fillStyle(0x0a0e16, 0.98).fillRoundedRect(W / 2 - pw / 2, top, pw, ph, 14);
+      panel.lineStyle(3, Phaser.Display.Color.HexStringToColor(opts.titleColor || '#39c2ff').color, 0.9)
+        .strokeRoundedRect(W / 2 - pw / 2, top, pw, ph, 14);
+      let y = top + 22;
+      title.y = y; y += hTitle + gap;
+      sub.y = y; y += hSub;
+      body.y = y; y += hBody;
+      foot.y = y; y += hFoot;
+      rows.forEach((row, ri) => {
+        const by = top + ph - 36 - (rows.length - 1 - ri) * 56;
+        const n = row.items.length;
+        const total = n * row.bw + (n - 1) * 10;
+        row.items.forEach((b, i) => b.c.setPosition(W / 2 - total / 2 + row.bw / 2 + i * (row.bw + 10), by));
+      });
+    };
+    layout();
+    pinToScreen(c);
+    c.setAlpha(0);
+    s.tweens.add({ targets: c, alpha: 1, duration: 140 });
+    this._card = {
+      c,
+      setBody: (t) => { if (body.scene && body.text !== t) { body.setText(t); layout(); } },
+      setFoot: (t) => { if (foot.scene && foot.text !== t) { foot.setText(t); layout(); } },
+      setTitle: (t) => { if (title.scene && title.text !== t) { title.setText(t); layout(); } },
+      opts,
+    };
+    return this._card;
+  }
+
+  _cardButton(b, w = 180) {
+    const s = this.scene;
+    const color = b.color ?? 0x2d6cdf;
+    const c = s.add.container(0, 0);
+    const bg = s.add.rectangle(0, 0, w, 44, color, 1).setStrokeStyle(2, 0x000000, 0.9)
+      .setInteractive({ useHandCursor: true });
+    bg._uiBlock = true;
+    const txt = s.add.text(0, 0, b.label, {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffffff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    if (txt.width > w - 12) txt.setFontSize(Math.max(10, Math.floor(15 * (w - 12) / txt.width)));
+    c.add([bg, txt]);
+    bg.on('pointerover', () => c.setScale(1.05));
+    bg.on('pointerout', () => c.setScale(1));
+    // pointerup (not down) so the tap that opened a card can't also press its button
+    bg.on('pointerup', () => { c.setScale(1); b.onClick?.(); });
+    return { c };
+  }
+
+  closeCard() {
+    if (!this._card) return;
+    const c = this._card.c;
+    this._card = null;
+    c.destroy();
+  }
+
+  get cardOpen() { return !!this._card; }
+
+  // ───────────────────────── reconnect veil ─────────────────────────
+  /** Dimmed "reconnecting" veil with a countdown. secsLeft updates via the return value. */
+  showVeil(title, sub, onMenu) {
+    this.hideVeil();
+    const s = this.scene, W = this.W, H = this.H;
+    const c = s.add.container(0, 0).setScrollFactor(0).setDepth(99);
+    const dim = s.add.rectangle(0, 0, W, H, 0x02040a, 0.6).setOrigin(0).setInteractive();
+    dim._uiBlock = true;
+    const t = s.add.text(W / 2, H / 2 - 30, title, {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 26, color: '#7ec8ff',
+      stroke: '#000', strokeThickness: 6, align: 'center', wordWrap: { width: W - 40 },
+    }).setOrigin(0.5);
+    const st = s.add.text(W / 2, H / 2 + 14, sub || '', {
+      fontFamily: 'Consolas, monospace', fontSize: 14, color: '#c8d3e6', align: 'center',
+    }).setOrigin(0.5);
+    c.add([dim, t, st]);
+    if (onMenu) {
+      const b = this._cardButton({ label: 'MENU', color: 0x2d6cdf, onClick: onMenu }, 140);
+      b.c.setPosition(W / 2, H / 2 + 70);
+      c.add(b.c);
+    }
+    s.tweens.add({ targets: t, alpha: { from: 1, to: 0.55 }, duration: 600, yoyo: true, repeat: -1 });
+    pinToScreen(c);
+    this._veil = { c, t, st };
+    return {
+      setTitle: (txt) => { if (t.scene && t.text !== txt) t.setText(txt); },
+    };
+  }
+
+  hideVeil() {
+    if (!this._veil) return;
+    this._veil.c.destroy();
+    this._veil = null;
+  }
+
+  // ───────────────────────── mission tracker pill ─────────────────────────
+  /** rows: [{ icon, text, cur, goal, done, mine }] — `mine` = trackable in this mode. */
+  setMissions(rows) {
+    const s = this.scene;
+    if (!this._missionPill) {
+      const t = s.add.text(FEED_X, FEED_Y - 24, '', {
+        fontFamily: 'Consolas, monospace', fontSize: 12, color: '#e8f4ff',
+        backgroundColor: 'rgba(5,12,24,0.78)', padding: { x: 8, y: 4 }, lineSpacing: 3,
+      }).setScrollFactor(0).setDepth(55).setInteractive({ useHandCursor: true });
+      t._uiBlock = true;
+      t.on('pointerup', () => this.toggleMissions());
+      this._missionPill = { t, open: false, rows: [] };
+    }
+    this._missionPill.rows = rows || [];
+    this._renderMissions();
+  }
+
+  toggleMissions() {
+    const p = this._missionPill;
+    if (!p) return;
+    p.open = !p.open;
+    this._renderMissions();
+  }
+
+  _renderMissions() {
+    const p = this._missionPill;
+    if (!p) return;
+    const rows = p.rows;
+    const done = rows.filter((r) => r.done).length;
+    let str = `📋 MISSIONS ${done}/${rows.length} ${p.open ? '▴' : '▾'}`;
+    if (p.open) {
+      for (const r of rows) {
+        const prog = r.done ? '✓' : `${Math.min(r.cur, r.goal)}/${r.goal}`;
+        const dim = r.mine ? '' : ' (other mode)';
+        str += `\n${r.done ? '✅' : (r.icon || '▫')} ${r.text} · ${prog}${dim}`;
+      }
+    }
+    if (p.t.text !== str) p.t.setText(str);
+    p.t.setColor(done === rows.length && rows.length ? '#7ed957' : '#e8f4ff');
+    // Push the kill feed below the (expanded) pill
+    this._feedTop = Math.max(FEED_Y, p.t.y + p.t.height + 6);
+    this._layoutFeed();
   }
 
   // ───────────────────────── kill feed ─────────────────────────
@@ -65,7 +265,7 @@ export class MPOverlay {
   }
 
   _layoutFeed() {
-    this._feed.forEach((t, i) => { t.y = FEED_Y + i * FEED_LINE_H; });
+    this._feed.forEach((t, i) => { t.y = (this._feedTop || FEED_Y) + i * FEED_LINE_H; });
   }
 
   // ───────────────────────── center banners ─────────────────────────

@@ -6,6 +6,8 @@
 //   node sim.mjs 90 golden_bug@5 deadline_boss@30    # force events (dev server only)
 //   node sim.mjs 40 deadline_boss@8 end@14           # force the boss to time out (fail path)
 // Env:  SERVER=ws://localhost:2567   PLAY=0 (stand still instead of auto-hunting)
+//       PLAY=lazy (half-speed walk, swings every 600 ms — an idle-ish new hire; EP-20 catch-up)
+// Also logs: own promotions (t → Lv), broken time (synced brokenUntil vs observed), bot lineup at join.
 // Event ids: prod_down coffee_break code_freeze friday_deploy hackathon golden_bug deadline_boss
 // Forcing events needs the server's opt-in debug hooks:  BUG_SMASH_DEBUG=1 node index.js
 // (PowerShell: $env:BUG_SMASH_DEBUG=1; node index.js). Without it, event@sec is ignored.
@@ -41,12 +43,18 @@ room.send('hello');
 // Predicts its own position like the real client (state only patches at 12.5 Hz —
 // stepping from the synced position would crawl at ~150 px/s instead of 240).
 const PLAY = process.env.PLAY !== '0';
+const LAZY = process.env.PLAY === 'lazy';
+let lastLv = 1, brokenAt = 0, lineupDone = false;
 let ang = 0, lastSmash = 0, pos = null;
 const mover = setInterval(() => {
   const st = room.state;
   const me = st.players.get(room.sessionId);
   if (!me) return;
   if (!pos || Math.hypot(me.x - pos.x, me.y - pos.y) > 90) pos = { x: me.x, y: me.y }; // adopt server corrections
+  if (me.level > lastLv) console.log(`${ts()} PROMO    L${lastLv} → L${me.level} (xp ${me.xp})`);
+  lastLv = me.level;
+  if (me.broken && !brokenAt) { brokenAt = Date.now(); console.log(`${ts()} BROKEN   brokenUntil in ${Math.round(me.brokenUntil - Date.now())} ms`); }
+  if (!me.broken && brokenAt) { console.log(`${ts()} REPAIRED after ${Date.now() - brokenAt} ms`); brokenAt = 0; }
   if (!PLAY || me.broken) {
     ang += 0.05;
     pos.x += Math.cos(ang) * 6; pos.y += Math.sin(ang) * 6;
@@ -65,12 +73,12 @@ const mover = setInterval(() => {
   }
   if (tx == null) return;
   const dx = tx - pos.x, dy = ty - pos.y, d = Math.hypot(dx, dy) || 1;
-  const step = 240 * 0.05;
+  const step = (LAZY ? 120 : 240) * 0.05;
   if (d > 30) {
     pos.x += (dx / d) * step; pos.y += (dy / d) * step;
     room.send('move', { x: pos.x, y: pos.y });
   }
-  if (d < reach && Date.now() - lastSmash > 230) {
+  if (d < reach && Date.now() - lastSmash > (LAZY ? 600 : 230)) {
     lastSmash = Date.now();
     room.send('action', { kind: 'smash' });
     room.send('smash', { ...msg, kind: 'smash' });
@@ -85,6 +93,11 @@ const sampler = setInterval(() => {
     s.done = true;
     if (s.id === 'end') { room.send('debug', { cmd: 'endEvent' }); console.log(`${ts()} >>> debug endEvent`); }
     else { room.send('debug', { cmd: 'event', id: s.id }); console.log(`${ts()} >>> debug start ${s.id}`); }
+  }
+  if (!lineupDone && st.players.size > 1) {
+    lineupDone = true;
+    const l = []; st.players.forEach((p) => { if (p.isBot) l.push(`${p.name.slice(0, 12)}:L${p.level}/${p.score}`); });
+    console.log(`${ts()} LINEUP   bots ${l.join('  ')}`);
   }
   if (sec % 5 !== 0) return;
   let humans = 0, bots = 0, broken = 0; const lv = [];

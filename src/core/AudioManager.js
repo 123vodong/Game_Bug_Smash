@@ -2,17 +2,35 @@
 // All sounds are generated procedurally — no external audio assets required.
 // AudioContext is created lazily and resumed on first user gesture
 // (browsers suspend it until then).
+//
+// Volume + mute come from the save (settings.volume, `muted`) at load, so every scene
+// starts with the player's choice; SettingsPanel / the M key update them live.
+import { SaveManager } from './SaveManager.js';
 
 let ctx = null;
 let masterGain = null;
 let muted = false;
+let volume = 0.8;   // master gain 0..1 (settings.volume)
+try { muted = SaveManager.isMuted(); volume = SaveManager.getSettings().volume; } catch {}
+
+function applyGain() {
+  if (masterGain) masterGain.gain.value = muted ? 0 : volume;
+}
+// Per-sound cooldowns so a 10-champion team fight doesn't turn into white noise.
+const lastAt = Object.create(null);
+function throttled(key, ms) {
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  if (now - (lastAt[key] || -1e9) < ms) return true;
+  lastAt[key] = now;
+  return false;
+}
 
 function getCtx() {
   if (!ctx) {
     try {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       masterGain = ctx.createGain();
-      masterGain.gain.value = muted ? 0 : 0.8;
+      masterGain.gain.value = muted ? 0 : volume;
       masterGain.connect(ctx.destination);
     } catch { return null; }
   }
@@ -24,7 +42,7 @@ function getCtx() {
 
 // ----------------------------------------------------------------- primitives
 function tone(freq, durMs, type = 'sine', gain = 0.06, attackMs = 4) {
-  const c = getCtx(); if (!c || muted) return;
+  const c = getCtx(); if (!c || muted || volume <= 0) return;
   const t0 = c.currentTime;
   const osc = c.createOscillator();
   const g = c.createGain();
@@ -40,7 +58,7 @@ function tone(freq, durMs, type = 'sine', gain = 0.06, attackMs = 4) {
 }
 
 function sweep(fStart, fEnd, durMs, type = 'square', gain = 0.06) {
-  const c = getCtx(); if (!c || muted) return;
+  const c = getCtx(); if (!c || muted || volume <= 0) return;
   const t0 = c.currentTime;
   const osc = c.createOscillator();
   const g = c.createGain();
@@ -56,7 +74,7 @@ function sweep(fStart, fEnd, durMs, type = 'square', gain = 0.06) {
 }
 
 function noise(durMs, gain = 0.04, filterFreq = 1200) {
-  const c = getCtx(); if (!c || muted) return;
+  const c = getCtx(); if (!c || muted || volume <= 0) return;
   const bufSize = Math.max(1, Math.floor(c.sampleRate * (durMs / 1000)));
   const buf = c.createBuffer(1, bufSize, c.sampleRate);
   const d = buf.getChannelData(0);
@@ -75,12 +93,25 @@ function later(ms, fn) { setTimeout(fn, ms); }
 // ----------------------------------------------------------------- public API
 export const AudioManager = {
   // ----- volume / mute -----
+  // (These don't write the save — callers persist: SaveManager.setMuted / setSettings.)
   isMuted() { return muted; },
   setMuted(m) {
     muted = !!m;
-    if (masterGain) masterGain.gain.value = muted ? 0 : 0.8;
+    applyGain();
   },
   toggleMute() { this.setMuted(!muted); return muted; },
+  getVolume() { return volume; },
+  /** Master volume 0..1 (settings.volume). Independent of mute. */
+  setVolume(v) {
+    const n = Number(v);
+    volume = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : volume;
+    applyGain();
+  },
+  /** Re-read mute + volume from the save (e.g. after another tab/scene changed them). */
+  applySaved() {
+    try { muted = SaveManager.isMuted(); volume = SaveManager.getSettings().volume; } catch {}
+    applyGain();
+  },
 
   // Call from a click/keydown handler once to wake up the AudioContext.
   prime() { getCtx(); },
@@ -178,4 +209,58 @@ export const AudioManager = {
   },
   uiClick() { tone(880, 28, 'square', 0.03); },
   uiHover() { tone(1100, 18, 'sine', 0.018); },
+  /** Settings slider preview — a short chime at the new volume. */
+  volumePreview() { if (!throttled('volprev', 120)) tone(660, 90, 'sine', 0.06); },
+
+  // ----- generic impact (wall stun, smite, anything that "connects") -----
+  hit() {
+    if (throttled('hit', 45)) return;
+    noise(60, 0.05, 1100);
+    tone(150, 70, 'square', 0.035);
+  },
+
+  // ----- Team Mode (Office Siege) hooks -----
+  /** Your champion's basic attack lands/fires. ranged = projectile "pew", melee = thud. */
+  teamAttack(ranged = false) {
+    if (throttled('tatk', 90)) return;
+    if (ranged) sweep(1300, 700, 70, 'triangle', 0.028);
+    else { noise(45, 0.035, 800); tone(170, 45, 'square', 0.022); }
+  },
+  /** Skill cast: slot 'q'|'w'|'e'|'r' (or 0..3). R gets a bigger "reply-all" whoosh. */
+  teamCast(slot) {
+    const k = typeof slot === 'number' ? 'qwer'[slot] || 'q' : String(slot || 'q').toLowerCase();
+    if (throttled('tcast' + k, 120)) return;
+    if (k === 'r') {
+      sweep(220, 880, 260, 'sawtooth', 0.04);
+      later(120, () => tone(1175, 200, 'triangle', 0.05));
+      noise(220, 0.03, 2400);
+      return;
+    }
+    const base = { q: 660, w: 523, e: 784 }[k] || 660;
+    sweep(base * 0.7, base * 1.35, 110, 'triangle', 0.045);
+    later(40, () => noise(50, 0.02, 3000));
+  },
+  /** A champion died. mine = YOUR champion (sad trombone); else a small "kill" sting. */
+  teamDeath(mine = false) {
+    if (mine) {
+      if (throttled('tdeathme', 600)) return;
+      [392, 370, 349].forEach((f, i) => later(i * 170, () => tone(f, 190, 'sawtooth', 0.045)));
+      later(520, () => sweep(330, 110, 520, 'sawtooth', 0.05));
+    } else {
+      if (throttled('tdeath', 150)) return;
+      sweep(700, 260, 160, 'square', 0.04);
+      later(90, () => tone(988, 120, 'sine', 0.045));
+    }
+  },
+  /** A tower fell. ours = we LOST one (low rumble); else we took one (fanfare + crunch). */
+  towerDown(ours = false) {
+    if (throttled('tower', 400)) return;
+    noise(380, 0.07, 500);
+    if (ours) {
+      tone(98, 420, 'square', 0.05);
+      later(220, () => tone(82, 520, 'square', 0.045));
+    } else {
+      [523, 659, 784].forEach((f, i) => later(120 + i * 80, () => tone(f, 170, 'triangle', 0.06)));
+    }
+  },
 };

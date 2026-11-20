@@ -4,6 +4,8 @@
 // Usage:  node team_ff.mjs [matches=1] [maxMinutes=45] [--seed=N] [--human=afk|auto] [--quiet] [--feed]
 //   --human=afk   one human joins blue and idles in the fountain (4v5 + AFK)
 //   --human=auto  one human joins and a bot brain drives it (autopilot)
+//   --human=lane  EP-05 newcomer check: one PASSIVE human stands in front of its mid outer tower (idle →
+//                 only auto-attacks what walks into range, never chases) — deaths in the first 5:00 reported
 //   --feed        print every feed/announce line
 //   --champ=ID    champion for the harness human (with --human)
 //   --spells=D,F  summoner spells for the harness human (with --human), e.g. ghost,ignite
@@ -56,6 +58,7 @@ console.error = (...a) => { totals.exceptions++; if (excLog.length < 5) excLog.p
 const { TEAM_INFO } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/rules.js')).href);
 const { SPELL_IDS, validSpellPair } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/spells.js')).href);
 
+const NL = String.fromCharCode(10);
 const fmt = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
 function makeRoom() {
@@ -170,6 +173,78 @@ const tickSamples = [];
   }
   console.log(`v3 draft self-test (20 trials): ${draftAgg.problems ? 'FAIL' : 'ok'}`);
 }
+// EP-19 draft self-test: bots draft ONE champion per role per team (by the champion's natural lane),
+// lock inside SELECT_BOT_PICK_MS, and loading starts ≤ SELECT_ALL_LOCKED_MS after the last lock. A human
+// who locks a lane a bot already locked keeps the pick — that bot re-roles + re-picks.
+{
+  const { SELECT_BOT_PICK_MS, SELECT_ALL_LOCKED_MS } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/rules.js')).href);
+  const { ROLE_ORDER } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/champions.js')).href);
+  let fails = 0;
+  const log = [];
+  const lanesOk = (room, team) => { const l = [...room.slots.values()].filter((x) => x.team === team).map((x) => CHAMPIONS[x.s.champ]?.lane); return ROLE_ORDER.every((r) => l.filter((y) => y === r).length === 1); };
+  for (let trial = 0; trial < 40; trial++) {
+    Math.random = mulberry32(seed * 11 + trial);
+    const { room } = makeRoom();
+    const H = { sessionId: 'hX', userData: {}, send: () => {} };
+    const withHuman = trial % 2 === 0;
+    if (withHuman) room.onJoin(H, { name: 'X' }); // no hover: picks late, into a lane a bot already locked
+    const t0 = Date.now();
+    room._startSelect();
+    let lastLockAt = 0, loadAt = 0, humanPick = '';
+    for (let i = 0; i < 1000 && room.state.phase === 'select'; i++) {
+      fake += 50; room._tick(50);
+      const seats = [...room.slots.values()];
+      if (!lastLockAt && seats.filter((x) => x.isBot).every((x) => x.s.locked)) lastLockAt = Date.now();
+      if (withHuman && lastLockAt && !humanPick) {
+        const team = room.slots.get('hX').team;
+        const taken = seats.find((x) => x.team === team && x.isBot && CHAMPIONS[x.s.champ]?.lane === 'mid');
+        humanPick = ['cleaner', 'model', 'pixel'].find((c) => room._freeForTeam(team, c, 'hX')) || '';
+        room.slots.get('hX').lastPickAt = 0;
+        room._doPick('hX', { champ: humanPick }); room._doLock('hX');
+        if (!taken) log.push(`trial ${trial}: (no mid bot to collide with)`);
+      }
+    }
+    if (room.state.phase === 'loading') loadAt = Date.now();
+    const problems = [];
+    for (const team of ['blue', 'red']) if (!lanesOk(room, team)) problems.push(`${team} lanes ${[...room.slots.values()].filter((x) => x.team === team).map((x) => `${x.s.champ}(${CHAMPIONS[x.s.champ]?.lane})`).join(',')}`);
+    if (!lastLockAt || lastLockAt - t0 > SELECT_BOT_PICK_MS[1] + 100) problems.push(`bots locked after ${lastLockAt - t0} ms`);
+    const humanLockAt = lastLockAt; // the harness human locks on the same tick as the last bot
+    if (!loadAt || loadAt - Math.max(lastLockAt, humanLockAt) > SELECT_ALL_LOCKED_MS + 100) problems.push(`loading ${loadAt - lastLockAt} ms after the last lock`);
+    if (withHuman && room.slots.get('hX').s.champ !== humanPick) problems.push(`human pick ${humanPick} → ${room.slots.get('hX').s.champ}`);
+    if (problems.length) { fails++; if (log.length < 6) log.push(`trial ${trial}: ${problems.join(' · ')}`); }
+  }
+  draftAgg.problems += fails;
+  console.log(`EP-19 draft self-test (40 trials, one champion per role per team · bots lock ≤ ${SELECT_BOT_PICK_MS[1] / 1000}s · loading ≤ ${SELECT_ALL_LOCKED_MS / 1000}s after): ${fails ? 'FAIL' : 'ok'}${log.length ? `${NL}  ` + log.join(`${NL}  `) : ''}`);
+}
+// EP-19 r2 queue self-test (quick play): a lone human → select LOBBY_SOLO_MS after joining and playing
+// ≤ 15 s after the click (locking right away); a 2nd human 1 s later → LOBBY_MS from the FIRST join,
+// never shorter than what was already shown.
+{
+  const { LOBBY_MS, LOBBY_SOLO_MS } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/rules.js')).href);
+  const probs = [];
+  const clickToPlay = [];
+  for (let trial = 0; trial < 10; trial++) {
+    Math.random = mulberry32(seed * 17 + trial);
+    const { room } = makeRoom();
+    const t0 = Date.now();
+    room.onJoin({ sessionId: 'q1', userData: {}, send: () => {} }, { name: 'Q1', champ: 'tester', autoLock: true });
+    if (room.state.lobbyEndsAt !== t0 + LOBBY_SOLO_MS) probs.push(`solo lobbyEndsAt ${room.state.lobbyEndsAt - t0}`);
+    let selAt = 0;
+    for (let i = 0; i < 1000 && room.state.phase !== 'playing'; i++) { fake += 50; room._tick(50); if (!selAt && room.state.phase === 'select') selAt = Date.now(); }
+    clickToPlay.push(Date.now() - t0);
+    if (selAt - t0 > LOBBY_SOLO_MS + 100) probs.push(`solo select after ${selAt - t0} ms`);
+    if (Date.now() - t0 > 15000) probs.push(`solo click→playing ${Date.now() - t0} ms`);
+    const { room: r2 } = makeRoom();
+    const u0 = Date.now();
+    r2.onJoin({ sessionId: 'a', userData: {}, send: () => {} }, { name: 'A' });
+    fake += 1000; r2._tick(50);
+    const shown = r2.state.lobbyEndsAt;
+    r2.onJoin({ sessionId: 'b', userData: {}, send: () => {} }, { name: 'B' });
+    if (r2.state.lobbyEndsAt !== Math.max(shown, u0 + LOBBY_MS)) probs.push(`duo lobbyEndsAt ${r2.state.lobbyEndsAt - u0} (want ${LOBBY_MS})`);
+  }
+  if (probs.length) totals.exceptions++;
+  console.log(`EP-19 r2 queue self-test (10 trials): ${probs.length ? 'FAIL ' + probs.slice(0, 4).join(' · ') : 'ok'} · solo click→playing avg ${(clickToPlay.reduce((a, b) => a + b, 0) / clickToPlay.length / 1000).toFixed(1)} s (max ${(Math.max(...clickToPlay) / 1000).toFixed(1)})`);
+}
 // v4 view-churn self-test (decode-error regression): an enemy champion flickers visible → hidden
 // across TWO ticks inside ONE patch window (+ an item change). Pre-fix this made the decoder see a
 // refId it never got ("refId" not found …). Decoders below are the same Reflection path the client uses.
@@ -232,6 +307,8 @@ for (let m = 0; m < MATCHES; m++) {
         if (seats.length !== 5) draftProblem(`${team} has ${seats.length} seats`);
         const picks = seats.map((sl) => sl.s.champ);
         if (new Set(picks).size !== picks.length) draftProblem(`${team} duplicate picks ${picks.join(',')}`);
+        const lanes = new Set(picks.map((c) => CHAMPIONS[c]?.lane)); // EP-19: one champion per role
+        if (lanes.size !== 5) draftProblem(`${team} not role-balanced: ${picks.map((c) => `${c}(${CHAMPIONS[c]?.lane})`).join(',')}`);
         for (const sl of seats) {
           if (!sl.s.locked || !CHAMPIONS[sl.s.champ]) draftProblem(`${sl.id} not locked (${sl.s.champ})`);
           if (!validSpellPair(sl.s.spellD, sl.s.spellF)) draftProblem(`${sl.id} invalid spells ${sl.s.spellD}/${sl.s.spellF}`);
@@ -287,6 +364,8 @@ for (let m = 0; m < MATCHES; m++) {
   let bwSecBytes = { blue: 0, red: 0 };
   const t0 = Date.now();
   let ticks = 0, tickMs = 0, maxTick = 0, maxSynced = 0, lastLog = 0, feedIdx = 0;
+  // EP-05 pacing: first champion kill, first structure, kills by 5:00 / 9:00.
+  const pace = { firstKill: 0, firstTower: 0, k5: -1, k9: -1 };
   const maxMs = MAX_MIN * 60000;
   while (room.state.phase === 'playing' && Date.now() - t0 < maxMs) {
     fake += 50;
@@ -336,6 +415,23 @@ for (let m = 0; m < MATCHES; m++) {
       }
     }
     totals.ticks++; totals.tickMs += d; totals.maxTick = Math.max(totals.maxTick, d);
+    if (HUMAN === 'lane' && ticks % 20 === 0) { // passive newcomer: walk back to the lane spot (never attacks on purpose)
+      const h = room.champs.get('human1');
+      if (h && !h.dead) {
+        const tw = room.structs.get(`${h.team}_mid_1`), core = room.structs.get(`${h.team === 'blue' ? 'red' : 'blue'}_core`);
+        const dx = core.x - tw.x, dy = core.y - tw.y, dl = Math.hypot(dx, dy) || 1;
+        const x = tw.x + dx / dl * 250, y = tw.y + dy / dl * 250;
+        if (Math.hypot(h.x - x, h.y - y) > 60) room._doOrder('human1', { type: 'move', x, y });
+      }
+      if (pace.h5 === undefined && Date.now() - t0 >= 5 * 60000) pace.h5 = h ? h.deaths : 0;
+    }
+    {
+      const el = Date.now() - t0, k = room.state.blueKills + room.state.redKills;
+      if (!pace.firstKill && k > 0) pace.firstKill = el;
+      if (!pace.firstTower) for (const s of room.structs.values()) if (!s.alive) { pace.firstTower = el; break; }
+      if (pace.k5 < 0 && el >= 5 * 60000) pace.k5 = k;
+      if (pace.k9 < 0 && el >= 9 * 60000) pace.k9 = k;
+    }
     // Stuck detector (champions that want to move but don't).
     const now = Date.now();
     for (const c of room.champs.values()) {
@@ -414,7 +510,15 @@ for (let m = 0; m < MATCHES; m++) {
     console.log('deaths by victim mode:', JSON.stringify(tally((d) => d.mode || '?')));
     console.log('deaths by level gap (enemy avg − victim):', JSON.stringify(tally((d) => d.nE ? String(Math.round(d.lvE - d.lv)) : 'n/a')));
   }
-  results.push({ winner: st.winner, dur, kills: st.blueKills + st.redKills, structs: structsDown.length, tickAvg: tickMs / Math.max(1, ticks), maxTick });
+  {
+    const k = st.blueKills + st.redKills;
+    if (pace.k5 < 0) pace.k5 = k;
+    if (pace.k9 < 0) pace.k9 = k;
+  }
+  if (HUMAN === 'lane' && pace.h5 === undefined) pace.h5 = room.champs.get('human1')?.deaths ?? 0;
+  if (HUMAN === 'lane') console.log(`passive human: deaths by 5:00 ${pace.h5} · total ${room.champs.get('human1')?.deaths} (${room.champs.get('human1')?.kills}/${room.champs.get('human1')?.deaths}/${room.champs.get('human1')?.assists})`);
+  console.log(`pacing: first kill ${pace.firstKill ? fmt(pace.firstKill) : '-'} · first structure ${pace.firstTower ? fmt(pace.firstTower) : '-'} · kills by 5:00 ${pace.k5} · by 9:00 ${pace.k9}`);
+  results.push({ winner: st.winner, dur, kills: st.blueKills + st.redKills, structs: structsDown.length, tickAvg: tickMs / Math.max(1, ticks), maxTick, pace });
   for (const c of champs) {
     const a = champAgg[c.champ] || (champAgg[c.champ] = { games: 0, wins: 0, k: 0, d: 0, a: 0, cs: 0, roles: {} });
     a.games++; if (st.winner && c.team === st.winner) a.wins++;
@@ -457,5 +561,10 @@ for (let m = 0; m < MATCHES; m++) {
 if (MATCHES > 1) {
   const durs = results.map((r) => r.dur / 60000);
   console.log(`\n### ${MATCHES} matches: winners ${results.map((r) => r.winner || '-').join(' ')}`);
+  const med = (a) => { const v = [...a].sort((x, y) => x - y); return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : 0; };
+  const P = results.map((r) => r.pace);
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
+  console.log(`### pacing: first kill median ${fmt(med(P.map((p) => p.firstKill || Infinity)))} (avg ${fmt(mean(P.map((p) => p.firstKill)))}) · first structure median ${fmt(med(P.map((p) => p.firstTower || Infinity)))} · kills by 5:00 avg ${mean(P.map((p) => p.k5)).toFixed(1)} · by 9:00 avg ${mean(P.map((p) => p.k9)).toFixed(1)} (min ${Math.min(...P.map((p) => p.k9))}) · length median ${med(durs).toFixed(1)} min · in 10–14 min ${durs.filter((d) => d >= 10 && d <= 14).length}/${durs.length}`);
+  if (HUMAN === 'lane') { const h5 = P.map((p) => p.h5 || 0); console.log(`### passive human deaths by 5:00: ${h5.join(' ')} · max ${Math.max(...h5)} · avg ${mean(h5).toFixed(1)}`); }
   console.log(`### length min/avg/max ${Math.min(...durs).toFixed(1)}/${(durs.reduce((a, b) => a + b, 0) / durs.length).toFixed(1)}/${Math.max(...durs).toFixed(1)} min · kills avg ${(results.reduce((a, r) => a + r.kills, 0) / results.length).toFixed(1)} · structures avg ${(results.reduce((a, r) => a + r.structs, 0) / results.length).toFixed(1)}`);
 }

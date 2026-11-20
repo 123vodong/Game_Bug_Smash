@@ -36,6 +36,16 @@ export const BOSS_KO_LINES = [
 export const JOIN_LINES = ['{a} joined the office', '{a} clocked in', '{a} logged on to Slack'];
 export const LEAVE_LINES = ['{a} left the office', '{a} logged off', '{a} went home'];
 
+// Reconnect grace (EP-01): a dropped connection, then the comeback.
+export const AWAY_LINES = [
+  "{a}'s Wi-Fi went to lunch",
+  "{a} is restarting their router",
+];
+export const BACK_LINES = [
+  "{a} is back — 'just restarting my router'",
+  '{a} returned. The bot already pushed to main.',
+];
+
 export function fillLine(line, vars) {
   return line.replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? ''));
 }

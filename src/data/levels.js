@@ -24,6 +24,9 @@ export const LEVELS = [
   { id: '1-1', world: 1, name: 'World 1-1 · Onboarding',
     timeLimitMs: 60000,
     wave: { 'bug-null': 4, 'bug-ladybug': 4 },
+    // The coach says "one click is a code review, not a fix" — the first 4
+    // bugs take 2 hits so that's actually true (HuntScene applies this).
+    tutorialBugs: { count: 4, hp: 2 },
     skillSpawnEveryMs: 9000 },
 
   { id: '1-2', world: 1, name: 'World 1-2 · Standup Crunch',
@@ -71,7 +74,7 @@ export const LEVELS = [
   { id: '3-3', world: 3, name: 'World 3-3 · CTO Code Review',
     timeLimitMs: 60000,
     wave: { 'bug-beetle': 4, 'bug-scarab': 4, 'bug-robot': 4, 'bug-toxic': 3 },
-    bugHpMul: 1.45, bugSpeedMul: 1.1,
+    bugHpMul: 1.3, bugSpeedMul: 1.1,   // EP-14: eased from 1.45 (playtest wall)
     skillSpawnEveryMs: 5500 },
 
   // ---- World 4: AI-Assisted Chaos (peak pressure, frequent skills to compensate) ----
@@ -95,3 +98,15 @@ export const LEVELS = [
 ];
 
 export const TOTAL_LEVELS = LEVELS.length;
+
+// Stars per clear (EP-14): 1★ = cleared · 2★ = ≥ 25 % of the deadline left ·
+// 3★ = ≥ 45 % left. Saved via Progress.campaignClear(levelId, stars).
+export const STAR_TIME_FRAC = { two: 0.25, three: 0.45 };
+
+/** Stars for a clear with `timeLeftMs` of `timeLimitMs` remaining (1..3). */
+export function starsFor(timeLeftMs, timeLimitMs) {
+  const frac = Math.max(0, timeLeftMs) / Math.max(1, timeLimitMs);
+  if (frac >= STAR_TIME_FRAC.three) return 3;
+  if (frac >= STAR_TIME_FRAC.two) return 2;
+  return 1;
+}

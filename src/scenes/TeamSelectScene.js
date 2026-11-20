@@ -24,12 +24,13 @@ import {
   TEAM_INFO, TEAM_SIZE, SELECT_MS, SELECT_BOT_PICK_MS, SELECT_ALL_LOCKED_MS, LOADING_MS, PICK_RATE_MS,
 } from '../../shared/moba/rules.js';
 import { ensureMobaLooks, drawChampionPortrait } from '../entities/moba/looks.js';
+import { hatEmoji } from '../entities/moba/mobaGfx.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { AudioManager } from '../core/AudioManager.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
   fillRR, strokeRR, fillCircleLP, strokeCircleLP, loadSpellPrefs, saveSpellPrefs, startClockSync,
-  LANE_LABEL, SKILL_TYPE_LABEL, mechanicHints,
+  LANE_LABEL, SKILL_TYPE_LABEL, mechanicHints, reconnectLoop, TEAM_RECONNECT_GRACE_S,
 } from '../ui/moba/uiKit.js';
 
 const STICK_POSES = [['stick-idle', 'idle.svg']];
@@ -61,15 +62,17 @@ const TIPS = [
 ];
 
 const rand = (a, b) => a + Math.random() * (b - a);
+const OFFLINE_SELECT_MS = Math.min(SELECT_MS, 20000);  // EP-21: offline pick timer (you vs bots — no need for 30 s)
+const OFFLINE_BOT_PICK_MAX_MS = 3000;                   // EP-21: offline bots lock within 3 s
 const fmtSec = (ms) => `0:${String(Math.max(0, Math.floor(ms / 1000))).padStart(2, '0')}`;
 
 // ═════════════════════════ offline draft (practice) ═════════════════════════
 /** Same shape as the server state the scene reads: phase, selectEndsAt, loadingEndsAt, champs[]. */
 class LocalDraft {
-  constructor({ name, champ, spells }) {
+  constructor({ name, champ, spells, hat = '' }) {
     const now = Date.now();
     this.phase = 'select';
-    this.selectEndsAt = now + SELECT_MS;
+    this.selectEndsAt = now + OFFLINE_SELECT_MS;
     this.loadingEndsAt = 0;
     this._allLocked = false;
     const myRole = CHAMPIONS[champ]?.lane || 'mid';
@@ -77,7 +80,7 @@ class LocalDraft {
     this.champs = [];
     this.me = {
       id: 'me', team: 'blue', champ: isChampionId(champ) ? champ : '', locked: false,
-      spellD: spells[0], spellF: spells[1], name, isBot: false, role: myRole,
+      spellD: spells[0], spellF: spells[1], name, isBot: false, role: myRole, hat,
     };
     this.champs.push(this.me);
     // Ally roles are decided when each bot picks (from YOUR current pick), see _assignRole.
@@ -86,12 +89,13 @@ class LocalDraft {
   }
 
   _addBot(id, team, role, name, now) {
-    const [lo, hi] = SELECT_BOT_PICK_MS;
+    // EP-21: offline practice drafts fast — bots lock within OFFLINE_BOT_PICK_MAX_MS.
+    const lo = Math.min(SELECT_BOT_PICK_MS[0], OFFLINE_BOT_PICK_MAX_MS - 500), hi = Math.min(SELECT_BOT_PICK_MS[1], OFFLINE_BOT_PICK_MAX_MS);
     const lockAt = now + rand(lo, hi);
     const [d, f] = ROLE_SPELLS[role] || DEFAULT_SPELLS;   // ally bots: reset in _assignRole
     this.champs.push({
       id, team, role, name: name || 'Bot', isBot: true, champ: '', locked: false, spellD: d, spellF: f,
-      hoverAt: Math.max(now + 800, lockAt - rand(900, 2600)), lockAt,
+      hoverAt: Math.max(now + 400, lockAt - rand(500, 1500)), lockAt,
     });
   }
 
@@ -227,13 +231,14 @@ export default class TeamSelectScene extends Phaser.Scene {
     this._leaveArmedUntil = 0;
     this._loadRoot = null;
     this._modal = null;
+    this._reconn = null; this._veil = null;
 
     AudioManager.setMuted(SaveManager.isMuted());
     ensureMobaLooks(this);
     this._drawBackground();
 
     if (this._offline) {
-      this._sim = new LocalDraft({ name: this._name, champ: this._fav, spells: this._spells });
+      this._sim = new LocalDraft({ name: this._name, champ: this._fav, spells: this._spells, hat: SaveManager.getHat?.() || '' });
       this._myId = 'me';
     } else {
       this._sim = null;
@@ -277,8 +282,11 @@ export default class TeamSelectScene extends Phaser.Scene {
     this._clock = startClockSync(room, { everyMs: 3000, seed });
     off(() => { this._clock?.stop(); });
     const onLeave = (code) => {
-      if (this._shuttingDown || this._handedOff) return;
+      if (this._shuttingDown || this._handedOff || this._room !== room) return;
+      const token = room.reconnectionToken || '';
       this._room = null;
+      // EP-07 review fix: the server holds the seat (TEAM_RECONNECT_GRACE_S) in select / loading too.
+      if (code !== 1000 && code !== 4000 && token) { this._startReconnect(token); return; }
       this._showModal('Disconnected', `The connection to the draft was lost (code ${code}).`);
     };
     room.onLeave(onLeave);
@@ -287,6 +295,68 @@ export default class TeamSelectScene extends Phaser.Scene {
     room.onError(onErr);
     off(() => room.onError.remove?.(onErr));
   }
+
+  /** §3.3 reconnect loop: veil with a countdown, adopt the new room, re-register our listeners. */
+  _startReconnect(token) {
+    if (this._reconn || this._shuttingDown) return;
+    this._unlisten(false);
+    this._closePicker?.();
+    const r = { left: TEAM_RECONNECT_GRACE_S, attempts: 0, loop: null };
+    this._reconn = r;
+    this._showVeil();
+    const alive = () => !this._shuttingDown && !this._handedOff && this._reconn === r;
+    r.loop = reconnectLoop({
+      token,
+      onTick: (left, attempts) => {
+        if (!alive()) return;
+        r.left = left; r.attempts = attempts;
+        this._veilBody?.setText(`Mạng lag quá, đợi xíu… ${left}s\nYour seat and pick are held${attempts ? ` · attempt ${attempts}` : ''}`);
+      },
+      onSuccess: (room) => {
+        if (!alive()) { try { room.leave(); } catch (_) { /* ignore */ } return; }
+        this._reconn = null;
+        this._hideVeil();
+        this._room = room;
+        this._myId = room.sessionId;
+        if (this._data) { this._data.dropMsg = null; this._data.clockOffset = this._clockOffsetNow(); this._data.clockRtt = 9999; }
+        this._listen();
+        this._queueSpells();
+        this._flashPhase?.('🔌 Back online — your pick is safe');
+        AudioManager.reward?.();
+      },
+      onFail: (why) => {
+        if (!alive()) return;
+        this._reconn = null;
+        this._hideVeil();
+        this._showModal(why === 'gone' ? 'The room closed' : '📶 Could not reconnect',
+          why === 'gone' ? 'The match ended or the room was closed while you were offline.'
+            : 'Connection lost. A bot drafts and plays for you now.');
+      },
+    });
+  }
+
+  _showVeil() {
+    this._hideVeil();
+    const { W, H } = this;
+    const c = this.add.container(0, 0).setDepth(110);
+    const dim = this.add.rectangle(0, 0, W, H, 0x02040a, 0.8).setOrigin(0).setInteractive();
+    const g = this.add.graphics();
+    drawPanel(g, W / 2 - 280, H / 2 - 110, 560, 220, { color: NEON.yellow, radius: 16 });
+    this._veilBody = this.add.text(W / 2, H / 2 - 14, '', {
+      fontFamily: FONT_MONO, fontSize: 14, color: '#cfe3f5', align: 'center', wordWrap: { width: 500 },
+    }).setOrigin(0.5);
+    c.add([dim, g,
+      this.add.text(W / 2, H / 2 - 66, '📶 Wi-Fi went to lunch — reconnecting…', { fontFamily: FONT_TITLE, fontSize: 22, color: '#ffd23f' }).setOrigin(0.5),
+      this._veilBody]);
+    const b = makeButton(this, {
+      x: W / 2, y: H / 2 + 60, w: 260, h: 50, label: '◀ BACK TO LOBBY', color: NEON.blue, fontSize: 15,
+      onClick: () => this._goLobby(),
+    });
+    c.add(b.root);
+    this._veil = c;
+  }
+
+  _hideVeil() { if (this._veil) { this._veil.destroy(); this._veil = null; this._veilBody = null; } }
 
   _unlisten(keepCatchAll = false) {
     if (!keepCatchAll && this._offMsg) { try { this._offMsg(); } catch (_) { /* ignore */ } }
@@ -319,7 +389,7 @@ export default class TeamSelectScene extends Phaser.Scene {
     st.champions?.forEach?.((ch, key) => {
       champs.push({
         id: key, team: ch.team, champ: ch.champ || '', locked: !!ch.locked, name: ch.name || '',
-        isBot: !!ch.isBot, spellD: ch.spellD || '', spellF: ch.spellF || '',
+        isBot: !!ch.isBot, spellD: ch.spellD || '', spellF: ch.spellF || '', hat: ch.hat || '',
       });
     });
     return {
@@ -954,8 +1024,9 @@ export default class TeamSelectScene extends Phaser.Scene {
       this._timerTxt.setText('');
       return;
     }
-    const left = s.selectEndsAt ? Math.max(0, Math.min(SELECT_MS, s.selectEndsAt - this._srvNow())) : SELECT_MS;
-    this._timerFill.scaleX = Math.max(0.001, left / SELECT_MS);
+    const selMs = this._sim ? OFFLINE_SELECT_MS : SELECT_MS;
+    const left = s.selectEndsAt ? Math.max(0, Math.min(selMs, s.selectEndsAt - this._srvNow())) : selMs;
+    this._timerFill.scaleX = Math.max(0.001, left / selMs);
     this._timerFill.setFillStyle(left < 8000 ? NEON.red : NEON.yellow, 1);
     this._timerTxt.setText(fmtSec(left)).setColor(left < 8000 ? '#ff5e5e' : '#ffd23f');
     const sec = Math.ceil(left / 1000);
@@ -979,7 +1050,7 @@ export default class TeamSelectScene extends Phaser.Scene {
     if (!s || !this._selRoot || this._phaseShown !== 'select') return;
     const myChamp = this._myChamp();
     const me = this._meRow();
-    const sig = s.champs.map((c) => `${c.id}|${c.team}|${c.champ}|${c.locked ? 1 : 0}|${c.spellD}|${c.spellF}|${c.name}|${c.isBot ? 1 : 0}`).join(';')
+    const sig = s.champs.map((c) => `${c.id}|${c.team}|${c.champ}|${c.locked ? 1 : 0}|${c.spellD}|${c.spellF}|${c.name}|${c.isBot ? 1 : 0}|${c.hat || ''}`).join(';')
       + `#${myChamp}#${this._spells.join(',')}#${this._lockSent ? 1 : 0}`;
     if (!force && sig === this._sig) {
       this._renderDetail(this._inspect || myChamp || this._fav || null);
@@ -1086,7 +1157,8 @@ export default class TeamSelectScene extends Phaser.Scene {
         fontFamily: FONT_TITLE, fontSize: 26, color: '#4f6380',
       }).setOrigin(0.5));
     }
-    const nm = `${row.isBot ? '🤖 ' : ''}${clipName(row.name || (row.isBot ? 'Bot' : 'Player'), 14)}${isMe ? '  (you)' : ''}`;
+    const hat = hatEmoji(row.hat);
+    const nm = `${row.isBot ? '🤖 ' : ''}${hat ? `${hat} ` : ''}${clipName(row.name || (row.isBot ? 'Bot' : 'Player'), 14)}${isMe ? '  (you)' : ''}`;
     c.add(this.add.text(tx, 18, nm, {
       fontFamily: FONT_MONO, fontSize: 12, color: isMe ? '#ffd23f' : '#b7c7da', padding: { y: 2 },
     }).setOrigin(ox, 0.5));
@@ -1203,7 +1275,8 @@ export default class TeamSelectScene extends Phaser.Scene {
     c.add(this.add.text(w / 2, 188, def ? `${def.role} · ${(LANE_LABEL[def.lane] || def.lane).toLowerCase()}` : '', {
       fontFamily: FONT_MONO, fontSize: 11, color: def ? hex(def.color) : '#8fa3bf',
     }).setOrigin(0.5));
-    c.add(this.add.text(w / 2, 210, `${r.isBot ? '🤖 ' : ''}${clipName(r.name || 'Player', 16)}`, {
+    const hat = hatEmoji(r.hat);
+    c.add(this.add.text(w / 2, 210, `${r.isBot ? '🤖 ' : ''}${hat ? `${hat} ` : ''}${clipName(r.name || 'Player', 16)}`, {
       fontFamily: FONT_MONO, fontSize: 13, color: isMe ? '#ffd23f' : '#cfe3f5', padding: { y: 2 },
     }).setOrigin(0.5));
     const sids = isMe ? this._spells : [r.spellD, r.spellF];
@@ -1274,6 +1347,8 @@ export default class TeamSelectScene extends Phaser.Scene {
   _cleanup() {
     if (this._shuttingDown) return;
     this._shuttingDown = true;
+    try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
+    this._reconn = null;
     if (this._msgState && !this._handedOff) this._msgState.dead = true;
     this._unlisten(true);   // keep the catch-all (no-op once dead) until the socket closes / after handoff
     if (this._room && !this._handedOff) { const r = this._room; this._room = null; try { r.leave(); } catch (_) { /* ignore */ } }

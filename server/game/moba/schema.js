@@ -62,6 +62,8 @@ export class TeamChamp extends Schema {
     // receive a champion that is hidden in a bush (StateView), so in practice only the
     // own team sees a non-empty value (→ "you are hidden" tint).
     this.inBush = '';
+    // Experience Pass 1 (appended): cosmetic hat id (server/data/cosmetics.js allowlist, '' = none).
+    this.hat = '';
   }
 }
 // v4 optimisation: positions are integers inside the map (0…6000) → uint16 on the wire
@@ -112,6 +114,7 @@ type('string')(TeamChamp.prototype, 'spellF');
 type('number')(TeamChamp.prototype, 'cdD');
 type('number')(TeamChamp.prototype, 'cdF');
 type('string')(TeamChamp.prototype, 'inBush');   // v4 (appended)
+type('string')(TeamChamp.prototype, 'hat');      // EP-06 (appended)
 
 /** state.units — key = 'u<n>'. Minions, jungle monsters, river epics and (v2) pets. */
 export class TeamUnit extends Schema {
@@ -233,6 +236,8 @@ export class TeamState extends Schema {
     this.hostId = '';          // custom room host's sessionId ('' for quick play)
     // v4 §3.2b (appended): always-visible scoreboard rows (see TeamScore)
     this.scores = new MapSchema();
+    // Experience Pass 1 (appended): how the match was decided — '' (not yet) | 'core' | 'rollback'.
+    this.winReason = '';
   }
 }
 type('string')(TeamState.prototype, 'phase');
@@ -256,6 +261,7 @@ type('boolean')(TeamState.prototype, 'custom');    // v4 (appended)
 type('string')(TeamState.prototype, 'roomName');
 type('string')(TeamState.prototype, 'hostId');
 type({ map: TeamScore })(TeamState.prototype, 'scores');   // v4 §3.2b (appended, NOT view-filtered)
+type('string')(TeamState.prototype, 'winReason');           // EP-04 (appended)
 // v4 visibility (TEAM_MODE_V4_BREAKDOWN.md §3.2): champions + units are per-client
 // StateView filtered — TeamRoom adds/removes each entry per team view (bush vision).
 // Wire indexes are unchanged; the view tag is server-side only.

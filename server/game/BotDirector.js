@@ -14,7 +14,7 @@
 //        heal (pickup) · flee · wander · broken.
 import {
   ARENA_W, ARENA_H, SMASH_RADIUS, SKILL_ENERGY, ULT_RADIUS,
-  BUG_KIND_SCORE, BUG_ATTACK, LEVEL_XP_THRESHOLDS, levelTitle, firstObstacleAt,
+  BUG_KIND_SCORE, BUG_ATTACK, BOT_WARM_XP_MAX, levelTitle, firstObstacleAt,
   DASH_DISTANCE, DASH_HIT_RADIUS, distToSegment,
 } from './rules.js';
 import {
@@ -122,8 +122,9 @@ export class BotDirector {
     const pos = this._spawnPoint();
     // "Warm" bots joined a while ago — give them some career progress so the
     // leaderboard looks lived-in instead of a row of fresh Interns. Kept modest
-    // (0–~450, mostly low) so a new human climbs past a few bots in a minute or two.
-    const startXp = warm ? Math.round(rand(0, 1) ** 2 * LEVEL_XP_THRESHOLDS[2] * 0.75) : 0;
+    // (0–BOT_WARM_XP_MAX, squared → mostly low) so a new human passes a few bots
+    // within their first minute (EP-20; was 0–450).
+    const startXp = warm ? Math.round(rand(0, 1) ** 2 * BOT_WARM_XP_MAX) : 0;
     const p = room._addPlayer(sid, {
       name: this._pickName(), hat: pick(BOT_HATS), isBot: true,
       x: pos.x, y: pos.y, startXp,
@@ -329,7 +330,8 @@ export class BotDirector {
   }
 
   _validPvpTarget(other, now) {
-    return !!other && !other.broken && now >= (other.invulnUntil || 0);
+    // `away` = a human in reconnect grace — bots never gank a frozen stickman.
+    return !!other && !other.broken && !other.away && now >= (other.invulnUntil || 0);
   }
 
   /** How many bots are currently fighting this player (anti-dogpile for humans). */
@@ -411,7 +413,7 @@ export class BotDirector {
       if (d < bestD) { bestD = d; best = { x: bug.x, y: bug.y }; }
     });
     this.room.state.players.forEach((o) => {
-      if (o === p || o.broken) return;
+      if (o === p || o.broken || o.away) return;
       const d = Math.hypot(o.x - p.x, o.y - p.y);
       if (d < bestD) { bestD = d; best = { x: o.x, y: o.y }; }
     });

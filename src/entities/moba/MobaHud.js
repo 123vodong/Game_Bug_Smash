@@ -15,6 +15,11 @@
 // v2: skill tooltips list the mechanics (zone, fan, knockback / wall-stun, pet,
 // CC); the portrait comes from looks.js drawChampionPortrait (emoji fallback);
 // pets are left off the minimap.
+// Experience Pass 1 (EXPERIENCE_PASS_BREAKDOWN.md): toasts are QUEUED (≤ 2 on screen, laid out by
+// their real height — no early-match overlap), the death screen fades its lines in one by one,
+// modalSet() updates an open modal (reconnect countdown), a 🏳 ROLLBACK button + team vote panel
+// (EP-08), a coaching tip card under the minimap (EP-10) and a pulsing "🛒 Buy <item> (P)" nudge
+// (EP-21). The left column (under the minimap) never overlaps the skill buttons.
 import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { ITEMS } from '../../../shared/moba/items.js';
 import {
@@ -80,6 +85,7 @@ export class MobaHud {
     this._feed = [];
     this._chat = [];
     this._toasts = [];
+    this._toastQ = [];
     this._bannerQ = []; this._bannerCur = null;
     this.cdTotal = { q: 1, w: 1, e: 1, r: 1, d: 1, f: 1 };
     this._cdPrev = { q: 0, w: 0, e: 0, r: 0, d: 0, f: 0 };
@@ -379,15 +385,18 @@ export class MobaHud {
     this.recallTxt = s.add.text(0, -5, '', { fontFamily: FONT, fontSize: 13, color: '#bfe6ff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
     this.recallBox.add([rb, this.recallFill, this.recallTxt]);
 
-    // Death overlay (the scene desaturates the world camera).
-    this.death = s.add.container(W / 2, H * 0.36).setScrollFactor(0).setDepth(53).setVisible(false);
-    const band = s.add.rectangle(0, 0, W, 132, 0x000000, 0.55);
-    this.deathTitle = s.add.text(0, -34, '💀 YOU WERE PUSHED TO PRODUCTION', {
-      fontFamily: FONT, fontSize: 24, color: '#ff8a8a', stroke: '#000', strokeThickness: 5, align: 'center', wordWrap: { width: W * 0.8 },
-    }).setOrigin(0.5);
-    this.deathCount = s.add.text(0, 10, '', { fontFamily: FONT, fontSize: 34, color: '#ffffff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5);
-    this.deathHint = s.add.text(0, 46, '🛒 The shop is open while you are dead', { fontFamily: MONO, fontSize: 13, color: '#ffd23f' }).setOrigin(0.5);
-    this.death.add([band, this.deathTitle, this.deathCount, this.deathHint]);
+    // Death overlay (the scene desaturates the world camera). EP-21 calm death screen: below the
+    // banner lane, lines laid out by their real height (a wrapped killer line never stacks on the
+    // countdown) and faded in one after another.
+    this.death = s.add.container(W / 2, H * 0.42).setScrollFactor(0).setDepth(53).setVisible(false);
+    this.deathBand = s.add.rectangle(0, 0, W, 132, 0x000000, 0.5);
+    this.deathTitle = s.add.text(0, 0, '💀 YOU WERE PUSHED TO PRODUCTION', {
+      fontFamily: FONT, fontSize: 22, color: '#ff8a8a', stroke: '#000', strokeThickness: 5, align: 'center', wordWrap: { width: W * 0.7 },
+    }).setOrigin(0.5, 1);
+    this.deathCount = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 30, color: '#ffffff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5, 0);
+    this.deathHint = s.add.text(0, 0, '🛒 The shop is open while you are dead — spend while you wait', { fontFamily: MONO, fontSize: 13, color: '#ffd23f' }).setOrigin(0.5, 0);
+    this.death.add([this.deathBand, this.deathTitle, this.deathCount, this.deathHint]);
+    this._layoutDeath();
 
     this.status = this._t(this.mm.x, this.mm.y + this.mm.size + 8, '', { fontFamily: MONO, fontSize: 12, color: '#7ec8ff' }, 0, 0).setDepth(50);
 
@@ -399,6 +408,116 @@ export class MobaHud {
     this._hideState = null;
     // v4: effects quality toggle (auto / high / low), right of the minimap.
     this.fxBtn = this._button(this.mm.x + this.mm.size + 40, this.mm.y + 14, 66, 24, '✨AUTO', 0x9fdcff, () => this.o.onFx?.(), 50, 10);
+    this._buildExtras();
+  }
+
+  // ───────────────────────── Experience Pass 1 widgets ─────────────────────────
+  _buildExtras() {
+    const s = this.s;
+    const colX = 10, colY = this.mm.y + this.mm.size + 32; // left column under the minimap + status line
+    this._colX = colX; this._colY = colY;
+    // EP-08: 🏳 ROLLBACK (visible from ROLLBACK_FROM_MS online; the scene decides).
+    this.rbBtn = this._button(this.mm.x + this.mm.size + 50, this.mm.y + 44, 86, 24, '🏳 ROLLBACK', 0xffb347, () => this.o.onRollback?.(), 50, 10);
+    this.rbBtn.setVisible(false);
+    // EP-08: team vote panel.
+    const vw = 300, vh = 128;
+    this.vote = s.add.container(colX, colY).setScrollFactor(0).setDepth(56).setVisible(false);
+    const vbg = s.add.rectangle(0, 0, vw, vh, 0x140d04, 0.94).setOrigin(0).setStrokeStyle(2, 0xffb347, 0.95).setInteractive();
+    vbg.on('pointerdown', (p, lx, ly, ev) => ev?.stopPropagation?.());
+    this.voteTitle = s.add.text(12, 8, '🏳 ROLLBACK THE RELEASE?', { fontFamily: FONT, fontSize: 14, color: '#ffb347', stroke: '#000', strokeThickness: 3 });
+    this.voteBy = s.add.text(12, 30, '', { fontFamily: MONO, fontSize: 12, color: '#f2e6d0', wordWrap: { width: vw - 24 } });
+    this.voteCount = s.add.text(12, 64, '', { fontFamily: FONT, fontSize: 13, color: '#ffffff', stroke: '#000', strokeThickness: 3 });
+    this.voteBarBg = s.add.rectangle(12, 86, vw - 24, 4, 0x000000, 0.8).setOrigin(0, 0.5);
+    this.voteBar = s.add.rectangle(12, 86, vw - 24, 4, 0xffb347, 1).setOrigin(0, 0.5);
+    this.voteMine = s.add.text(vw / 2, 108, '', { fontFamily: MONO, fontSize: 12, color: '#9fb0c8' }).setOrigin(0.5);
+    this.vote.add([vbg, this.voteTitle, this.voteBy, this.voteCount, this.voteBarBg, this.voteBar, this.voteMine]);
+    this.voteYes = this._button(colX + 78, colY + 108, 128, 28, this.touch ? '✔ YES' : '✔ YES (Y)', 0x7ed957, () => this.o.onVote?.(true), 57, 13);
+    this.voteNo = this._button(colX + vw - 78, colY + 108, 128, 28, this.touch ? '✖ NO' : '✖ NO (N)', 0xff5e5e, () => this.o.onVote?.(false), 57, 13);
+    this.voteYes.setVisible(false); this.voteNo.setVisible(false);
+    this._voteW = vw;
+    // EP-10: coaching tip card (same column; hidden while a vote is open).
+    this.tipBox = s.add.container(colX, colY).setScrollFactor(0).setDepth(55).setVisible(false);
+    this.tipBg = s.add.rectangle(0, 0, vw, 60, 0x07131f, 0.92).setOrigin(0).setStrokeStyle(2, 0x7ec8ff, 0.9);
+    this.tipHead = s.add.text(12, 8, '💡 FIRST-DAY TIP', { fontFamily: FONT, fontSize: 11, color: '#7ec8ff' });
+    this.tipTxt = s.add.text(12, 26, '', { fontFamily: MONO, fontSize: 13, color: '#ffffff', wordWrap: { width: vw - 24 }, lineSpacing: 2 });
+    this.tipBox.add([this.tipBg, this.tipHead, this.tipTxt]);
+    // EP-21: first-buy nudge, just above the 🛒 button.
+    const nx = this.pl + SP + 620;
+    this.buyNudge = s.add.container(Math.min(this.W - 130, nx), this.pt - 22).setScrollFactor(0).setDepth(52).setVisible(false);
+    this.buyBg = s.add.rectangle(0, 0, 230, 28, 0x2a2208, 0.95).setStrokeStyle(2, 0xffd23f, 1).setInteractive({ useHandCursor: true });
+    this.buyBg.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); this.o.onShop?.(); });
+    this.buyTxt = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 13, color: '#ffe680', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+    this.buyNudge.add([this.buyBg, this.buyTxt]);
+    this._buyStr = null;
+  }
+
+  /** Round 2: the end screen covers the match — remove banners, toasts and the side widgets. */
+  clearTransient() {
+    this._quiet = true; // later banners / toasts would draw over the end screen
+    this._bannerQ.length = 0;
+    if (this._bannerCur) { this.s.tweens.killTweensOf(this._bannerCur); this._bannerCur.destroy(); this._bannerCur = null; }
+    this._toastQ.length = 0;
+    for (const t of this._toasts) t.destroy();
+    this._toasts.length = 0;
+    this._tipEvt?.remove(false);
+    this.tipBox.setVisible(false);
+    this.setBuyNudge(null);
+    this.showVote(null);
+    this.setRollbackVisible(false);
+    this.death.setVisible(false);
+    this.hideBox.setVisible(false); this._hideState = null;
+  }
+
+  /** EP-08: show / hide the 🏳 ROLLBACK button. */
+  setRollbackVisible(on) { if (this.rbBtn.visible !== !!on) this.rbBtn.setVisible(!!on); }
+
+  /** EP-08: v = { yes, no, need, endsAt, by, mine: true|false|'voted'|null } or null (closed). srvNow for the timer bar. */
+  showVote(v, srvNow, totalMs) {
+    const open = !!v;
+    if (this.vote.visible !== open) {
+      this.vote.setVisible(open);
+      if (open) { this.tipBox.setVisible(false); this.vote.setAlpha(0); this.s.tweens.add({ targets: this.vote, alpha: 1, duration: 180 }); }
+    }
+    const canVote = open && v.mine == null;
+    this.voteYes.setVisible(canVote); this.voteNo.setVisible(canVote);
+    if (!open) return;
+    this._set('vBy', this.voteBy, `${String(v.by || 'Someone').slice(0, 18)} wants last Friday's build back`);
+    this._set('vCount', this.voteCount, `✔ ${v.yes | 0} / ${v.need | 0} needed   ✖ ${v.no | 0}`);
+    const left = Math.max(0, (v.endsAt || 0) - srvNow);
+    this.voteBar.width = (this._voteW - 24) * Math.max(0, Math.min(1, left / Math.max(1, totalMs || 20000)));
+    const how = v.mine === 'voted' ? 'already voted' : `voted ${v.mine ? '✔ yes' : '✖ no'}`;
+    this._set('vMine', this.voteMine, v.mine == null ? '' : `you ${how} · ${Math.ceil(left / 1000)}s left`);
+  }
+
+  /** EP-10: one coaching tip in the left column for `ms` (replaces any tip on screen). */
+  tip(text, ms = 7000) {
+    if (!text) return;
+    const s = this.s;
+    this.tipTxt.setText(String(text));
+    this.tipBg.setSize(this._voteW, 26 + this.tipTxt.height + 12);
+    s.tweens.killTweensOf(this.tipBox);
+    this.tipBox.setVisible(!this.vote.visible).setAlpha(0).setX(this._colX - 20);
+    s.tweens.add({ targets: this.tipBox, alpha: 1, x: this._colX, duration: 260, ease: 'Cubic.easeOut' });
+    this._tipEvt?.remove(false);
+    this._tipEvt = s.time.delayedCall(ms, () => {
+      if (!this.tipBox.scene) return;
+      s.tweens.add({ targets: this.tipBox, alpha: 0, duration: 300, onComplete: () => this.tipBox.setVisible(false) });
+    });
+  }
+  get tipShowing() { return this.tipBox.visible; }
+
+  /** EP-21: pulsing "🛒 Buy <item> (P)" pill (null = hide). */
+  setBuyNudge(str) {
+    if (str === this._buyStr) return;
+    this._buyStr = str;
+    const s = this.s;
+    s.tweens.killTweensOf(this.buyNudge);
+    if (!str) { this.buyNudge.setVisible(false); return; }
+    this.buyTxt.setText(str);
+    this.buyBg.setSize(this.buyTxt.width + 26, 28);
+    this.buyBg.input?.hitArea?.setSize?.(this.buyTxt.width + 26, 28);
+    this.buyNudge.setVisible(true).setScale(1).setAlpha(1);
+    s.tweens.add({ targets: this.buyNudge, scale: 1.08, duration: 520, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
   /** v4: effects mode label — pref 'auto' | 'high' | 'low', low = currently low effects. */
@@ -443,7 +562,7 @@ export class MobaHud {
 
   /** b: { title, sub?, color?, big? } — center banner, queued. */
   banner(b) {
-    if (!b?.title) return;
+    if (!b?.title || this._quiet) return;
     this._bannerQ.push(b);
     while (this._bannerQ.length > 4) {
       const i = this._bannerQ.findIndex((x) => !x.big);
@@ -477,27 +596,45 @@ export class MobaHud {
     });
   }
 
-  toast(text, color = '#ffffff') {
+  /** Queued toast: ≤ 2 visible (newest at the bottom), the rest wait their turn; duplicates are dropped. */
+  toast(text, color = '#ffffff', ms = 1600) {
+    if (!text || this._quiet) return;
     const now = this.s.time.now;
     if (this._lastToast === text && now - this._lastToastAt < 700) return; // no spam
+    if (this._toasts.some((t) => t.text === text) || this._toastQ.some((q) => q.text === text)) return;
     this._lastToast = text; this._lastToastAt = now;
+    this._toastQ.push({ text: String(text), color, ms });
+    while (this._toastQ.length > 4) this._toastQ.shift();
+    this._pumpToasts();
+  }
+  _pumpToasts() {
     const s = this.s;
-    const t = s.add.text(this.px, 0, text, {
-      fontFamily: FONT, fontSize: 15, color, stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(57);
-    this._toasts.push(t);
-    while (this._toasts.length > 3) this._toasts.shift().destroy();
-    this._layoutToasts();
-    s.time.delayedCall(1600, () => {
-      if (!t.scene) return;
-      s.tweens.add({
-        targets: t, alpha: 0, duration: 260,
-        onComplete: () => { const i = this._toasts.indexOf(t); if (i >= 0) this._toasts.splice(i, 1); t.destroy(); this._layoutToasts(); },
+    while (this._toasts.length < 2 && this._toastQ.length) {
+      const q = this._toastQ.shift();
+      const t = s.add.text(this.px, 0, q.text, {
+        fontFamily: FONT, fontSize: 15, color: q.color, stroke: '#000', strokeThickness: 4,
+        align: 'center', wordWrap: { width: Math.min(760, this.W - 300) },
+      }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(57).setAlpha(0);
+      this._toasts.push(t);
+      s.tweens.add({ targets: t, alpha: 1, duration: 140 });
+      // A waiting queue shortens the visible ones so feedback never lags far behind.
+      const life = this._toastQ.length ? Math.min(q.ms, 1100) : q.ms;
+      s.time.delayedCall(life, () => {
+        if (!t.scene) return;
+        s.tweens.add({
+          targets: t, alpha: 0, duration: 220,
+          onComplete: () => {
+            const i = this._toasts.indexOf(t); if (i >= 0) this._toasts.splice(i, 1);
+            t.destroy(); this._layoutToasts(); this._pumpToasts();
+          },
+        });
       });
-    });
+    }
+    this._layoutToasts();
   }
   _layoutToasts() {
-    for (let i = 0; i < this._toasts.length; i++) this._toasts[this._toasts.length - 1 - i].y = this.pt - 104 - i * 22;
+    let y = this.pt - 92;
+    for (let i = this._toasts.length - 1; i >= 0; i--) { const t = this._toasts[i]; t.y = y; y -= t.height + 4; }
   }
 
   chat(m) {
@@ -627,8 +764,15 @@ export class MobaHud {
     c.add([dim, box, t, b]);
     const btns = (buttons || []).map((bt, i, arr) => this._button(
       W / 2 + (i - (arr.length - 1) / 2) * 190, H / 2 + 56, 170, 42, bt.label, bt.color || 0x39c2ff, () => bt.fn?.(), 103, 15));
-    this._modal = { c, btns };
+    this._modal = { c, btns, t, b };
     return () => this.closeModal();
+  }
+  /** Update the open modal's title / body in place (reconnect countdown). */
+  modalSet({ title, body } = {}) {
+    const m = this._modal;
+    if (!m) return;
+    if (title != null && m.t.text !== title) m.t.setText(title);
+    if (body != null && m.b.text !== body) m.b.setText(body);
   }
   closeModal() {
     if (!this._modal) return;
@@ -875,12 +1019,30 @@ export class MobaHud {
     }
     // Death overlay.
     const dead = !!me.dead && ctx.phase === 'playing';
-    if (this.death.visible !== dead) this.death.setVisible(dead);
+    if (this.death.visible !== dead) { this.death.setVisible(dead); if (dead) this._deathIn(); }
     if (dead) {
       const l = Math.max(0, (me.respawnAt || 0) - srvNow);
       this._set('death', this.deathCount, l > 0 ? `Respawning in ${Math.ceil(l / 1000)} s` : 'Respawning…');
     }
   }
 
-  setDeathTitle(text) { this.deathTitle.setText(text || '💀 YOU WERE PUSHED TO PRODUCTION'); }
+  setDeathTitle(text) {
+    this.deathTitle.setText(text || '💀 YOU WERE PUSHED TO PRODUCTION');
+    this._layoutDeath();
+  }
+  _layoutDeath() {
+    const th = this.deathTitle.height;
+    this.deathTitle.y = -8;
+    this.deathCount.y = 4;
+    this.deathHint.y = 4 + this.deathCount.height + 6;
+    const top = -8 - th - 12, bot = this.deathHint.y + this.deathHint.height + 12;
+    this.deathBand.setSize(this.W, bot - top).setPosition(0, (top + bot) / 2);
+    this.deathBand.setOrigin(0.5);
+  }
+  /** Fade the death lines in one after another (no wall of text at the moment of death). */
+  _deathIn() {
+    const s = this.s, parts = [this.deathBand, this.deathTitle, this.deathCount, this.deathHint];
+    s.tweens.killTweensOf(parts);
+    parts.forEach((o, i) => { o.setAlpha(0); s.tweens.add({ targets: o, alpha: 1, duration: 260, delay: [0, 120, 650, 1300][i] }); });
+  }
 }

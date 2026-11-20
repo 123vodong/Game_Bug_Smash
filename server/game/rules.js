@@ -89,7 +89,9 @@ export const PHASE_RESULTS_MS = 8_000;   // 8s end screen
 // ---- Stickyman Growth System (see develop_notes/STICKYMAN_GROWTH_BREAKDOWN.md) ----
 // Cumulative XP per level. Curve is intentionally steep at the top end so
 // that Lv5–6 (Senior / Super Senior) feel earned.
-export const LEVEL_XP_THRESHOLDS = [0, 150, 600, 1800, 4500, 10000];
+// EP-20 (2026-11-18): Lv2 at 60 XP (was 150) so a new hire is promoted within
+// their first minute. Client mirror: MultiPlayScene LEVEL_XP_THRESHOLDS.
+export const LEVEL_XP_THRESHOLDS = [0, 60, 600, 1800, 4500, 10000];
 export const LEVEL_MAX_ENERGY     = [50,  90, 120, 150, 180, 220];
 export const LEVEL_MAX_HEALTH     = [50,  90, 130, 180, 230, 290];
 // Titles mirror the client's LEVEL_TITLES (used for kill-feed promotion lines).
@@ -174,10 +176,27 @@ export function pvpDamage(attacker, defender, source) {
     * pvpMatchupMul(attacker.level, defender.level));
 }
 
-export const BROKEN_DURATION_MS   = 20000; // 20s — broken players take real time to recover
+// Broken (defeat) time scales with the level you had when you fell (EP-02):
+// Interns are back in 8 s, Super Seniors sit out 20 s. Index = level - 1.
+export const BROKEN_MS_BY_LEVEL   = [8000, 10000, 12000, 15000, 18000, 20000];
+export function brokenMsForLevel(lv) {
+  return BROKEN_MS_BY_LEVEL[Math.max(0, Math.min(BROKEN_MS_BY_LEVEL.length - 1, (lv | 0) - 1))];
+}
+// Reconnect grace (EP-01): a non-consented drop keeps your stickman (away,
+// frozen, still damageable by humans) for this long. Sent in `welcome.reconnectS`.
+export const RECONNECT_GRACE_S    = 20;
 // Spawn protection — fresh joins and freshly-repaired laptops get a short
 // invulnerability window so nobody gets farmed the instant they appear.
 export const SPAWN_PROTECT_MS     = 3000;
+
+// ───── Personal catch-up (EP-20) ─────
+// ×2 bug-kill XP for a human's first 3 minutes in a session (a reconnect keeps
+// the original session start, so a blip doesn't restart the window).
+export const NEW_SESSION_XP_MUL = 2;
+export const NEW_SESSION_XP_MS  = 180000;
+// "Warm" bots (already at their desks) start with 0..this XP, squared-random
+// so most are near 0 — a new human passes a few of them within a minute.
+export const BOT_WARM_XP_MAX    = 240;
 
 // Health pickups (Personal Mode only — Phase B)
 export const PICKUP_TARGET_COUNT  = 5;     // keep this many alive on the map

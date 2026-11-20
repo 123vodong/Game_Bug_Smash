@@ -21,7 +21,7 @@ import {
   LEVEL_MAX_ENERGY, LEVEL_MAX_HEALTH, LEVEL_TITLES, ENERGY_COST, SKILL_ENERGY, ENERGY_REGEN_PER_SEC,
   DASH_DISTANCE, DASH_HIT_RADIUS, SHIELD_DURATION_MS, ROLL_DISTANCE, ROLL_INVULN_MS,
   ULT_RADIUS, ULT_KNOCKBACK, ULT_STUN_MS, distToSegment, bugDamage, pvpDamage,
-  BROKEN_DURATION_MS, SPAWN_PROTECT_MS,
+  brokenMsForLevel, SPAWN_PROTECT_MS, RECONNECT_GRACE_S, NEW_SESSION_XP_MUL, NEW_SESSION_XP_MS,
   PICKUP_TARGET_COUNT, PICKUP_RESPAWN_MS, PICKUP_ENERGY_GAIN, PICKUP_ENERGY_REFILL,
   PICKUP_RADIUS, PLAYER_PICKUP_RADIUS,
   levelFromXP, maxEnergyForLevel, maxHealthForLevel, levelTitle,
@@ -40,7 +40,8 @@ import { EventDirector } from '../game/EventDirector.js';
 import { GOLDEN_BUG, WORLD_EVENTS } from '../data/events.js';
 import { sanitizeHat } from '../data/cosmetics.js';
 import {
-  KO_LINES, BUG_KO_LINES, CLOUD_KO_LINES, BOSS_KO_LINES, JOIN_LINES, LEAVE_LINES, pickLine,
+  KO_LINES, BUG_KO_LINES, CLOUD_KO_LINES, BOSS_KO_LINES, JOIN_LINES, LEAVE_LINES,
+  AWAY_LINES, BACK_LINES, pickLine,
 } from '../data/feed.js';
 
 // Dev-only hooks (force world events) are OPT-IN: start the server with
@@ -140,7 +141,7 @@ export class ArenaRoom extends Room {
       client.userData = client.userData || {};
       if (client.userData.helloed) return;
       client.userData.helloed = true;
-      client.send('welcome', { serverNow: Date.now(), events: eventTable });
+      client.send('welcome', { serverNow: Date.now(), events: eventTable, reconnectS: RECONNECT_GRACE_S });
       if (this._chatLog.length) client.send('chatHistory', this._chatLog);
     });
     this.onMessage('getChatHistory', (client) => {  // legacy clients — once per client
@@ -153,9 +154,14 @@ export class ArenaRoom extends Room {
     // Dev-only: force a world event (requires BUG_SMASH_DEBUG=1; own keys only —
     // an inherited key like 'constructor' used to crash the whole process).
     if (DEBUG_HOOKS) {
-      this.onMessage('debug', (_client, msg) => {
+      this.onMessage('debug', (client, msg) => {
         if (msg?.cmd === 'event' && Object.hasOwn(WORLD_EVENTS, msg.id)) this.events.start(msg.id);
         if (msg?.cmd === 'endEvent') this.events.end('timeout');
+        // Grant yourself XP (playtest tools: reach Lv3 fast). Finite, 1..20000.
+        if (msg?.cmd === 'xp' && Number.isFinite(msg.n)) {
+          const p = this.state.players.get(client.sessionId);
+          if (p && !p.broken) this._grantXP(client.sessionId, p, Math.max(1, Math.min(20000, Math.round(msg.n))));
+        }
       });
       console.log('[ArenaRoom] debug hooks ENABLED (BUG_SMASH_DEBUG=1)');
     } else {
@@ -170,9 +176,12 @@ export class ArenaRoom extends Room {
   // ───────────────────────── population helpers ─────────────────────────
   humanCount() { return Math.max(0, this.state.players.size - this.bots.count); }
 
+  /** Humans who are actually connected (an `away` player in reconnect grace is
+   *  skipped: no bug spawns, events or bot wandering aimed at a frozen stickman).
+   *  humanCount() still counts them, so a Wi-Fi blip doesn't churn the bots. */
   humanPlayers() {
     const out = [];
-    this.state.players.forEach((p, sid) => { if (!this.bots.isBot(sid)) out.push(p); });
+    this.state.players.forEach((p, sid) => { if (!this.bots.isBot(sid) && !p.away) out.push(p); });
     return out;
   }
 
@@ -197,7 +206,8 @@ export class ArenaRoom extends Room {
     }
     p.invulnUntil = Date.now() + SPAWN_PROTECT_MS;
     this.state.players.set(sid, p);
-    this._playerState.set(sid, { lastKillAt: 0, koStreak: 0, kos: 0 });
+    // joinedAt = session start (EP-20 new-session XP boost; survives a reconnect).
+    this._playerState.set(sid, { lastKillAt: 0, koStreak: 0, kos: 0, joinedAt: Date.now() });
     return p;
   }
 
@@ -233,7 +243,7 @@ export class ArenaRoom extends Room {
   _doMove(sid, msg) {
     if (this.state.phase !== 'playing') return;
     const p = this.state.players.get(sid);
-    if (!p) return;
+    if (!p || p.away) return; // away = frozen until the reconnect lands
     const now = Date.now();
     if (now < (p.stunnedUntil || 0)) return; // stunned — can't move
     // Right after a server-side teleport (dash, roll, knockback) the client is
@@ -266,7 +276,7 @@ export class ArenaRoom extends Room {
   _doCastSkill(sid, msg) {
     if (this.state.phase !== 'playing') return;
     const p = this.state.players.get(sid);
-    if (!p || p.broken) return;
+    if (!p || p.broken || p.away) return;
     if (Date.now() < (p.stunnedUntil || 0)) return; // stunned — can't cast
     const slot = msg?.slot;
     if (slot !== 'q' && slot !== 'w' && slot !== 'e' && slot !== 'r') return;
@@ -390,7 +400,7 @@ export class ArenaRoom extends Room {
   _doAction(sid, msg) {
     if (this.state.phase !== 'playing') return;
     const p = this.state.players.get(sid);
-    if (!p) return;
+    if (!p || p.away) return;
     const a = msg?.kind;
     if (a !== 'jump' && a !== 'punch' && a !== 'kick' && a !== 'smash' && a !== 'parry') return;
     const nowA = Date.now();
@@ -409,8 +419,8 @@ export class ArenaRoom extends Room {
     if (this.state.phase !== 'playing') return;
     const p = this.state.players.get(sid);
     if (!p) return;
-    // Broken or stunned stickymen can't attack
-    if (p.broken) return;
+    // Broken, away or stunned stickymen can't attack
+    if (p.broken || p.away) return;
     const nowS = Date.now();
     if (nowS < (p.stunnedUntil || 0)) return;
     // Server-side swing cooldown (the 220 ms one was client-only → scriptable).
@@ -510,7 +520,7 @@ export class ArenaRoom extends Room {
         p.energy = Math.min(p.maxEnergy, p.energy + ENERGY_REGEN_PER_SEC * dtSec);
       }
       // Pickup overlap (broken players skip — proposal §Recovery Restrictions)
-      if (!p.broken) this._tryCollectPickups(p, sid);
+      if (!p.broken && !p.away) this._tryCollectPickups(p, sid);
     });
 
     // Health pickup pool — Coffee Break raises the target + refills fast near humans
@@ -542,10 +552,10 @@ export class ArenaRoom extends Room {
       }
       if (bug.hidden) return;
 
-      // Find nearest non-broken player (target for pursuit + flee reference)
+      // Find nearest non-broken, connected player (target for pursuit + flee reference)
       let nearest = null, nearestSid = null, nearestD2 = Infinity;
       for (const { p, sid } of players) {
-        if (p.broken) continue;
+        if (p.broken || p.away) continue;
         const dx = p.x - bug.x, dy = p.y - bug.y;
         const d2 = dx * dx + dy * dy;
         if (d2 < nearestD2) { nearestD2 = d2; nearest = p; nearestSid = sid; }
@@ -773,7 +783,8 @@ export class ArenaRoom extends Room {
       gain = this.events.onGoldenKilled(sid, p);
     } else {
       const base = BUG_KIND_SCORE[bug.kind] ?? 10;
-      gain = Math.round(base * comboMult(p.combo) * this.events.mod('scoreMul', 1));
+      gain = Math.round(base * comboMult(p.combo) * this.events.mod('scoreMul', 1)
+        * this._newSessionXpMul(sid, now));
     }
     this._grantXP(sid, p, gain);
     this._sendTo(sid, 'kill', { gain, kind: bug.kind, combo: p.combo });
@@ -781,6 +792,14 @@ export class ArenaRoom extends Room {
       this._feed({ text: `⚡ ${p.name} is on a ×${p.combo} combo!`, color: '#ff9800', a: sid });
     }
     this.bots.onBugKill(sid, p.combo);
+  }
+
+  /** EP-20 catch-up: humans earn ×NEW_SESSION_XP_MUL bug-kill XP for the first
+   *  NEW_SESSION_XP_MS of their session (bots never — they'd outpace the newbie). */
+  _newSessionXpMul(sid, now = Date.now()) {
+    if (this.bots.isBot(sid)) return 1;
+    const ps = this._playerState.get(sid);
+    return (ps && now - ps.joinedAt < NEW_SESSION_XP_MS) ? NEW_SESSION_XP_MUL : 1;
   }
 
   /** Add score + XP; handles level-ups (max bars grow, topped up by the increment). */
@@ -815,7 +834,10 @@ export class ArenaRoom extends Room {
    * level matchup. Returns true if damage landed (not dodged/absorbed).
    */
   _applyPvpHit(aSid, p, other, vSid, source = 'smash') {
-    if (other.broken || aSid === vSid) return false;
+    if (other.broken || aSid === vSid || p.away) return false;
+    // Away (reconnect grace): bots leave a frozen stickman alone, but humans
+    // can still land hits — unplugging is never an escape from a fight.
+    if (other.away && this.bots.isBot(aSid)) return false;
     // Boss truce: no PvP while the Deadline is out (co-op moment).
     if (this.events.mod('truce', false)) return false;
     // Roll invulnerability / spawn protection — drop the hit completely.
@@ -836,7 +858,7 @@ export class ArenaRoom extends Room {
    *  `killer` = { type: 'bug', kind } | { type: 'cloud' } | { type: 'boss' }.
    *  Returns true if damage landed. */
   _applyBugContactDamage(victim, vSid, dmg, killer = null) {
-    if (victim.broken) return false;
+    if (victim.broken || victim.away) return false; // bugs/clouds/boss ignore away players
     if (Date.now() < (victim.invulnUntil || 0)) return false;
     if (victim.shielded) { victim.shielded = false; return false; }
     victim.health = Math.max(0, victim.health - dmg);
@@ -849,14 +871,22 @@ export class ArenaRoom extends Room {
     const wasScore = p.score; // points earned this life — drives the bug drop
     const wasCrown = this.state.crownSid === sessionId;
     const bounty = this.state.bounty | 0;
+    // EP-02: repair time by the level you fell at (Intern 8 s … Super Senior 20 s).
+    const brokenMs = brokenMsForLevel(p.level);
+    // EP-20: THE DEADLINE knocking you out during its truce (co-op raid) never
+    // costs your career — no level/XP/score reset and no bug spew.
+    const keepCareer = killer?.type === 'boss' && this.events.mod('truce', false);
     p.broken = true;
     p.broken_seq = (p.broken_seq + 1) >>> 0;
+    p.brokenUntil = Date.now() + brokenMs;
     // Reset progression. Health + energy restore on exit; while broken they
     // sit at 0 (visible empty bars) so the recovery beat reads clearly.
-    p.level = 1;
-    p.xp = 0;
-    p.maxEnergy = LEVEL_MAX_ENERGY[0];
-    p.maxHealth = LEVEL_MAX_HEALTH[0];
+    if (!keepCareer) {
+      p.level = 1;
+      p.xp = 0;
+      p.maxEnergy = LEVEL_MAX_ENERGY[0];
+      p.maxHealth = LEVEL_MAX_HEALTH[0];
+    }
     p.energy = 0;
     p.health = 0;
     p.combo = 0;
@@ -868,7 +898,7 @@ export class ArenaRoom extends Room {
     p.stunnedUntil = 0;
 
     // Personal Mode: defeated players spew bugs; score then RESETS to zero.
-    if (this.state.friendlyFire) {
+    if (this.state.friendlyFire && !keepCareer) {
       const dropCount = Math.min(10, 2 + Math.floor(wasScore / 50));
       for (let i = 0; i < dropCount; i++) {
         const angle = (Math.PI * 2 * i) / dropCount + Math.random() * 0.6;
@@ -892,7 +922,7 @@ export class ArenaRoom extends Room {
         aps.kos += 1;
         this._feed({ text: `💻 ${pickLine(KO_LINES, { a: a.name, b: vName })}`, color: '#ff8a8a', a: killer.sid, b: sessionId });
         this._sendTo(killer.sid, 'ko', { victim: vName, streak: aps.koStreak });
-        this._sendTo(sessionId, 'brokenBy', { by: a.name });
+        this._sendTo(sessionId, 'brokenBy', { by: a.name, ms: brokenMs });
         const tier = STREAK_TIERS.find((t) => t.at === aps.koStreak)
           || (aps.koStreak > 12 && aps.koStreak % 4 === 0
             ? { icon: '👹', label: 'UNSTOPPABLE — somebody page the CTO' } : null);
@@ -914,25 +944,28 @@ export class ArenaRoom extends Room {
     } else if (killer?.type === 'bug') {
       const bug = BUG_DISPLAY_NAME[killer.kind] || 'bug';
       this._feed({ text: `🐞 ${pickLine(BUG_KO_LINES, { b: vName, bug })}`, color: '#c9a0ff', b: sessionId });
-      this._sendTo(sessionId, 'brokenBy', { by: `a ${bug}` });
+      this._sendTo(sessionId, 'brokenBy', { by: `a ${bug}`, ms: brokenMs });
     } else if (killer?.type === 'cloud') {
       this._feed({ text: pickLine(CLOUD_KO_LINES, { b: vName }), color: '#7ed957', b: sessionId });
-      this._sendTo(sessionId, 'brokenBy', { by: 'toxic fumes' });
+      this._sendTo(sessionId, 'brokenBy', { by: 'toxic fumes', ms: brokenMs });
     } else if (killer?.type === 'boss') {
       this._feed({ text: `⏰ ${pickLine(BOSS_KO_LINES, { b: vName })}`, color: '#ff5252', b: sessionId });
-      this._sendTo(sessionId, 'brokenBy', { by: 'THE DEADLINE' });
+      this._sendTo(sessionId, 'brokenBy', { by: 'THE DEADLINE', ms: brokenMs, kept: keepCareer });
     }
     this.bots.onBroken(sessionId);
 
+    // Only THIS defeat's timer may repair the laptop (seq guard: durations vary now).
+    const seq = p.broken_seq;
     this.clock.setTimeout(() => {
       const cur = this.state.players.get(sessionId);
-      if (cur && cur.broken) this._exitBroken(cur);
-    }, BROKEN_DURATION_MS);
+      if (cur && cur.broken && cur.broken_seq === seq) this._exitBroken(cur);
+    }, brokenMs);
   }
 
   _exitBroken(p) {
     p.broken = false;
     p.broken_seq = (p.broken_seq + 1) >>> 0;
+    p.brokenUntil = 0;
     p.energy = p.maxEnergy;
     p.health = p.maxHealth;
     p.action = 'idle';
@@ -1044,7 +1077,7 @@ export class ArenaRoom extends Room {
       p.energy = p.maxEnergy;
       p.maxHealth = LEVEL_MAX_HEALTH[0];
       p.health = p.maxHealth;
-      p.broken = false;
+      p.broken = false; p.brokenUntil = 0;
     });
     this._playerState.forEach((ps) => { ps.lastKillAt = 0; });
     this.state.bugs.forEach((_, id) => this.state.bugs.delete(id));
@@ -1197,15 +1230,47 @@ export class ArenaRoom extends Room {
     }
   }
 
-  onLeave(client, _consented) {
-    const p = this.state.players.get(client.sessionId);
-    const name = p?.name;
-    this._removePlayer(client.sessionId);
+  /**
+   * EP-01 reconnect grace. A consented leave (room.leave() → close 4000) removes
+   * the player at once. Any other close (Wi-Fi blip, tab killed, socket error)
+   * keeps the stickman for RECONNECT_GRACE_S as `away`: frozen, ignored by bots /
+   * bugs / boss, but still damageable by humans. Colyseus resolves the wait when
+   * the client calls `client.reconnect(room.reconnectionToken)`; onAuth is NOT
+   * run on that path and the new Client inherits the old `userData`.
+   */
+  async onLeave(client, consented) {
+    const sid = client.sessionId;
+    const p = this.state.players.get(sid);
+    if (p && !consented && RECONNECT_GRACE_S > 0) {
+      p.away = true;
+      p.action = 'idle';
+      p.action_seq = (p.action_seq + 1) >>> 0;
+      this._feed({ text: `📶 ${pickLine(AWAY_LINES, { a: p.name })}`, color: '#8890a0', a: sid });
+      console.log(`[ArenaRoom] ~away ${sid} "${p.name}" (grace ${RECONNECT_GRACE_S}s)`);
+      try {
+        const newClient = await this.allowReconnection(client, RECONNECT_GRACE_S);
+        const cur = this.state.players.get(sid);
+        if (cur) {
+          cur.away = false;
+          cur._lastMoveAt = Date.now(); // first move after the gap gets a fresh step budget
+          // A new Client object: answer its `hello` again (userData was copied over).
+          newClient.userData = { ...(newClient.userData || {}), helloed: false, historySent: false };
+          this._feed({ text: `🔌 ${pickLine(BACK_LINES, { a: cur.name })}`, color: '#8fd6a0', a: sid });
+          console.log(`[ArenaRoom] +back ${sid} "${cur.name}" (Lv${cur.level}, score ${cur.score})`);
+          return;
+        }
+        // Removed while away (shouldn't happen): no stickman to return to.
+        try { newClient.leave?.(4000); } catch (_) { /* already closing */ }
+      } catch (_) { /* grace expired, or the room is disposing */ }
+    }
+    const name = this.state.players.get(sid)?.name;
+    this._removePlayer(sid);
     if (name) this._feed({ text: `🚪 ${pickLine(LEAVE_LINES, { a: name })}`, color: '#8890a0' });
-    console.log(`[ArenaRoom] -leave ${client.sessionId} (humans ${this.humanCount()}, bots ${this.bots.count})`);
+    console.log(`[ArenaRoom] -leave ${sid} (humans ${this.humanCount()}, bots ${this.bots.count})`);
   }
 
   onDispose() {
+    // (Pending reconnections are rejected by Colyseus on dispose → onLeave cleans up.)
     console.log('[ArenaRoom] disposed', this.roomId);
   }
 

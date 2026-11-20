@@ -2,6 +2,8 @@
 // fonts, colors, depths and the procedurally generated textures (no image files —
 // everything here is drawn once into canvas textures and reused by every view).
 import { TEAM_INFO } from '../../../shared/moba/rules.js';
+import { fxAllowed } from '../../core/FxPrefs.js';
+import { hatById } from '../../data/cosmetics.js';
 
 export const FONT = 'Arial Black, sans-serif';
 export const MONO = 'Consolas, monospace';
@@ -43,6 +45,25 @@ export const fmtTime = (ms) => {
 export const toArr = (a) => (!a ? [] : Array.isArray(a) ? a : Array.from(a));
 /** 0xRRGGBB number or CSS string → CSS string (for canvas 2D). */
 export const toCss = (c, dflt = '#888888') => (typeof c === 'number' && Number.isFinite(c) ? css(c) : (typeof c === 'string' && c ? c : dflt));
+
+// ─────────────────────────── EP-10: calm settings + EP-11: hats ───────────────────────────
+// settings { shake, flashes } (EXPERIENCE_PASS_BREAKDOWN §3.4) via core/FxPrefs (cached reads;
+// it also gates every Camera.shake / Camera.flash globally). Views ask before their own flashes.
+const _calm = { shake: true, flashes: true };
+export function calmPrefs() {
+  _calm.shake = fxAllowed('shake'); _calm.flashes = fxAllowed('flashes');
+  return _calm;
+}
+/** Camera shake that honours settings.shake. */
+export function shakeCam(scene, ms, amt) {
+  if (!calmPrefs().shake) return;
+  try { scene?.cameras?.main?.shake(ms, amt); } catch (_) { /* camera gone */ }
+}
+/** Hat id (join option `hat` → TeamChamp.hat) → emoji ('' = none / unknown id). */
+export function hatEmoji(id) {
+  if (!id || typeof id !== 'string') return '';
+  try { const h = hatById(id); return h && h.id === id ? h.emoji || '' : ''; } catch (_) { return ''; }
+}
 
 // ─────────────────────────── looks.js bridge ───────────────────────────
 // src/entities/moba/looks.js (client-art, contract v2 §3.3) is loaded by
