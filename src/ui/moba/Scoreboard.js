@@ -191,7 +191,7 @@ export class Scoreboard {
           teams[sc.team].push({ key, ch: {
             team: sc.team, champ: sc.champ, name: sc.name, isBot: sc.isBot, level: sc.level, kills: sc.kills,
             deaths: sc.deaths, assists: sc.assists, cs: sc.cs, items: sc.items, dead: sc.dead,
-            spellD: sc.spellD, spellF: sc.spellF, gold: goldSeen.has(key) ? goldSeen.get(key) : null,
+            spellD: sc.spellD, spellF: sc.spellF, gold: goldSeen.has(key) ? goldSeen.get(key) : null, rank: sc.rank || '',
           } });
         });
       } else {
@@ -249,7 +249,9 @@ export class Scoreboard {
     r.emoji.setVisible(!pk);
     r.name.setText(`${ch.isBot ? '🤖 ' : ''}${clipName(ch.name || '?', 14)}`).setColor(isMe ? '#ffd23f' : '#ffffff');
     const sp = [ch.spellD, ch.spellF].map((id) => SPELLS[id]?.icon || '').join('');   // v3 summoner spells
-    r.sub.setText((info ? `${info.name} · ${info.role}` : String(ch.champ || '')) + (sp ? `  ${sp}` : ''));
+    // Pass 2 RP-13: rank badge (humans) after the champion line
+    const rk = !ch.isBot && ch.rank ? `  ·  ${ch.rank}` : '';
+    r.sub.setText((info ? `${info.name} · ${info.role}` : String(ch.champ || '')) + (sp ? `  ${sp}` : '') + rk);
     r.lv.setText(String(ch.level | 0));
     r.kda.setText(`${ch.kills | 0} / ${ch.deaths | 0} / ${ch.assists | 0}`);
     r.cs.setText(String(ch.cs | 0));

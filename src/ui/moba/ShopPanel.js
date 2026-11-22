@@ -1,7 +1,9 @@
 // src/ui/moba/ShopPanel.js — Team Mode shop: the "Office Supply Store".
 //
 // Contract (.claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3.4):
-//   const shop = new ShopPanel(scene, { onBuy });  // onBuy(itemId) → scene sends 'buy' { item }
+//   const shop = new ShopPanel(scene, { onBuy, onSell }); // onBuy(itemId) → 'buy' { item }
+//                                                  // Pass 2: onSell(slot) → 'sell' { slot } — click an
+//                                                  // owned item (SELL button) or right-click it
 //   shop.open(); shop.close(); shop.toggle(); shop.isOpen
 //   shop.update({ gold, items, canShop })          // every frame — cheap, re-renders only on change
 //                                                  // items: 6-slot array or Colyseus ArraySchema
@@ -17,7 +19,7 @@
 // construct before connecting.
 import { ITEMS, SHOP_ORDER, buyBlocker } from '../../../shared/moba/items.js';
 import { CHAMPIONS } from '../../../shared/moba/champions.js';
-import { INVENTORY_SLOTS } from '../../../shared/moba/rules.js';
+import { INVENTORY_SLOTS, sellValue, SELL_UNDO_MS } from '../../../shared/moba/rules.js';
 import { AudioManager } from '../../core/AudioManager.js';
 import {
   FONT_TITLE, FONT_MONO, FONT_UI, NEON, hex, glow, pin, drawPanel, makeButton,
@@ -25,7 +27,7 @@ import {
 } from './uiKit.js';
 
 const DEPTH = 86;
-const PW = 1000, PH = 548;
+const PW = 1000, PH = 612;                   // Pass 2: 25 items (1 + 8 + 16 → 7 rows)
 const GRID_X = 16, GRID_Y = 88, HEAD_H = 20, SECTION_GAP = 6;
 const TILE_W = 166, TILE_H = 58, COL_GAP = 8, ROW_GAP = 7, COLS = 4;
 const RX = 720, RW = 264;                    // right column: detail, inventory, recommended
@@ -48,9 +50,13 @@ function fitTitle(t, full, maxH) {
 }
 
 export class ShopPanel {
-  constructor(scene, { onBuy } = {}) {
+  constructor(scene, { onBuy, onSell } = {}) {
     this.scene = scene;
     this.onBuy = typeof onBuy === 'function' ? onBuy : null;
+    this.onSell = typeof onSell === 'function' ? onSell : null;
+    this._selSlot = null;                           // Pass 2: inventory slot picked for SELL
+    this._boughtAt = new Array(INVENTORY_SLOTS).fill(0); // scene ms an item appeared (undo refund display)
+    this._seeded = false;
     this._open = false;
     this._gold = 0;
     this._canShop = false;
@@ -124,8 +130,17 @@ export class ShopPanel {
     if (canShop !== this._canShop) { this._canShop = canShop; changed = true; }
     for (let i = 0; i < INVENTORY_SLOTS; i++) {
       const v = slotAt(s.items, i);
-      if (v !== this._slots[i]) { this._slots[i] = v; changed = true; }
+      if (v !== this._slots[i]) {
+        this._slots[i] = v; changed = true;
+        // items already owned on the first update (reconnect) never show the undo refund
+        this._boughtAt[i] = v && this._seeded ? this.scene.time.now : 0;
+        if (!v && this._selSlot === i) this._selSlot = null;
+      }
     }
+    this._seeded = true;
+    // the undo window closing changes the SELL label
+    if (this._selSlot != null && this._boughtAt[this._selSlot] && this.scene.time.now - this._boughtAt[this._selSlot] > SELL_UNDO_MS
+      && !this._undoExpired) { this._undoExpired = true; changed = true; }
     if (changed) this._dirty = true;
     if (this._open && this._dirty) this._render();
   }
@@ -229,6 +244,8 @@ export class ShopPanel {
     const stat = s.add.text(48, TILE_H - 5, itemStatLine(it, true), {
       fontFamily: FONT_MONO, fontSize: 10, color: '#8fd0ff',
     }).setOrigin(0, 1);
+    // Pass 2: 3-stat items (VPN Hoodie, Letter Opener…) — shrink so the line stays inside the tile.
+    for (let fs = 9; fs >= 7 && stat.width > TILE_W - 52; fs--) stat.setFontSize(fs);
     const badge = s.add.text(TILE_W - 5, 4, '', {
       fontFamily: FONT_TITLE, fontSize: 10, color: '#7ed957', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(1, 0);
@@ -271,7 +288,12 @@ export class ShopPanel {
       x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'BUY', color: NEON.green, fontSize: 16,
       onClick: () => { if (this._open) this._tryBuy(this._sel); },
     });
-    B.add(this._buyBtn.root);
+    this._sellBtn = makeButton(s, {
+      x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'SELL', color: NEON.orange, fontSize: 16,
+      onClick: () => { if (this._open && this._selSlot != null) this._trySell(this._selSlot); },
+    });
+    this._sellBtn.root.setVisible(false);
+    B.add([this._buyBtn.root, this._sellBtn.root]);
   }
 
   _buildInventory() {
@@ -286,14 +308,19 @@ export class ShopPanel {
     for (let i = 0; i < INVENTORY_SLOTS; i++) {
       const x = RX + i * (size + gap), y = y0 + 14;
       const t = s.add.text(x + size / 2, y + size / 2, '', { fontSize: 22, padding: { y: 4 } }).setOrigin(0.5);
-      const hit = s.add.rectangle(x, y, size, size, 0xffffff, 0).setOrigin(0).setInteractive();
+      const hit = s.add.rectangle(x, y, size, size, 0xffffff, 0).setOrigin(0).setInteractive({ useHandCursor: true });
       hit.on('pointerover', () => this._setHover(this._slots[i] || null));
       hit.on('pointerout', () => { if (this._hover && this._hover === this._slots[i]) this._setHover(null); });
       hit.on('pointerdown', swallow);
       hit.on('pointerup', (p, lx, ly, ev) => {
         ev?.stopPropagation?.();
         const id = this._slots[i];
-        if (id && this._open) this._select(id);
+        if (!id || !this._open) return;
+        // Pass 2 RP-07: click = pick it (the detail shows SELL) · right-click = sell now
+        this._selSlot = i; this._undoExpired = false;
+        this._select(id);
+        if (p && p.button === 2) this._trySell(i);
+        else AudioManager.uiClick();
       });
       B.add([t, hit]);
       this._inv.push({ x, y, size, t });
@@ -311,7 +338,7 @@ export class ShopPanel {
     this._recNext = s.add.text(RX + RW / 2, y0 + 72, '', {
       fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', padding: { y: 2 },
     }).setOrigin(0.5);
-    const hint = s.add.text(RX + RW / 2, PH - 18, 'double-click / right-click to buy · P / ESC close', {
+    const hint = s.add.text(RX + RW / 2, PH - 18, 'right-click: buy / sell · P / ESC close', {
       fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c',
     }).setOrigin(0.5);
     B.add([this._recLabel, this._recG, this._recRing, this._recNext, hint]);
@@ -353,6 +380,7 @@ export class ShopPanel {
   }
 
   _clickItem(id, p) {
+    this._selSlot = null; // a shop tile → BUY mode
     const now = this.scene.time.now;
     const dbl = this._last.id === id && now - this._last.at < DOUBLE_CLICK_MS;
     this._last.id = id;
@@ -402,6 +430,29 @@ export class ShopPanel {
     try { this.onBuy?.(id); } catch (e) { console.warn('[ShopPanel] onBuy failed', e); }
   }
 
+  /** Pass 2 RP-07: refund shown for inventory slot i (the server decides the real one). */
+  _sellValue(i) {
+    const it = ITEMS[this._slots[i]];
+    if (!it) return 0;
+    const at = this._boughtAt[i];
+    return sellValue(it.cost, at || 0, at ? this.scene.time.now : 1e15);
+  }
+
+  _trySell(i) {
+    const it = ITEMS[this._slots[i]];
+    if (!it) return;
+    if (!this._canShop) {
+      AudioManager.skillExpire?.();
+      this._sellBtn.shake();
+      this._dReason.setText('🏠 Return to base to sell').setColor('#ffcf8a');
+      return;
+    }
+    const sl = this._inv[i];
+    if (sl) this.scene.tweens.add({ targets: sl.t, scale: { from: 1.5, to: 0 }, duration: 240, ease: 'Back.easeIn', onComplete: () => sl.t.setScale(1) });
+    AudioManager.coin?.() ?? AudioManager.uiClick?.();
+    try { this.onSell?.(i); } catch (e) { console.warn('[ShopPanel] onSell failed', e); }
+  }
+
   _defaultSelection() {
     for (const id of this._build) if (!this._ownedCount(id)) return id;
     return SHOP_ORDER.find((id) => ITEMS[id]) || null;
@@ -423,7 +474,7 @@ export class ShopPanel {
     const g = this._statusG;
     g.clear();
     if (this._canShop) {
-      this._statusText.setText('✅ In base — click an item, then BUY (or double-click / right-click it)')
+      this._statusText.setText('✅ In base — click an item, then BUY (or right-click it) · click your own item to SELL')
         .setColor('#7ed957');
     } else {
       g.fillStyle(0x3a2006, 0.95);
@@ -464,6 +515,7 @@ export class ShopPanel {
       g.lineStyle(1.5, it ? (TIER_COLOR[it.tier] ?? 0x7ec8ff) : 0x2a3850, 0.85);
       strokeRR(g, sl.x, sl.y, sl.size, sl.size, 7);
       sl.t.setText(it ? it.emoji : '');
+      if (it && this._selSlot === i) { g.lineStyle(2.5, NEON.orange, 1); strokeRR(g, sl.x - 2, sl.y - 2, sl.size + 4, sl.size + 4, 8); }
     });
     this._invLabel.setText(`INVENTORY ${n}/${INVENTORY_SLOTS}`);
   }
@@ -532,6 +584,17 @@ export class ShopPanel {
     const why = this._whyNot(id);
     this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : '✓ ready to buy'))
       .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
+    // Pass 2 RP-07: an owned item picked from the inventory → SELL instead of BUY.
+    const sellSlot = this._selSlot != null && this._slots[this._selSlot] === id && (!this._hover || this._hover === id) ? this._selSlot : null;
+    this._sellBtn.root.setVisible(sellSlot != null);
+    this._buyBtn.root.setVisible(sellSlot == null);
+    if (sellSlot != null) {
+      const v = this._sellValue(sellSlot), undo = v >= it.cost;
+      this._sellBtn.setLabel(`${undo ? 'UNDO' : 'SELL'} · +${fmtGold(v)}g`).setDimmed(!this._canShop);
+      this._dReason.setText(!this._canShop ? '🏠 Return to base to sell' : (undo ? '↩ just bought — full refund' : '💸 sells for 70% · right-click to sell'))
+        .setColor(!this._canShop ? '#ffcf8a' : '#ffb347');
+      return;
+    }
     this._buyBtn.setLabel(`BUY · ${fmtGold(it.cost)}g`).setDimmed(!!why);
   }
 }

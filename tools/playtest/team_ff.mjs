@@ -216,34 +216,46 @@ const tickSamples = [];
   draftAgg.problems += fails;
   console.log(`EP-19 draft self-test (40 trials, one champion per role per team · bots lock ≤ ${SELECT_BOT_PICK_MS[1] / 1000}s · loading ≤ ${SELECT_ALL_LOCKED_MS / 1000}s after): ${fails ? 'FAIL' : 'ok'}${log.length ? `${NL}  ` + log.join(`${NL}  `) : ''}`);
 }
-// EP-19 r2 queue self-test (quick play): a lone human → select LOBBY_SOLO_MS after joining and playing
-// ≤ 15 s after the click (locking right away); a 2nd human 1 s later → LOBBY_MS from the FIRST join,
-// never shorter than what was already shown.
+// Pass 2 RP-06 queue self-test (quick play): a lone human waits LOBBY_MS (30 s) — READY starts the
+// draft at once (click → playing ≤ 10 s); a later join keeps ≥ LOBBY_JOIN_EXTEND_MS on the clock, never past
+// LOBBY_MAX_MS from the first join, never shorter than shown; with 2 humans the draft starts only when BOTH are ready.
 {
-  const { LOBBY_MS, LOBBY_SOLO_MS } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/rules.js')).href);
+  const { LOBBY_MS, LOBBY_JOIN_EXTEND_MS, LOBBY_MAX_MS } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/rules.js')).href);
   const probs = [];
   const clickToPlay = [];
+  const cl = (id) => ({ sessionId: id, userData: {}, send: () => {} });
   for (let trial = 0; trial < 10; trial++) {
     Math.random = mulberry32(seed * 17 + trial);
     const { room } = makeRoom();
     const t0 = Date.now();
-    room.onJoin({ sessionId: 'q1', userData: {}, send: () => {} }, { name: 'Q1', champ: 'tester', autoLock: true });
-    if (room.state.lobbyEndsAt !== t0 + LOBBY_SOLO_MS) probs.push(`solo lobbyEndsAt ${room.state.lobbyEndsAt - t0}`);
-    let selAt = 0;
-    for (let i = 0; i < 1000 && room.state.phase !== 'playing'; i++) { fake += 50; room._tick(50); if (!selAt && room.state.phase === 'select') selAt = Date.now(); }
+    room.onJoin(cl('q1'), { name: 'Q1', champ: 'tester', autoLock: true });
+    if (room.state.lobbyEndsAt !== t0 + LOBBY_MS) probs.push(`solo lobbyEndsAt ${room.state.lobbyEndsAt - t0}`);
+    fake += 500; room._tick(50);
+    room._doReady('q1');
+    if (room.state.phase !== 'select') probs.push(`solo READY → ${room.state.phase}`);
+    for (let i = 0; i < 1000 && room.state.phase !== 'playing'; i++) { fake += 50; room._tick(50); }
     clickToPlay.push(Date.now() - t0);
-    if (selAt - t0 > LOBBY_SOLO_MS + 100) probs.push(`solo select after ${selAt - t0} ms`);
-    if (Date.now() - t0 > 15000) probs.push(`solo click→playing ${Date.now() - t0} ms`);
+    if (Date.now() - t0 > 10000) probs.push(`solo click→playing ${Date.now() - t0} ms`);
+    // two humans: extension, cap, ready check
     const { room: r2 } = makeRoom();
     const u0 = Date.now();
-    r2.onJoin({ sessionId: 'a', userData: {}, send: () => {} }, { name: 'A' });
-    fake += 1000; r2._tick(50);
-    const shown = r2.state.lobbyEndsAt;
-    r2.onJoin({ sessionId: 'b', userData: {}, send: () => {} }, { name: 'B' });
-    if (r2.state.lobbyEndsAt !== Math.max(shown, u0 + LOBBY_MS)) probs.push(`duo lobbyEndsAt ${r2.state.lobbyEndsAt - u0} (want ${LOBBY_MS})`);
+    r2.onJoin(cl('a'), { name: 'A' });
+    fake += 25000; r2._tick(50);
+    r2.onJoin(cl('b'), { name: 'B' });
+    if (r2.state.lobbyEndsAt !== u0 + 25000 + LOBBY_JOIN_EXTEND_MS) probs.push(`late join → ends ${r2.state.lobbyEndsAt - u0} (want ${25000 + LOBBY_JOIN_EXTEND_MS})`);
+    fake += 9000; r2._tick(50);
+    r2.onJoin(cl('c'), { name: 'C' });           // +34 s → +44 s
+    if (r2.state.lobbyEndsAt !== u0 + 34000 + LOBBY_JOIN_EXTEND_MS) probs.push(`2nd late join → ends ${r2.state.lobbyEndsAt - u0}`);
+    fake += 9000; r2._tick(50);
+    r2.onJoin(cl('d'), { name: 'D' });           // +43 s → capped at LOBBY_MAX_MS
+    if (r2.state.lobbyEndsAt !== u0 + LOBBY_MAX_MS) probs.push(`cap → ends ${r2.state.lobbyEndsAt - u0} (want ${LOBBY_MAX_MS})`);
+    r2._doReady('a'); r2._doReady('b'); r2._doReady('c');
+    if (r2.state.phase !== 'lobby') probs.push('3 of 4 ready already started');
+    r2._doReady('d');
+    if (r2.state.phase !== 'select') probs.push(`all ready → ${r2.state.phase}`);
   }
   if (probs.length) totals.exceptions++;
-  console.log(`EP-19 r2 queue self-test (10 trials): ${probs.length ? 'FAIL ' + probs.slice(0, 4).join(' · ') : 'ok'} · solo click→playing avg ${(clickToPlay.reduce((a, b) => a + b, 0) / clickToPlay.length / 1000).toFixed(1)} s (max ${(Math.max(...clickToPlay) / 1000).toFixed(1)})`);
+  console.log(`Pass 2 queue self-test (10 trials): ${probs.length ? 'FAIL ' + probs.slice(0, 4).join(' · ') : 'ok'} · solo READY click→playing avg ${(clickToPlay.reduce((a, b) => a + b, 0) / clickToPlay.length / 1000).toFixed(1)} s (max ${(Math.max(...clickToPlay) / 1000).toFixed(1)})`);
 }
 // v4 view-churn self-test (decode-error regression): an enemy champion flickers visible → hidden
 // across TWO ticks inside ONE patch window (+ an item change). Pre-fix this made the decoder see a

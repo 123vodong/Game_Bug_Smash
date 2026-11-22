@@ -424,7 +424,9 @@ export function startClockSync(room, { everyMs = 3000, seed = null } = {}) {
 
 // ───────────────────────── Experience Pass 1: §3.3 reconnect loop ─────────────────────────
 // Mirrors server/game/moba/tuning.js TEAM_RECONNECT_GRACE_S (used until `welcome.reconnectS` arrives).
-export const TEAM_RECONNECT_GRACE_S = 60;
+// Pass 2: the seat is held for the whole match — this is only how long the page keeps retrying
+// by itself; later the menu / Team hub offers REJOIN (saved token, src/core/Identity.js).
+export const TEAM_RECONNECT_GRACE_S = 300;
 
 /**
  * Retry `client.reconnect(token)` every `everyMs` (each attempt raced against `attemptMs`) until
@@ -469,7 +471,8 @@ export function reconnectLoop({
     } catch (e) {
       if (done) return;
       const msg = String(e?.message || e);
-      gone = /not found|no room|does not exist|disposed/i.test(msg) ? gone + 1 : 0;
+      // (Pass 2: an expired / invalid token = the hold was released → the match is over)
+      gone = /not found|no room|does not exist|disposed|expired|invalid/i.test(msg) ? gone + 1 : 0;
       if (gone >= goneAfter) { finish(() => onFail?.('gone', msg)); return; }
       next();
     }

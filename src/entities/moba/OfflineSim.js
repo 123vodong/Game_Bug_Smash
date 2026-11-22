@@ -95,6 +95,7 @@ export class OfflineSim {
     } else if (type === 'cast') this._cast(me, m);
     else if (type === 'spell') this._spell(me, m);
     else if (type === 'buy') this._buy(me, m.item);
+    else if (type === 'sell') this._sell(me, m.slot);
     else if (type === 'recall') this._recall(me);
   }
 
@@ -644,7 +645,20 @@ export class OfflineSim {
     c.gold -= it.cost;
     if (it.consumable) { c._coffeeUntil = this.t + (it.effect?.ms || 6000); return; }
     const slot = c.items.indexOf('');
-    if (slot >= 0) { c.items[slot] = id; this._recalc(c, false); }
+    if (slot >= 0) { c.items[slot] = id; (c._boughtAt ||= [])[slot] = this.t; this._recalc(c, false); }
+  }
+
+  /** Pass 2 RP-07: sell (same rules as the server — rules.sellValue). */
+  _sell(c, slot) {
+    if (!Number.isInteger(slot) || slot < 0 || slot >= R.INVENTORY_SLOTS) return;
+    const id = c.items[slot], it = id && ITEMS[id];
+    if (!it) return;
+    const inFountain = dist(c, FOUNTAIN[c.team]) <= R.FOUNTAIN_RADIUS;
+    if (!(inFountain || c.dead)) return;
+    c.gold += R.sellValue(it.cost, (c._boughtAt || [])[slot] || 0, this.t);
+    c.items[slot] = '';
+    if (c._boughtAt) c._boughtAt[slot] = 0;
+    this._recalc(c, false);
   }
 
   /** Knockback `dist` px straight away from (fx, fy), stopped by walls; into a wall → wallStun. */

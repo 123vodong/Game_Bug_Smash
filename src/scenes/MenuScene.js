@@ -13,6 +13,7 @@ import { SettingsPanel } from '../ui/SettingsPanel.js';
 import { ProfilePanel } from '../ui/ProfilePanel.js';
 import { LevelSelectPanel } from '../ui/LevelSelectPanel.js';
 import { WelcomePanel } from '../ui/WelcomePanel.js';
+import { loadMatch, clearMatch, fetchMe } from '../core/Identity.js';
 
 // Stats API on the game server — same host rules as MultiPlayScene's SERVER_URL /
 // Team Mode's teamServerUrl(): `?server=ws(s)://…` override, the :8000 python static
@@ -173,6 +174,8 @@ export default class MenuScene extends Phaser.Scene {
       color: NEON_PURPLE, iconKind: 'swords',
     });
     team.on('pointerup', () => this.scene.start('TeamLobbyScene'));
+    this._rejoinShown = false;
+    this._rejoinBanner(W); // Pass 2 RP-05
     // Small "NEW" sticker on the button's top-right corner.
     const newTag = this.add.container(W / 2 + 100 + 82, mpY + 4 - 22).setDepth(12).setAngle(8);
     const newBg = this.add.graphics();
@@ -229,6 +232,29 @@ export default class MenuScene extends Phaser.Scene {
     this._nameDisplay.on('pointerup',   () => this._promptForName());
     this._nameDisplay.setPadding(10, 8, 0, 8); // bigger tap target on phones
 
+  }
+
+  /** Pass 2 RP-05: a saved Team match the server still holds a seat in → "REJOIN" banner (top). */
+  async _rejoinBanner(W) {
+    const saved = loadMatch();
+    if (!saved) return;
+    const me = await fetchMe();
+    if (!this.scene?.isActive?.() || this._rejoinShown) return;
+    const m = me?.match;
+    if (!m || m.roomId !== saved.roomId) { if (me) clearMatch(); return; }
+    this._rejoinShown = true;
+    const c = this.add.container(W / 2, 30).setDepth(30);
+    const g = this.add.graphics();
+    g.fillStyle(0x2a1d05, 0.95); g.fillRoundedRect(-280, -20, 560, 40, 12);
+    g.lineStyle(2, 0xffd23f, 1); g.strokeRoundedRect(-280, -20, 560, 40, 12);
+    const t = this.add.text(0, 0, m.connected ? '⚔️ Your Team match is open in another tab — tap to play it here'
+      : '⚔️ Your Team match is still running — tap to REJOIN', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 14, color: '#ffd23f',
+    }).setOrigin(0.5);
+    const hit = this.add.rectangle(0, 0, 560, 40, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    hit.on('pointerup', () => { AudioManager.uiClick?.(); this.scene.start('TeamLobbyScene', { rejoin: true }); });
+    c.add([g, t, hit]);
+    this.tweens.add({ targets: c, scale: { from: 1, to: 1.04 }, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
   async _refreshOnline() {

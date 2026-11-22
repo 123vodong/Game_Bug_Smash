@@ -61,7 +61,7 @@ export const BOT_TEAM_LINES = {
 };
 
 /** Experience Pass 1 (§5): reconnect / disconnect feed lines ({a} = the human). */
-export const DISCONNECT_LINE = '📶 {a} lost Wi-Fi — a bot holds their laptop for {s}s';
+export const DISCONNECT_LINE = '📶 {a} lost Wi-Fi — a bot holds their laptop until they are back';
 export const RECONNECT_LINES = [
   "🔌 {a} is back — 'just restarting my router'",
   '☕ {a} returned. The bot already pushed to main.',

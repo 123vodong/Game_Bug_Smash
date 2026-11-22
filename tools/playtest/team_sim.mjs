@@ -185,7 +185,7 @@ process.exit(0);
 async function runExploits() {
   const results = [];
   const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
-  check('EP-03: welcome carries reconnectS (team grace = 60 s)', welcome?.reconnectS === 60, `welcome=${JSON.stringify(welcome)}`);
+  check('EP-03 / Pass 2: welcome carries reconnectS (client auto-retry = 300 s; the seat is held for the match)', welcome?.reconnectS === 300, `welcome=${JSON.stringify(welcome)}`);
   // v2: three more humans so the wall / pet / knockback checks have casters + victims.
   //   main = pixel (blue, blink) · B = guard (red, knockback E) · C = embedded (blue, pet) · D = appdev (red, dash E)
   const extra = {};
@@ -447,7 +447,11 @@ async function v3SelectChecks(check, me, extra) {
   await sleep(300);
   if (extra.C) check('v3: join option autoLock locks the requested champion', champ(extra.C)?.locked === true && champ(extra.C)?.champ === 'embedded', `C=${champ(extra.C)?.champ} locked=${champ(extra.C)?.locked}`);
 
+  // Pass 2 RP-06: START NOW = ready — the draft starts once EVERY queued human is ready.
   room.send('startNow');
+  await sleep(200);
+  check('Pass 2: one of 4 humans ready → still in the lobby (ready check)', st().phase === 'lobby', `phase=${st().phase}`);
+  for (const r of Object.values(extra)) r?.send('ready');
   for (let i = 0; i < 30 && st().phase === 'lobby'; i++) await sleep(100);
   const now = () => Date.now() + skew;
   let seats = 0, badSpells = 0;
@@ -981,7 +985,7 @@ async function ep3ReconnectChecks(check, me, extra) {
       `sid same=${C2.sessionId === cSid} isBot=${c?.isBot} score.isBot=${score(cSid)?.isBot}`);
     check('EP-03: level / items / gold kept', !!c && c.level >= before.level && worth(c) >= before.worth - 1 && [...c.items].join(',') === before.items,
       `level ${before.level}→${c?.level} worth ${before.worth}→${worth(c)} items ${before.items}→${c && [...c.items].join(',')}`);
-    check('EP-03: the reconnected client is welcomed again (new Client) with reconnectS + its team', wel?.reconnectS === 60 && wel?.team === c?.team,
+    check('EP-03: the reconnected client is welcomed again (new Client) with reconnectS + its team', wel?.reconnectS === 300 && wel?.team === c?.team,
       `welcome=${JSON.stringify(wel)}`);
     check('EP-03: reconnected client gets its full team view (own champion + structures)', !!C2.state.champions?.get(cSid) && C2.state.structures?.size > 0,
       `own=${!!C2.state.champions?.get(cSid)} structures=${C2.state.structures?.size}`);
@@ -1004,14 +1008,15 @@ async function ep3ReconnectChecks(check, me, extra) {
   await ep4VoteChecks(check);
   await ep19HeldSeatCheck(check);
 
-  // D: wait out the 60 s grace → the bot keeps the seat, the old token is dead.
+  // Pass 2 RP-04: D's seat is held for the WHOLE match — past the old 60 s grace the bot still
+  // plays it and D's saved token still brings D back (REJOIN from the menu).
   const left = 61500 - (Date.now() - dropAt);
-  if (left > 0) { console.log(`      (waiting ${Math.ceil(left / 1000)} s for D's reconnect grace to run out…)`); await sleep(left); }
-  check('EP-03: after the grace the bot keeps the seat (isBot true, timeout feed line)', score(dSid)?.isBot === true && feedLog.some((t) => t.includes('did not come back')),
-    `isBot=${score(dSid)?.isBot} feed=${feedLog.filter((t) => t.includes('come back')).slice(-1)[0] || 'none'}`);
+  if (left > 0) { console.log(`      (waiting ${Math.ceil(left / 1000)} s — past the old 60 s grace…)`); await sleep(left); }
+  check('Pass 2: after 60 s the bot still holds the seat (isBot true, no "did not come back" line)', score(dSid)?.isBot === true && !feedLog.some((t) => t.includes('did not come back')),
+    `isBot=${score(dSid)?.isBot}`);
   let late = null;
   try { late = await new Client(SERVER).reconnect(dToken); } catch (_) { late = null; }
-  check('EP-03: reconnecting after the grace fails cleanly (token expired)', !late, late ? 'reconnected?!' : 'rejected');
+  check('Pass 2: rejoining with the saved token after 60 s works (same seat)', !!late && late.sessionId === dSid, late ? late.sessionId : 'rejected');
   if (late) { try { await late.leave(); } catch (_) { /* gone */ } }
   delete extra.D;
 }

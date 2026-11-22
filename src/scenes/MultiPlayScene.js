@@ -8,6 +8,7 @@
 
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { getPid, takeover, joinError, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { StickmanRenderer } from '../render/StickmanRenderer.js';
 import { MPOverlay } from '../ui/MPOverlay.js';
 import { MPBossView } from '../entities/MPBossView.js';
@@ -550,7 +551,7 @@ const STALL_MS = 4000;
 const STALL_GRACE_MS = 2500;
 const RECONNECT_ATTEMPT_MS = 5000;   // a hung reconnect (offline) counts as failed after this
 // Close codes that mean "we left on purpose" — no reconnect (§3.3).
-const NO_RECONNECT_CODES = new Set([1000, 4000]);
+const NO_RECONNECT_CODES = new Set([1000, 4000, 4010]); // 4010 = Pass 2: replaced by another tab (PLAY HERE)
 
 // ---- Atlas (optional) — Mixamo-rendered 8-direction frames ----
 // Frame name format: `{action}_{dir}_{frame:04d}` (see MIXAMO_ATLAS_BREAKDOWN).
@@ -1009,7 +1010,8 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._status.setText('connecting…').setColor('#7ec8ff');
     try {
       this.client = new Colyseus.Client(SERVER_URL);
-      const room = await this.client.joinOrCreate('arena', { name: this.playerName, hat: this.playerHat });
+      // Pass 2 RP-01/03: the player id (one live tab per player — the server refuses a 2nd one).
+      const room = await this.client.joinOrCreate('arena', { name: this.playerName, hat: this.playerHat, pid: getPid() });
       // ESC pressed while "connecting…" — don't leave a ghost player in the arena.
       if (this._shuttingDown || this._clockedOut) { try { room.leave(); } catch (_) { /* ignore */ } return; }
       // EP-23: no "connected · room …" debug line — the status text only speaks up on trouble.
@@ -1033,8 +1035,27 @@ export default class MultiPlayScene extends Phaser.Scene {
     } catch (err) {
       if (this._shuttingDown || this._clockedOut) return;
       console.warn('[MP] join failed:', err?.message || err);
+      if (joinError(err).code === 'DUP_TAB') { this._showDupTabCard(); return; }
       this._showConnFailCard(err?.message || String(err));
     }
+  }
+
+  /** Pass 2 RP-03: this player is already playing in another tab → PLAY HERE closes that one. */
+  _showDupTabCard() {
+    this._status.setText('');
+    this._overlay.card({
+      kind: 'fail', title: DUP_TAB_TEXT.title, titleColor: '#ffd23f',
+      sub: DUP_TAB_TEXT.body,
+      buttons: [
+        { label: '▶ PLAY HERE', color: 0x2f8a3a, onClick: async () => {
+          this._overlay.closeCard();
+          this._status.setText('closing the other tab…').setColor('#7ec8ff');
+          await takeover();
+          setTimeout(() => { if (!this._shuttingDown && !this._clockedOut) this._connect(); }, 400);
+        } },
+        { label: 'MENU', color: 0x3a4a68, onClick: () => this._leaveAndGoMenu() },
+      ],
+    });
   }
 
   /**
@@ -4463,6 +4484,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     this._playClockAt = 0;
     const token = room.reconnectionToken || this._roomToken;
     console.warn('[MP] left the room, code', code);
+    if (code === CLOSE_TAKEN_OVER) { this._showConnLostCard(DUP_TAB_TEXT.kicked); return; } // Pass 2: PLAY HERE elsewhere
     if (!NO_RECONNECT_CODES.has(code) && this._reconnectS > 0 && token && this.client) {
       this._startReconnect(token);
     } else {

@@ -334,12 +334,38 @@ export class MobaHud {
       g.destroy();
     }
     this.mmDyn = s.add.graphics().setScrollFactor(0).setDepth(47);
+    // Pass 2 RP-08 (LoL): left-drag = look there (onMinimapView), right-click = move there
+    // (onMinimap). Touch: a quick tap = move (as before), press + drag = look. Without an
+    // onMinimapView handler every press is a move order (old behaviour).
+    const toWorld = (p) => ({
+      x: Math.max(0, Math.min(MAP_W, (p.x - this.mm.x) / this.mm.k)),
+      y: Math.max(0, Math.min(MAP_H, (p.y - this.mm.y) / this.mm.k)),
+    });
+    this._mmDrag = null;
     this._r(this.mm.x + size / 2, this.mm.y + size / 2, size, size, 0x000000, 0).setDepth(46).setInteractive()
       .on('pointerdown', (p, lx, ly, ev) => {
         ev?.stopPropagation?.();
-        const wx = (p.x - this.mm.x) / this.mm.k, wy = (p.y - this.mm.y) / this.mm.k;
-        this.o.onMinimap?.(Math.max(0, Math.min(MAP_W, wx)), Math.max(0, Math.min(MAP_H, wy)));
+        const w = toWorld(p);
+        if (!this.o.onMinimapView || p.rightButtonDown?.()) { this.o.onMinimap?.(w.x, w.y); return; }
+        this._mmDrag = { id: p.id, x: p.x, y: p.y, at: Date.now(), moved: false, touch: !!this.touch && p.wasTouch !== false };
+        if (!this._mmDrag.touch) this.o.onMinimapView(w.x, w.y, 'down');
       });
+    s.input.on('pointermove', (p) => {
+      const d = this._mmDrag;
+      if (!d || d.id !== p.id || !p.isDown) return;
+      if (Math.abs(p.x - d.x) + Math.abs(p.y - d.y) > 8) d.moved = true;
+      if (d.touch && !d.moved) return;
+      this.o.onMinimapView?.(toWorld(p).x, toWorld(p).y, 'move');
+    });
+    const up = (p) => {
+      const d = this._mmDrag;
+      if (!d || d.id !== p.id) return;
+      this._mmDrag = null;
+      if (d.touch && !d.moved && Date.now() - d.at < 350) { const w = toWorld(d); this.o.onMinimap?.(w.x, w.y); return; }
+      this.o.onMinimapView?.(0, 0, 'up');
+    };
+    s.input.on('pointerup', up);
+    s.input.on('pointerupoutside', up);
     this._mmAt = 0;
   }
 
@@ -408,6 +434,8 @@ export class MobaHud {
     this._hideState = null;
     // v4: effects quality toggle (auto / high / low), right of the minimap.
     this.fxBtn = this._button(this.mm.x + this.mm.size + 40, this.mm.y + 14, 66, 24, '✨AUTO', 0x9fdcff, () => this.o.onFx?.(), 50, 10);
+    // Pass 2 RP-08: camera lock toggle (Y) — hidden on touch (no edge pan there; minimap drag works)
+    if (!this.touch) this.camBtn = this._button(this.mm.x + this.mm.size + 40, this.mm.y + 44, 66, 24, '🔒 CAM', 0xffd23f, () => this.o.onCamToggle?.(), 50, 10);
     this._buildExtras();
   }
 
@@ -521,6 +549,12 @@ export class MobaHud {
   }
 
   /** v4: effects mode label — pref 'auto' | 'high' | 'low', low = currently low effects. */
+  /** Pass 2 RP-08: show the camera lock state on the CAM button. */
+  setCamLocked(locked) {
+    const str = locked ? '🔒 CAM' : '🔓 CAM';
+    if (this.camBtn && this.camBtn._label.text !== str) this.camBtn._label.setText(str);
+  }
+
   setFxMode(pref, low) {
     const str = pref === 'auto' ? (low ? '✨AUTO·lo' : '✨AUTO') : (pref === 'low' ? '✨LOW' : '✨HIGH');
     if (this.fxBtn && this.fxBtn._label.text !== str) this.fxBtn._label.setText(str);

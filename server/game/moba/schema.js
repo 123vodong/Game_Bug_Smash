@@ -64,6 +64,10 @@ export class TeamChamp extends Schema {
     this.inBush = '';
     // Experience Pass 1 (appended): cosmetic hat id (server/data/cosmetics.js allowlist, '' = none).
     this.hat = '';
+    // Pass 2 (appended): rank badge label ('🎖️ Senior II' / '🆕 Unranked' / '' for bots) and the
+    // quick-play lobby ready flag (RP-06 START NOW).
+    this.rank = '';
+    this.ready = false;
   }
 }
 // v4 optimisation: positions are integers inside the map (0…6000) → uint16 on the wire
@@ -115,6 +119,8 @@ type('number')(TeamChamp.prototype, 'cdD');
 type('number')(TeamChamp.prototype, 'cdF');
 type('string')(TeamChamp.prototype, 'inBush');   // v4 (appended)
 type('string')(TeamChamp.prototype, 'hat');      // EP-06 (appended)
+type('string')(TeamChamp.prototype, 'rank');     // Pass 2 (appended)
+type('boolean')(TeamChamp.prototype, 'ready');   // Pass 2 (appended)
 
 /** state.units — key = 'u<n>'. Minions, jungle monsters, river epics and (v2) pets. */
 export class TeamUnit extends Schema {
@@ -192,6 +198,7 @@ export class TeamScore extends Schema {
     this.respawnAt = 0;        // server ms (0 = alive)
     this.spellD = '';
     this.spellF = '';
+    this.rank = '';            // Pass 2 (appended): rank badge label
   }
 }
 type('string')(TeamScore.prototype, 'team');
@@ -208,6 +215,7 @@ type('boolean')(TeamScore.prototype, 'dead');
 type('number')(TeamScore.prototype, 'respawnAt');
 type('string')(TeamScore.prototype, 'spellD');
 type('string')(TeamScore.prototype, 'spellF');
+type('string')(TeamScore.prototype, 'rank');   // Pass 2 (appended)
 
 export class TeamState extends Schema {
   constructor() {

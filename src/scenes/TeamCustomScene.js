@@ -18,6 +18,7 @@
 // NOTE: we never send 'hello' here (answered once per client; TeamModeScene needs that 'welcome').
 import { TEAM_INFO, TEAM_SIZE, ROOM_NAME_MAX, ROOM_MAX_HUMANS } from '../../shared/moba/rules.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { getPid, takeover, joinError, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { AudioManager } from '../core/AudioManager.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, glow, drawPanel, makeButton, clipName, fillRR, strokeRR,
@@ -570,7 +571,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     if (typeof Colyseus === 'undefined') { this._toast('The Colyseus client did not load — check your connection', '#ff8a8a'); return; }
     const b = this._openBusy(kind === 'create' ? 'CREATING ROOM…' : 'JOINING ROOM…');
     b.sub.setText(kind === 'create' ? `"${arg}"` : `code ${arg}`);
-    const opts = { name: this._name, hat: SaveManager.getHat?.() || '' }; // EP-11 cosmetic hat
+    const opts = { name: this._name, hat: SaveManager.getHat?.() || '', pid: getPid() }; // EP-11 cosmetic hat · Pass 2 player id
     if (this._data.champ) opts.champ = this._data.champ;
     try {
       const client = new Colyseus.Client(teamServerUrl());
@@ -585,6 +586,21 @@ export default class TeamCustomScene extends Phaser.Scene {
       this._closeBusy();
       const msg = String(e?.message || e || 'unknown error');
       console.warn('[TeamCustom] connect failed:', msg);
+      // Pass 2: one tab per player / still seated in a running match
+      const je = joinError(e);
+      if (je.code === 'DUP_TAB') {
+        // 1st time: explain · again within 8 s: PLAY HERE (close the other tab, then retry)
+        if (Date.now() < (this._dupArmedUntil || 0)) {
+          this._dupArmedUntil = 0;
+          this._toast('🗂️ Closing your other tab…', '#ffd23f', 2400);
+          takeover().then(() => { if (!this._shuttingDown) setTimeout(() => this._connect(kind, arg), 500); });
+        } else {
+          this._dupArmedUntil = Date.now() + 8000;
+          this._toast('🗂️ You are playing in another tab (one tab per player). Try again to play HERE instead.', '#ffd23f', 4200);
+        }
+        return;
+      }
+      if (je.code === 'IN_MATCH') { this._leaving = true; this._cleanup?.(); this.scene.start('TeamLobbyScene', { rejoin: true }); return; }
       let nice = msg;
       if (kind === 'join' && arg === this._invited) nice = 'That invite expired — the room is gone or the match already started';
       else if (/not found|invalid|no rooms/i.test(msg)) nice = kind === 'join' ? `No open room with code "${arg}"` : msg;
@@ -610,7 +626,7 @@ export default class TeamCustomScene extends Phaser.Scene {
       if (this._shuttingDown || this._handedOff || this._room !== room) return;
       this._dropRoom(false);
       this._toListMode();
-      this._toast(`The room was closed (code ${code})`, '#ff8a8a', 3400);
+      this._toast(code === CLOSE_TAKEN_OVER ? '🗂️ You opened Bug Smash in another tab — left this room' : `The room was closed (code ${code})`, '#ff8a8a', 3400);
     };
     room.onLeave(onLeave);
     this._unsub.push(() => room.onLeave.remove?.(onLeave));
@@ -742,7 +758,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     st.champions?.forEach?.((ch, key) => {
       if (!ch || ch.isBot) return;
       const team = ch.team === 'red' ? 'red' : 'blue';
-      const e = { id: key, name: String(ch.name || 'Player'), host: key === hostId, me: key === me };
+      const e = { id: key, name: String(ch.name || 'Player'), host: key === hostId, me: key === me, rank: String(ch.rank || '') }; // Pass 2: rank badge
       sides[team].push(e);
       if (e.me) myTeam = team;
       if (e.host) hostName = e.name;
@@ -784,7 +800,7 @@ export default class TeamCustomScene extends Phaser.Scene {
         if (e) {
           seat.icon.setText(e.host ? '👑' : '👤').setAlpha(1);
           seat.nm.setText(clipName(e.name, 16)).setColor(e.me ? '#ffd23f' : '#ffffff').setAlpha(1);
-          seat.tag.setText([e.host ? 'HOST' : '', e.me ? '(you)' : ''].filter(Boolean).join(' · '));
+          seat.tag.setText([e.rank, e.host ? 'HOST' : '', e.me ? '(you)' : ''].filter(Boolean).join(' · '));
         } else {
           seat.icon.setText('🤖').setAlpha(0.5);
           seat.nm.setText('bot will fill').setColor('#6f86a6').setAlpha(0.8);

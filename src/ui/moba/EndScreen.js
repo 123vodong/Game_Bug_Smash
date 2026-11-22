@@ -98,7 +98,19 @@ export class EndScreen {
 
   get isVisible() { return this._visible; }
 
-  show({ winner, myTeam, rows, state, localSid, practice = false, winReason = '', firstBlood = '', durationMs = 0 } = {}) {
+  /**
+   * Pass 2 RP-13: the server's `rank` result for this player ({ delta, labelAfter, lpAfter, games,
+   * placed, justPlaced, promoted, demoted, placementLeft, place, abandoned }). May arrive before or
+   * after show() — the strip is rebuilt when the screen is already up.
+   */
+  setRank(r) {
+    this._rank = r && typeof r === 'object' ? r : null;
+    if (this._visible && this._lastShow) this.show(this._lastShow);
+  }
+
+  show(args = {}) {
+    this._lastShow = args;
+    let { winner, myTeam, rows, state, localSid, practice = false, winReason = '', firstBlood = '', durationMs = 0 } = args;
     rows = mergeScoreRows(Array.isArray(rows) ? rows : [], state, localSid);
     if (!this.root.scene) return;
     const first = !this._visible && !this._content;
@@ -115,7 +127,9 @@ export class EndScreen {
     if (!this._sub) {
       const loser = TEAM_INFO[win === 'blue' ? 'red' : 'blue'];
       const winner_ = TEAM_INFO[win];
-      if (reason === 'rollback' && winner_) {
+      if (reason === 'abandon' && winner_) {
+        this._sub = `🏳 Abandoned — nobody came back. ${winner_.name} takes it.`;
+      } else if (reason === 'rollback' && winner_) {
         this._sub = outcome === 'win' ? pick(ROLLBACK_WIN)(loser.name) : outcome === 'loss' ? pick(ROLLBACK_LOSS)(winner_.name)
           : `🔙 ${loser.name} rolled back. ${winner_.name} ships unopposed.`;
       } else this._sub = outcome === 'win' ? pick(VICTORY_LINES)(loser.name)
@@ -177,6 +191,21 @@ export class EndScreen {
   _progressLines() {
     const L = [];
     const c = SaveManager.getCareer() || {};
+    // Pass 2 RP-13: ranked result first (quick play + custom rooms; practice is unranked).
+    const rk = this._rank;
+    if (rk && !this._meta.practice) {
+      const lp = (rk.delta | 0) * 2;
+      const sign = lp >= 0 ? '+' : '';
+      if (rk.justPlaced) L.push({ t: `🎖️ PLACED: ${rk.labelAfter}!`, c: '#ffd23f', pop: true });
+      else if (rk.promoted) L.push({ t: `⬆️ PROMOTED: ${rk.labelAfter}!`, c: '#ffd23f', pop: true });
+      else if (rk.demoted) L.push({ t: `⬇️ Demoted: ${rk.labelAfter}`, c: '#ff8a8a' });
+      const tail = rk.placementLeft > 0 ? ` · placement ${Math.min(5, rk.games | 0)}/5` : (rk.place ? ` · #${rk.place}` : '');
+      const sd = rk.starDelta | 0;
+      const starStr = Number.isFinite(rk.starDelta) ? `${sd > 0 ? '+' : ''}${sd} ★` : `${sign}${lp} LP`;
+      L.push({ t: `🏆 ${rk.labelAfter} ${rk.starText || ''} (${starStr})${rk.abandoned ? ' (left)' : ''}${tail}`, c: lp >= 0 ? '#7ed957' : '#ff8a8a', pop: !rk.promoted });
+      if (rk.bonus === 'mvp') L.push({ t: '⭐ Team MVP bonus: +1 ★', c: '#ffd23f', pop: true });
+      else if (rk.bonus === 'svp') L.push({ t: '🛡 Best on your team: only half the ★ lost', c: '#7ec8ff', pop: true });
+    }
     if (this._meta.practice) L.push({ t: `🤖 Practice · not on your record (${c.teamPractice | 0} played)`, c: '#9fb0c8' });
     else {
       const w = c.teamWins | 0, g = c.teamGames | 0;
