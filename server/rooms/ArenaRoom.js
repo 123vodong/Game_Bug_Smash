@@ -39,6 +39,8 @@ import { BotDirector } from '../game/BotDirector.js';
 import { EventDirector } from '../game/EventDirector.js';
 import { GOLDEN_BUG, WORLD_EVENTS } from '../data/events.js';
 import { sanitizeHat } from '../data/cosmetics.js';
+import { publicIdOf } from '../game/identity.js';
+import { Presence } from '../game/Presence.js';
 import {
   KO_LINES, BUG_KO_LINES, CLOUD_KO_LINES, BOSS_KO_LINES, JOIN_LINES, LEAVE_LINES,
   AWAY_LINES, BACK_LINES, pickLine,
@@ -1205,7 +1207,29 @@ export class ArenaRoom extends Room {
   }
 
   // ───────────────────────── lifecycle ─────────────────────────
+  /**
+   * Pass 2 RP-02: one live session per player id (join option `pid`). A second tab gets 'DUP_TAB'
+   * (it can PLAY HERE → POST /api/session/takeover, then join again). This player's own away
+   * (held) stickman is dropped first, so a reload never leaves a twin behind.
+   */
+  onAuth(_client, options) {
+    const pub = publicIdOf(options?.pid);
+    const why = Presence.check(pub, 'arena', this);
+    if (why) throw new Error(why);
+    return { pub };
+  }
+
+  /** Presence hook: drop this player's away stickman (a new tab of the same player is joining). */
+  dropHeld(sid) {
+    const w = this._holdWaits?.get(sid);
+    if (!w) return;
+    this._holdWaits.delete(sid);
+    try { w.reject?.(new Error('replaced')); } catch (_) { /* settled */ }
+  }
+
   onJoin(client, options) {
+    const pub = (client.auth && client.auth.pub) || '';
+    if (pub) { (this._pubs ||= new Map()).set(client.sessionId, pub); Presence.register(pub, { mode: 'arena', room: this, sid: client.sessionId, client }); }
     const wasEmpty = this.humanCount() === 0;
     const p = this._addPlayer(client.sessionId, { name: options?.name, hat: options?.hat });
     console.log(`[ArenaRoom] +join ${client.sessionId} as "${p.name}" (humans ${this.humanCount()}, bots ${this.bots.count})`);
@@ -1241,16 +1265,24 @@ export class ArenaRoom extends Room {
   async onLeave(client, consented) {
     const sid = client.sessionId;
     const p = this.state.players.get(sid);
+    const pub = this._pubs?.get(sid) || '';
+    // Pass 2: a tab closed by PLAY HERE (Presence takeover, close 4010) leaves for good — no twin.
+    if (client.userData?.takenOver) consented = true;
     if (p && !consented && RECONNECT_GRACE_S > 0) {
+      Presence.setConnected(pub, this, sid, false);
       p.away = true;
       p.action = 'idle';
       p.action_seq = (p.action_seq + 1) >>> 0;
       this._feed({ text: `📶 ${pickLine(AWAY_LINES, { a: p.name })}`, color: '#8890a0', a: sid });
       console.log(`[ArenaRoom] ~away ${sid} "${p.name}" (grace ${RECONNECT_GRACE_S}s)`);
       try {
-        const newClient = await this.allowReconnection(client, RECONNECT_GRACE_S);
+        const wait = this.allowReconnection(client, RECONNECT_GRACE_S);
+        (this._holdWaits ||= new Map()).set(sid, wait);
+        const newClient = await wait;
+        this._holdWaits.delete(sid);
         const cur = this.state.players.get(sid);
         if (cur) {
+          Presence.setConnected(pub, this, sid, true, newClient);
           cur.away = false;
           cur._lastMoveAt = Date.now(); // first move after the gap gets a fresh step budget
           // A new Client object: answer its `hello` again (userData was copied over).
@@ -1261,8 +1293,11 @@ export class ArenaRoom extends Room {
         }
         // Removed while away (shouldn't happen): no stickman to return to.
         try { newClient.leave?.(4000); } catch (_) { /* already closing */ }
-      } catch (_) { /* grace expired, or the room is disposing */ }
+      } catch (_) { /* grace expired, replaced by a new tab, or the room is disposing */ }
+      this._holdWaits?.delete(sid);
     }
+    Presence.unregister(pub, this, sid);
+    this._pubs?.delete(sid);
     const name = this.state.players.get(sid)?.name;
     this._removePlayer(sid);
     if (name) this._feed({ text: `🚪 ${pickLine(LEAVE_LINES, { a: name })}`, color: '#8890a0' });
@@ -1271,6 +1306,7 @@ export class ArenaRoom extends Room {
 
   onDispose() {
     // (Pending reconnections are rejected by Colyseus on dispose → onLeave cleans up.)
+    Presence.unregisterRoom(this);
     console.log('[ArenaRoom] disposed', this.roomId);
   }
 

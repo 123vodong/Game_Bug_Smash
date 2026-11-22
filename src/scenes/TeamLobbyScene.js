@@ -14,10 +14,15 @@
 // All champion numbers come from shared/moba/*.js (read-only) — nothing mirrored here.
 // NOTE: we never send 'hello' here — the server answers it only ONCE per client and
 // TeamModeScene needs that 'welcome' after the handoff.
+// Pass 2 (PASS2_BREAKDOWN.md): 16 champions (6 × 3 grid), your rank + 🏆 RANKS (LeaderboardPanel),
+// the queue waits ~30 s with a READY check, DUP_TAB → PLAY HERE, IN_MATCH / a saved match → REJOIN.
 import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, isChampionId } from '../../shared/moba/champions.js';
 import { ensureMobaLooks, drawChampionPortrait } from '../entities/moba/looks.js';
-import { TEAM_INFO, ULT_UNLOCK_LEVEL, LOBBY_MS, TEAM_SIZE } from '../../shared/moba/rules.js';
+import { TEAM_INFO, ULT_UNLOCK_LEVEL, LOBBY_MAX_MS, TEAM_SIZE } from '../../shared/moba/rules.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { getPid, takeover, joinError, fetchMe, loadMatch, clearMatch, DUP_TAB_TEXT } from '../core/Identity.js';
+import { LeaderboardPanel } from '../ui/LeaderboardPanel.js';
+import { TIERS } from '../../shared/moba/ranks.js';
 import { AudioManager } from '../core/AudioManager.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
@@ -34,7 +39,7 @@ const STATS_URL = (() => {
 })();
 
 const NAME_MAX = 16;
-const COLS = 4;
+const COLS = 6;   // Pass 2: 16 champions → 6 × 3
 // Cards grouped by lane (top → jungle → mid → bot → support), then roster order.
 const ORDER = [...CHAMPION_IDS].sort((a, b) => {
   const la = ROLE_ORDER.indexOf(CHAMPIONS[a].lane), lb = ROLE_ORDER.indexOf(CHAMPIONS[b].lane);
@@ -45,7 +50,7 @@ const STICK_POSES = [['stick-idle', 'idle.svg']];   // portraits only need the i
 
 // ── Layout (1280×720 canvas) ──
 const CHIPS = { x: 24, y: 130, h: 22 };
-const CARD = { x: 24, y: 150, w: 112, h: 112, gap: 7.33 };
+const CARD = { x: 24, y: 150, w: 74, h: 112, gap: 5.2 };
 const DETAIL = { x: 510, y: 116, w: 746, h: 476 };
 const NAMEBOX = { x: 24, y: 514, w: 470, h: 78 };
 const HOWTO = { x: 24, y: 606, w: 668, h: 98 };
@@ -89,6 +94,9 @@ export default class TeamLobbyScene extends Phaser.Scene {
 
   init(data) {
     this._autoQueue = !!data?.autoQueue; // round 2: PLAY AGAIN after a quick match queues right away
+    this._rejoinAsk = !!data?.rejoin;    // Pass 2: came here to REJOIN a running match
+    this._prompt = null;
+    this._panel = null;
     this._leaving = false;
     this._editing = false;
     this._ignoreKeysUntil = 0;
@@ -135,10 +143,145 @@ export default class TeamLobbyScene extends Phaser.Scene {
     this._bindKeys();
     this.events.once('shutdown', () => this._cleanup());
     this.cameras.main.fadeIn(280, 0, 0, 0);
-    if (this._autoQueue) {
+    this._refreshRank();
+    if (this._rejoinAsk || loadMatch()) {
+      this._rejoinAsk = false;
+      this.time.delayedCall(250, () => { if (!this._shuttingDown && !this._leaving) this._checkRejoin(); });
+    } else if (this._autoQueue) {
       this._autoQueue = false;
       this.time.delayedCall(350, () => { if (!this._shuttingDown && !this._leaving && !this._queue) this._findMatch(); });
     }
+  }
+
+  // ───────────────────────── Pass 2: rank + rejoin ─────────────────────────
+  /** Your Team Mode rank under the server status (falls back to the local W/L line offline). */
+  async _refreshRank() {
+    const me = await fetchMe();
+    if (this._shuttingDown || !this._careerText?.scene) return;
+    const r = me?.rank;
+    if (!r) return;
+    const t = TIERS.find((x) => x.id === r.tier) || TIERS[0];
+    const txt = `${t.emoji} ${r.label} ${r.starText || ''} · ${r.wins}W ${r.losses}L`
+      + (r.placementLeft > 0 ? ` · placement ${r.games}/${r.games + r.placementLeft}` : '');
+    this._careerText.setText(txt).setColor(t.css);
+  }
+
+  /** A saved / server-known running match → REJOIN prompt (also after an IN_MATCH join error). */
+  async _checkRejoin(fromError = false) {
+    const saved = loadMatch();
+    const me = await fetchMe();
+    if (this._shuttingDown || this._leaving) return;
+    const m = me?.match;
+    if (!m) {
+      if (saved) clearMatch();
+      if (fromError) this._openPrompt({ title: '🏁 That match is over', body: 'Your last match already ended. Queue up again!', primary: { label: '▶ QUICK MATCH', fn: () => { this._closePrompt(); this._findMatch(); } } });
+      return;
+    }
+    const canRejoin = !!saved && saved.roomId === m.roomId;
+    if (m.connected) {
+      this._openPrompt({
+        title: DUP_TAB_TEXT.title, body: 'You are in a running match in another tab.\nPlay it here instead? The other tab will be closed.',
+        primary: canRejoin ? { label: '▶ PLAY HERE', sub: 'ENTER', fn: async () => { this._promptBusy('closing the other tab…'); await takeover(); setTimeout(() => this._rejoin(loadMatch() || saved), 500); } } : null,
+        secondary: { label: '◀ BACK', sub: 'ESC', fn: () => this._closePrompt() },
+      });
+      return;
+    }
+    if (!canRejoin) {
+      this._openPrompt({ title: '⚔️ You still have a seat in a match', body: 'It was started from another browser — a bot plays it until it ends.\nYou can queue again once it is over.', secondary: { label: 'OK', sub: 'ESC', fn: () => this._closePrompt() } });
+      return;
+    }
+    const ph = { select: 'champion select', loading: 'loading', playing: 'in progress' }[m.phase] || m.phase;
+    const champ = CHAMPIONS[saved.champ];
+    this._openPrompt({
+      title: '⚔️ YOUR MATCH IS STILL RUNNING',
+      body: `${champ ? `${champ.emoji} ${champ.name} · ` : ''}${ph} — a bot is holding your laptop.\nJump back in?`,
+      primary: { label: '⟳ REJOIN', sub: 'ENTER', fn: () => this._rejoin(saved) },
+      secondary: { label: '✕ LEAVE IT', sub: 'counts as a loss', fn: () => this._abandonSaved(saved) },
+    });
+  }
+
+  /** Reconnect with the saved token and hand the room to the right scene. */
+  async _rejoin(saved) {
+    if (!saved || typeof Colyseus === 'undefined') { this._closePrompt(); return; }
+    this._promptBusy('reconnecting…');
+    try {
+      const client = new Colyseus.Client(teamServerUrl());
+      const room = await client.reconnect(saved.token);
+      if (this._shuttingDown) { try { room.leave(); } catch (_) { /* ignore */ } return; }
+      if (!room.state?.phase) {
+        await new Promise((res) => {
+          const t = setTimeout(res, 3000);
+          const once = () => { clearTimeout(t); res(); };
+          try { (room.onStateChange.once || room.onStateChange).call(room.onStateChange, once); } catch (_) { res(); }
+        });
+      }
+      const ph = room.state?.phase;
+      this._closePrompt();
+      this._handedOff = true;
+      this._leaving = true;
+      AudioManager.reward?.();
+      const champ = isChampionId(saved.champ) ? saved.champ : ORDER[this._idx];
+      if (ph === 'select') this.scene.start('TeamSelectScene', { room, name: this._playerName(), champ, custom: !!saved.custom });
+      else this.scene.start('TeamModeScene', { room, champ, name: this._playerName() });
+    } catch (e) {
+      console.warn('[TeamLobby] rejoin failed:', e?.message || e);
+      clearMatch();
+      if (this._shuttingDown) return;
+      this._openPrompt({ title: '🏁 That match is over', body: 'It ended while you were away — the bot finished your shift.', primary: { label: '▶ QUICK MATCH', sub: 'ENTER', fn: () => { this._closePrompt(); this._findMatch(); } }, secondary: { label: 'OK', sub: 'ESC', fn: () => this._closePrompt() } });
+    }
+  }
+
+  /** LEAVE IT: reconnect, then leave on purpose — the bot keeps the seat (the result still counts). */
+  async _abandonSaved(saved) {
+    this._promptBusy('leaving the match…');
+    try {
+      const room = await new Colyseus.Client(teamServerUrl()).reconnect(saved.token);
+      await room.leave(true);
+    } catch (_) { /* already over */ }
+    clearMatch();
+    this._closePrompt();
+  }
+
+  /** Small modal (title, body, ≤ 2 buttons). ENTER = primary, ESC = secondary (or close). */
+  _openPrompt({ title, body, primary = null, secondary = null }) {
+    this._closePrompt();
+    const { W, H } = this;
+    const c = this.add.container(0, 0).setDepth(120);
+    const dim = this.add.rectangle(0, 0, W, H, 0x02040a, 0.8).setOrigin(0).setInteractive();
+    dim.on('pointerup', (p, lx, ly, ev) => ev?.stopPropagation?.());
+    const pw = Math.min(640, W - 32), ph = 260, px = (W - pw) / 2, py = (H - ph) / 2;
+    const g = this.add.graphics();
+    drawPanel(g, px, py, pw, ph, { color: NEON.yellow, radius: 18, halo: 0.14 });
+    const t = this.add.text(W / 2, py + 40, title, { fontFamily: FONT_TITLE, fontSize: 22, color: '#ffffff', stroke: '#000000', strokeThickness: 5 }).setOrigin(0.5);
+    const b = this.add.text(W / 2, py + 76, body, {
+      fontFamily: FONT_MONO, fontSize: 14, color: '#cfe3f5', align: 'center', lineSpacing: 4,
+      wordWrap: { width: pw - 48, useAdvancedWrap: true }, padding: { y: 2 },
+    }).setOrigin(0.5, 0);
+    c.add([dim, g, t, b]);
+    const btns = [primary, secondary].filter(Boolean);
+    btns.forEach((d, i) => {
+      const x = btns.length === 1 ? W / 2 : W / 2 + (i === 0 ? -138 : 138);
+      const btn = makeButton(this, { x, y: py + ph - 46, w: 236, h: 56, label: d.label, sub: d.sub || '', color: i === 0 && primary ? NEON.green : NEON.red, fontSize: 17, onClick: () => d.fn?.() });
+      c.add(btn.root);
+    });
+    c.setAlpha(0);
+    this.tweens.add({ targets: c, alpha: 1, duration: 160 });
+    this._prompt = { c, body: b, primary, secondary, busy: false };
+  }
+
+  _promptBusy(text) {
+    const p = this._prompt;
+    if (!p) return;
+    p.busy = true;
+    p.body.setText(text).setColor('#7ec8ff');
+  }
+
+  _closePrompt() {
+    const p = this._prompt;
+    if (!p) return;
+    this._prompt = null;
+    this._ignoreKeysUntil = this.time.now + 150;
+    p.c.destroy();
   }
 
   // ───────────────────────── background + header ─────────────────────────
@@ -246,6 +389,15 @@ export default class TeamLobbyScene extends Phaser.Scene {
     this._careerText = this.add.text(this.W - 24, 50, this._careerLine(), {
       fontFamily: FONT_MONO, fontSize: 11, color: '#ffd23f', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(1, 0.5).setDepth(10).setAlpha(0.85);
+    // Pass 2 RP-13: leaderboard
+    makeButton(this, {
+      x: this.W - 84, y: 84, w: 120, h: 32, label: '🏆 RANKS', color: NEON.yellow, fontSize: 13,
+      onClick: () => {
+        if (this._queue || this._prompt || this._leaving || (this._panel && !this._panel.closed)) return;
+        AudioManager.uiClick();
+        this._panel = LeaderboardPanel.open(this, { onClose: () => { this._ignoreKeysUntil = this.time.now + 150; } });
+      },
+    }).root.setDepth(10);
   }
 
   _careerLine() {
@@ -786,7 +938,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
     ]);
     this._keyLine(P.x + 16, P.y + 74, [
       { key: 'B' }, 'recall', DOT, { key: 'P' }, 'shop', DOT, { key: 'TAB' }, 'scoreboard', DOT,
-      { key: 'C' }, 'champion info', DOT, '🎯 last-hit for gold',
+      { key: 'C' }, 'champion info', DOT, { key: 'Y' }, 'free camera (edge / minimap)',
     ]);
   }
 
@@ -848,6 +1000,14 @@ export default class TeamLobbyScene extends Phaser.Scene {
       if (this._editing || this._leaving) return;
       if (this.time.now < this._ignoreKeysUntil) return;
       const k = ev.key;
+      if (this._prompt) {          // Pass 2 rejoin / duplicate-tab prompt is modal
+        const p = this._prompt;
+        if (p.busy) return;
+        if (k === 'Enter' && p.primary) p.primary.fn();
+        else if (k === 'Escape') (p.secondary ? p.secondary.fn() : this._closePrompt());
+        return;
+      }
+      if (this._panel && !this._panel.closed) return; // 🏆 RANKS is open (it handles ESC itself)
       if (this._queue) {           // the queue overlay is modal
         if (k === 'Escape') this._cancelQueue();
         else if (k === 'Enter') this._startNow();
@@ -907,7 +1067,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
     q.status = `connecting to ${url} …`;
     try {
       const client = new Colyseus.Client(url);
-      const room = await client.joinOrCreate('team', { name: this._playerName(), champ, hat: SaveManager.getHat?.() || '' }); // EP-11
+      const room = await client.joinOrCreate('team', { name: this._playerName(), champ, hat: SaveManager.getHat?.() || '', pid: getPid() }); // EP-11 · Pass 2 pid
       if (this._queue !== q || this._shuttingDown) { try { room.leave(); } catch (_) { /* ignore */ } return; }
       q.room = room;
       q.joinedAt = Date.now();
@@ -931,8 +1091,36 @@ export default class TeamLobbyScene extends Phaser.Scene {
     } catch (e) {
       if (this._queue !== q || this._shuttingDown) return;
       console.warn('[TeamLobby] join failed:', e?.message || e);
+      const je = joinError(e);
+      if (je.code === 'DUP_TAB') { this._queueProblem('dup'); return; }
+      if (je.code === 'IN_MATCH') { this._closeQueue(); this._checkRejoin(true); return; }
       this._queueFail(e?.message || String(e));
     }
+  }
+
+  /** Pass 2 RP-03: another tab of this player is playing → PLAY HERE / BACK. */
+  _queueProblem(mode) {
+    const q = this._queue;
+    if (!q) return;
+    q.failed = true;
+    q.mode = mode;
+    q.title.setText(DUP_TAB_TEXT.title).setColor('#ffd23f');
+    q.status = DUP_TAB_TEXT.body;
+    q.startBtn.setLabel('▶ PLAY HERE').setSub('ENTER · closes the other tab').setDimmed(false);
+    q.cancelBtn.setLabel('◀ BACK').setSub('ESC');
+    this._releaseRoom(true);
+  }
+
+  async _playHere() {
+    const q = this._queue;
+    if (q) q.startBtn.setSub('closing the other tab…').setDimmed(true);
+    await takeover();
+    if (this._shuttingDown) return;
+    this._closeQueue();
+    const me = await fetchMe();
+    if (this._shuttingDown) return;
+    if (me?.match) { this._checkRejoin(); return; } // the other tab was in a match → take that seat
+    this.time.delayedCall(300, () => { if (!this._shuttingDown && !this._leaving) this._findMatch(); });
   }
 
   _openQueue() {
@@ -987,14 +1175,15 @@ export default class TeamLobbyScene extends Phaser.Scene {
     this._releaseRoom(true);
   }
 
+  /** START NOW / READY (Pass 2 RP-06): alone = start now; with others = toggle ready (starts when all are). */
   _startNow() {
     const q = this._queue;
     if (!q) return;
+    if (q.mode === 'dup') { this._playHere(); return; }
     if (q.failed) { this._closeQueue(); this._practice(); return; }
-    if (q.startSent) { q.startBtn.shake(); return; }
-    if (!q.room) { q.wantStart = true; q.startBtn.setSub('starting once connected…').setDimmed(true); return; }
-    try { q.room.send('startNow'); q.startSent = true; } catch (e) { console.warn('[TeamLobby] startNow failed', e?.message); }
-    q.startBtn.setSub('starting…').setDimmed(true);
+    if (!q.room) { q.wantStart = true; q.startBtn.setSub('ready once connected…').setDimmed(true); return; }
+    try { q.room.send('ready'); } catch (e) { console.warn('[TeamLobby] ready failed', e?.message); }
+    AudioManager.uiClick();
   }
 
   _cancelQueue() {
@@ -1045,15 +1234,28 @@ export default class TeamLobbyScene extends Phaser.Scene {
     const st = q.room.state;
     const phase = st?.phase;
     if (phase && phase !== 'lobby') { this._handoff(); return; }
-    let humans = 0;
-    st?.champions?.forEach?.((ch) => { if (!ch.isBot) humans++; });
+    let humans = 0, ready = 0, meReady = false;
+    st?.champions?.forEach?.((ch, id) => {
+      if (ch.isBot) return;
+      humans++;
+      if (ch.ready) ready++;
+      if (id === q.room.sessionId) meReady = !!ch.ready;
+    });
     const endsAt = Number(st?.lobbyEndsAt) || 0;
-    const left = endsAt ? Math.max(0, Math.min(LOBBY_MS, endsAt - (now + (q.clock ? q.clock.offset() : 0)))) : null;
-    q.line.setText(`Searching${dots}   humans ${Math.max(1, humans)}/${TEAM_SIZE * 2}`
+    const left = endsAt ? Math.max(0, Math.min(LOBBY_MAX_MS, endsAt - (now + (q.clock ? q.clock.offset() : 0)))) : null;
+    q.line.setText(`Waiting for players${dots}   ${Math.max(1, humans)}/${TEAM_SIZE * 2} humans`
       + (left != null ? `   ·   starts in ${Math.ceil(left / 1000)}s` : ''));
     const waited = Math.floor((now - (q.joinedAt || now)) / 1000);
     q.sub.setText(`🤖 bots fill every empty seat  ·  ${waited}s in queue\n`
-      + `next: champion draft — hover, LOCK IN, pick your D / F summoner spells`);
+      + (humans > 1 ? `✔ ${ready}/${humans} ready — the draft starts as soon as everyone is ready` : 'invite a coworker now · or START NOW to play with bots'));
+    // RP-06 button: alone → START NOW, with others → READY toggle
+    const key = humans > 1 ? (meReady ? 'r1' : 'r0') : 's';
+    if (q.btnKey !== key) {
+      q.btnKey = key;
+      if (key === 's') q.startBtn.setLabel('▶ START NOW').setSub('ENTER · bots fill seats').setDimmed(false);
+      else if (key === 'r0') q.startBtn.setLabel('✔ READY').setSub('ENTER · start sooner').setDimmed(false);
+      else q.startBtn.setLabel('✔ READY!').setSub('ENTER · not ready').setDimmed(false);
+    }
   }
 
   _handoff() {

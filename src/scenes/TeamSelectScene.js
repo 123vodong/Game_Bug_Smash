@@ -26,6 +26,7 @@ import {
 import { ensureMobaLooks, drawChampionPortrait } from '../entities/moba/looks.js';
 import { hatEmoji } from '../entities/moba/mobaGfx.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { AudioManager } from '../core/AudioManager.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
@@ -39,13 +40,13 @@ const ORDER = [...CHAMPION_IDS].sort((a, b) => {
   return (la - lb) || (CHAMPION_IDS.indexOf(a) - CHAMPION_IDS.indexOf(b));
 });
 const FILTERS = ['all', ...ROLE_ORDER];
-const COLS = 6;
+const COLS = 8;   // Pass 2: 16 champions = 2 rows of 8
 const SEND_GAP_MS = PICK_RATE_MS + 30;     // stay above the server's rate limit
 const OPTIMISTIC_MS = 900;                 // show our own hover before the server echoes it
 
 // ── Layout (1280×720) ──
 const SLOT = { w: 244, h: 88, step: 95, y: 84, lx: 14, rx: 1280 - 14 - 244 };
-const GRID = { x: 272, y: 106, w: 114, h: 106, gap: 10.4 };
+const GRID = { x: 272, y: 106, w: 85, h: 106, gap: 8 };
 const CHIPS = { x: 272, y: 88 };
 const DET = { x: 272, y: 340, w: 736, h: 262 };
 const SPELLBAR = { x: 272, y: 612, w: 488, h: 96 };
@@ -281,10 +282,13 @@ export default class TeamSelectScene extends Phaser.Scene {
       ? { offset: this._data.clockOffset, rtt: this._data.clockRtt } : null;
     this._clock = startClockSync(room, { everyMs: 3000, seed });
     off(() => { this._clock?.stop(); });
+    // Pass 2 RP-05: remember the match so a reload / closed tab can REJOIN it (new token after every reconnect).
+    if (room.roomId && room.reconnectionToken) saveMatch({ roomId: room.roomId, token: room.reconnectionToken, champ: this._fav || '', custom: !!this._data?.custom });
     const onLeave = (code) => {
       if (this._shuttingDown || this._handedOff || this._room !== room) return;
       const token = room.reconnectionToken || '';
       this._room = null;
+      if (code === CLOSE_TAKEN_OVER) { this._showModal(DUP_TAB_TEXT.title, DUP_TAB_TEXT.kicked); return; } // Pass 2: PLAY HERE elsewhere
       // EP-07 review fix: the server holds the seat (TEAM_RECONNECT_GRACE_S) in select / loading too.
       if (code !== 1000 && code !== 4000 && token) { this._startReconnect(token); return; }
       this._showModal('Disconnected', `The connection to the draft was lost (code ${code}).`);
@@ -389,7 +393,7 @@ export default class TeamSelectScene extends Phaser.Scene {
     st.champions?.forEach?.((ch, key) => {
       champs.push({
         id: key, team: ch.team, champ: ch.champ || '', locked: !!ch.locked, name: ch.name || '',
-        isBot: !!ch.isBot, spellD: ch.spellD || '', spellF: ch.spellF || '', hat: ch.hat || '',
+        isBot: !!ch.isBot, spellD: ch.spellD || '', spellF: ch.spellF || '', hat: ch.hat || '', rank: ch.rank || '',
       });
     });
     return {
@@ -905,6 +909,7 @@ export default class TeamSelectScene extends Phaser.Scene {
 
   _goLobby() {
     if (this._shuttingDown) return;
+    if (this._room?.roomId) clearMatch(this._room.roomId); // left on purpose → no REJOIN offer
     this._cleanup();            // leaves the room (not handed off)
     // v4: a custom-room draft goes back to the rooms list.
     this.scene.start(this._data?.custom ? 'TeamCustomScene' : 'TeamLobbyScene', this._data?.custom ? { name: this._name, champ: this._fav } : undefined);
@@ -1172,6 +1177,13 @@ export default class TeamSelectScene extends Phaser.Scene {
     });
     sp.x = side === 'left' ? tx : tx - sp.pillW;
     c.add(sp);
+    // Pass 2 RP-13: rank badge next to the status pill (humans only).
+    if (row.rank && !row.isBot) {
+      const rk = this.add.text(side === 'left' ? tx + sp.pillW + 6 : tx - sp.pillW - 6, 66, row.rank, {
+        fontFamily: FONT_MONO, fontSize: 10, color: '#ffd23f', padding: { y: 2 },
+      }).setOrigin(side === 'left' ? 0 : 1, 0.5);
+      c.add(rk);
+    }
     // spells (allies: always · enemies: only once locked)
     if (ally || locked) {
       const sids = isMe ? this._spells : [row.spellD, row.spellF];

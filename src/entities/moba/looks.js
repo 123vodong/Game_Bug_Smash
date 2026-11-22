@@ -192,6 +192,37 @@ hat('beanie', (ctx) => {                                     // Swipe — beanie
   for (let x = 12; x < 30; x += 2.6) line(ctx, x, 11.6, x, 14.6, '#a3205e', 0.8);
   dot(ctx, 20, 3, 3.2, '#ffe1f0');
 });
+// ── Pass 2 "Q4 Hires" ──
+hat('headband', (ctx) => {                                   // Sprint — sweatband + whistle cord
+  ctx.beginPath(); ctx.moveTo(10.5, 12); ctx.quadraticCurveTo(9.5, 4.5, 20, 4.2); ctx.quadraticCurveTo(30.5, 4.5, 29.5, 12);
+  ctx.quadraticCurveTo(20, 9.6, 10.5, 12); ctx.closePath(); paint(ctx, '#5a3a1a', null);  // hair
+  rr(ctx, 9.4, 9.2, 21.2, 4.4, 2); paint(ctx, '#ffb300');
+  line(ctx, 10, 11.4, 30, 11.4, '#1e3a5f', 1.2);
+  poly(ctx, [9.6, 10, 4.2, 13.6, 5.6, 15.4, 10, 12.6]); paint(ctx, '#ffb300', INK, 1);   // knot tails
+});
+hat('snapback', (ctx) => {                                   // Cache — backwards snapback
+  ctx.beginPath(); ctx.moveTo(10, 13); ctx.quadraticCurveTo(9.4, 3.8, 20, 3.6); ctx.quadraticCurveTo(30.6, 3.8, 30, 13); ctx.closePath();
+  paint(ctx, '#5c7cfa');
+  ctx.beginPath(); ctx.moveTo(11, 12.6); ctx.quadraticCurveTo(4.5, 12, 2.2, 15.4); ctx.lineTo(11.2, 15); ctx.closePath(); paint(ctx, '#2f4bbf'); // brim (back)
+  rr(ctx, 18, 9.6, 8.4, 3.2, 1); paint(ctx, '#d64545', null);
+  ctx.font = 'bold 4px Arial'; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.fillText('KV', 22.2, 12.1);
+  dot(ctx, 20, 3.4, 1.4, '#2f4bbf', null);
+});
+hat('bun', (ctx) => {                                        // Hira — hair bun + pencil
+  dot(ctx, 21, 3.6, 4.6, '#3b2a4a', INK, 1);
+  line(ctx, 15.5, 1.2, 27.5, 6.6, '#ffd23f', 1.8); dot(ctx, 27.8, 6.8, 0.9, '#ff9e9e', null);
+  ctx.beginPath(); ctx.moveTo(9.8, 15); ctx.quadraticCurveTo(9, 6.4, 20, 6.2); ctx.quadraticCurveTo(31, 6.4, 30.2, 15);
+  ctx.quadraticCurveTo(26, 9.6, 19, 10.4); ctx.quadraticCurveTo(13, 11, 9.8, 15); ctx.closePath(); paint(ctx, '#3b2a4a');
+  dot(ctx, 28.6, 19.4, 1.4, '#f7a072', INK, 0.8);   // earring
+});
+hat('monocle', (ctx) => {                                    // Lint — slicked hair + monocle
+  ctx.beginPath(); ctx.moveTo(10, 13.4); ctx.quadraticCurveTo(10.6, 4, 21, 4.4); ctx.quadraticCurveTo(31.4, 5.4, 30, 12.2);
+  ctx.quadraticCurveTo(22, 7.2, 10, 13.4); ctx.closePath(); paint(ctx, '#2d3436');
+  line(ctx, 14, 8, 26, 6.6, '#636e72', 0.8);
+  dot(ctx, 24, 20.4, 4.2, 'rgba(220,240,255,0.35)', '#c9a227', 1.6);
+  ctx.beginPath(); ctx.moveTo(26.8, 23.6); ctx.quadraticCurveTo(29, 29, 27, 33); ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 0.9; ctx.stroke();
+  dot(ctx, 16, 20.6, 1.4, '#2d3436', null);
+});
 
 // Garments: 26×44 canvas, origin (0.5, 0.03) = the neck; torso runs straight down to the hip (y ≈ 34).
 const GAR = { w: 26, h: 44, ox: 0.5, oy: 0.03 };
@@ -287,6 +318,43 @@ spec('look-outfit-labcoat', GAR.w, GAR.h, GAR.ox, GAR.oy, (ctx) => {
   line(ctx, 16.4, 12.4, 16.4, 15.6, '#ff5e5e', 1.1); line(ctx, 18, 12.6, 18, 15.6, '#00bcd4', 1.1);
   rr(ctx, 7.4, 16, 3.8, 5, 0.6); paint(ctx, '#ffd23f', INK, 0.6);
 }, { res: 3 });
+outfit('polo', (ctx) => {                                    // Sprint — amber polo + lanyard
+  torso(ctx, '#ffb300');
+  poly(ctx, [9.6, 1.2, 13, 4.8, 9, 5.6]); paint(ctx, '#1e3a5f', INK, 0.9);
+  poly(ctx, [16.4, 1.2, 13, 4.8, 17, 5.6]); paint(ctx, '#1e3a5f', INK, 0.9);
+  line(ctx, 13, 4.6, 13, 9.4, '#1e3a5f', 1);
+  line(ctx, 10.5, 4, 13, 17, '#1e3a5f', 0.9); line(ctx, 15.5, 4, 13, 17, '#1e3a5f', 0.9);
+  rr(ctx, 10.6, 16.6, 4.8, 6, 0.8); paint(ctx, '#ffffff', INK, 0.7);   // badge
+  ctx.fillStyle = '#ff5e5e'; ctx.fillRect(11.4, 17.6, 3.2, 1.2);
+});
+outfit('flannel', (ctx) => {                                 // Cache — plaid flannel
+  torso(ctx, '#d64545');
+  ctx.save(); ctx.beginPath(); ctx.rect(4, 2, 18, 33); ctx.clip();
+  ctx.globalAlpha = 0.55;
+  for (let x = 4; x < 23; x += 4.4) { ctx.fillStyle = '#5c7cfa'; ctx.fillRect(x, 2, 1.6, 33); }
+  for (let y = 5; y < 35; y += 4.4) { ctx.fillStyle = '#2a1d1d'; ctx.fillRect(4, y, 18, 1.2); }
+  ctx.restore(); ctx.globalAlpha = 1;
+  line(ctx, 13, 3, 13, 34, '#7a1f1f', 0.9);
+  for (let y = 8; y < 33; y += 6) dot(ctx, 13, y, 0.6, '#ffffff', null);
+});
+outfit('blazer', (ctx) => {                                  // Hira — blazer over a peach top
+  torso(ctx, '#6d597a', { sw: 8.4, hw: 7 });
+  poly(ctx, [10, 1.6, 16, 1.6, 15, 16, 11, 16]); paint(ctx, '#f7a072', null);
+  poly(ctx, [9.6, 1.4, 13, 12, 8.4, 9.4, 7.2, 4]); paint(ctx, '#56456a', INK, 0.8);
+  poly(ctx, [16.4, 1.4, 13, 12, 17.6, 9.4, 18.8, 4]); paint(ctx, '#56456a', INK, 0.8);
+  dot(ctx, 13, 19, 0.8, '#ffd23f', null); dot(ctx, 13, 24, 0.8, '#ffd23f', null);
+  rr(ctx, 15.6, 12.4, 3.6, 2.6, 0.6); paint(ctx, '#ffffff', null);   // pocket square
+});
+outfit('cardigan', (ctx) => {                                // Lint — cardigan + shirt + bow tie
+  torso(ctx, '#e17055');
+  poly(ctx, [10, 1.6, 16, 1.6, 14.6, 34, 11.4, 34]); paint(ctx, '#f5f6fa', null);
+  poly(ctx, [10.6, 2.2, 13, 4.4, 10.6, 6.6]); paint(ctx, '#2d3436', null);
+  poly(ctx, [15.4, 2.2, 13, 4.4, 15.4, 6.6]); paint(ctx, '#2d3436', null);
+  dot(ctx, 13, 4.4, 0.9, '#2d3436', null);
+  for (const y of [12, 18, 24, 30]) { dot(ctx, 10.4, y, 0.8, '#7a3b2a', null); }
+  rr(ctx, 16, 10, 3.6, 4.4, 0.6); paint(ctx, null, '#a84a35', 0.8);   // pocket
+  line(ctx, 17, 8.6, 17, 11.4, '#d63031', 1.1);                     // red pen in the pocket
+});
 outfit('tshirt', (ctx) => {
   torso(ctx, '#ff4fa3');
   ell(ctx, 13, 1.8, 3.4, 1.6); paint(ctx, '#d63384', null);
@@ -377,6 +445,37 @@ prop('phone', 12, 20, 0.5, 0.75, (ctx) => {
   rr(ctx, 1, 1, 10, 18, 2.4); paint(ctx, '#222222', INK, 1); ctx.shadowBlur = 0;
   rr(ctx, 2.4, 3, 7.2, 13, 1); paint(ctx, '#ff7ac0', null);
   for (const [x, y] of [[3.4, 4.4], [6.4, 4.4], [3.4, 7.6], [6.4, 7.6], [3.4, 10.8], [6.4, 10.8]]) { ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, 2.2, 2.2); }
+});
+
+// ── Pass 2 "Q4 Hires" props ──
+prop('stopwatch', 16, 24, 0.5, 0.85, (ctx) => {             // Sprint
+  rr(ctx, 6.4, 0.6, 3.2, 3, 0.8); paint(ctx, '#9aa7b4', INK, 0.8);
+  dot(ctx, 8, 11, 7, '#ffffff', INK, 1.3);
+  dot(ctx, 8, 11, 5.4, '#fff8e1', '#ffb300', 1);
+  line(ctx, 8, 11, 8, 7, INK, 1); line(ctx, 8, 11, 10.8, 12.4, '#d63031', 0.9);
+  rr(ctx, 6.6, 17.6, 2.8, 6, 1); paint(ctx, '#1e3a5f', INK, 0.7);
+});
+prop('usb', 10, 26, 0.5, 0.8, (ctx) => {                     // Cache — giant USB stick
+  rr(ctx, 2.6, 0.6, 4.8, 6, 0.6); paint(ctx, '#c0c8d0', INK, 0.9);
+  ctx.fillStyle = INK; ctx.fillRect(3.6, 2, 1.1, 1.4); ctx.fillRect(5.3, 2, 1.1, 1.4);
+  rr(ctx, 1, 6.2, 8, 18.6, 2.2); paint(ctx, '#5c7cfa', INK, 1.1);
+  dot(ctx, 5, 10.5, 1, '#7ed957', null);
+  ctx.font = 'bold 4px Arial'; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.fillText('1TB', 5, 18);
+});
+prop('clipboard', 18, 24, 0.5, 0.9, (ctx) => {               // Hira
+  rr(ctx, 1, 2.4, 16, 21, 2); paint(ctx, '#b07a45', INK, 1.1);
+  rr(ctx, 3, 5, 12, 16.6, 1); paint(ctx, '#ffffff', null);
+  rr(ctx, 5.6, 0.6, 6.8, 3.8, 1.2); paint(ctx, '#9aa7b4', INK, 0.8);
+  for (let y = 8; y < 20; y += 3) line(ctx, 4.6, y, 13.4, y, '#c9d3dd', 0.8);
+  line(ctx, 4.8, 8, 6.4, 9.4, '#7ed957', 0.9); line(ctx, 6.4, 9.4, 8.6, 6.8, '#7ed957', 0.9);
+});
+prop('redpen', 8, 30, 0.5, 0.8, (ctx) => {                   // Lint — the red pen of judgement
+  ctx.shadowColor = '#d63031'; ctx.shadowBlur = 4;
+  poly(ctx, [4, 0.6, 6, 5, 2, 5]); paint(ctx, '#d63031', INK, 0.8);
+  ctx.shadowBlur = 0;
+  rr(ctx, 1.6, 5, 4.8, 22, 1.6); paint(ctx, '#f5f6fa', INK, 1);
+  rr(ctx, 1.6, 5, 4.8, 5, 1); paint(ctx, '#d63031', null);
+  line(ctx, 6.4, 9, 6.4, 18, '#9aa7b4', 1.1);
 });
 
 // Rush's scooter (back layer): deck + stem + bars; wheels are separate images so they can spin.
@@ -638,6 +737,20 @@ proj('proj-missile', 42, 18, (ctx) => {
   ctx.fillStyle = '#ffffff'; ctx.fillRect(16, 5.6, 2, 6.8); ctx.fillRect(21, 5.6, 2, 6.8);
 });
 
+// ── Pass 2 projectiles ──
+proj('proj-floppy', 22, 22, (ctx) => {                       // Cache: batch job / table scan
+  rr(ctx, 1, 1, 20, 20, 2); paint(ctx, '#5c7cfa', INK, 1.2);
+  rr(ctx, 5, 1.6, 11, 7, 0.8); paint(ctx, '#c0c8d0', INK, 0.8);
+  ctx.fillStyle = '#2f4bbf'; ctx.fillRect(12, 2.6, 2.4, 5);
+  rr(ctx, 4, 11, 14, 9, 1); paint(ctx, '#ffffff', null);
+  line(ctx, 6, 14, 16, 14, '#d64545', 0.9); line(ctx, 6, 17, 13, 17, '#9aa7b4', 0.8);
+});
+proj('proj-bubble', 30, 24, (ctx) => {                       // Hira: feedback session
+  rr(ctx, 1, 1, 28, 17, 7); paint(ctx, '#ffffff', '#f7a072', 1.6);
+  poly(ctx, [8, 17, 6, 23, 13, 17.4]); paint(ctx, '#ffffff', '#f7a072', 1.4);
+  for (const x of [9, 15, 21]) dot(ctx, x, 9.5, 1.8, '#f7a072', null);
+});
+
 const PROJ_KEYS = {
   pixel: { q: 'proj-css' },
   ops: { q: 'proj-pipe' },
@@ -648,6 +761,8 @@ const PROJ_KEYS = {
   courier: { e: 'proj-box' },          // Package Drop is a circle skill — use it for the thrown parcel
   embedded: { q: 'proj-signal' },
   appdev: { q: 'proj-phone', r: 'proj-phone' },
+  cache: { q: 'proj-floppy', r: 'proj-floppy' },
+  hr: { q: 'proj-bubble' },
 };
 
 // ═════════════════════════ WALLS (office furniture) ═════════════════════════

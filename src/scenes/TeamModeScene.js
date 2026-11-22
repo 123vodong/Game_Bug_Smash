@@ -45,6 +45,7 @@ import { findPath, clipMove, nearestFree, pushOut, isBlocked, segmentClear } fro
 import { SPELLS, DEFAULT_SPELLS, validSpellPair } from '../../shared/moba/spells.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { getPid, takeover, joinError, saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { ITEMS, buyBlocker } from '../../shared/moba/items.js';
 import { ensureMobaTextures, D, teamColor, toArr, approach, setLooks, projectileTex, fmtTime, shakeCam } from '../entities/moba/mobaGfx.js';
 import { MobaMap } from '../entities/moba/MobaMap.js';
@@ -68,7 +69,7 @@ const STICK_POSES = [
   ['stick-kick', 'kick.svg'], ['stick-punch', 'punch.svg'], ['stick-parry', 'parry.svg'], ['stick-jump', 'jump.svg'],
 ];
 const BUG_SPRITES = ['bug-ladybug', 'bug-null', 'bug-robot', 'bug-beetle'];
-const MSG_TYPES = ['welcome', 'time', 'atk', 'fx', 'feed', 'announce', 'gold', 'chat', 'chatHistory', 'vote', 'voteEnd', 'voteDeny'];
+const MSG_TYPES = ['welcome', 'time', 'atk', 'fx', 'feed', 'announce', 'gold', 'chat', 'chatHistory', 'vote', 'voteEnd', 'voteDeny', 'rank'];
 const TIME_SYNC_MS = 10000;        // contract §3.6: `time` samples (smallest RTT wins)
 const KEY_CAPTURES = 'TAB,SPACE,UP,DOWN,LEFT,RIGHT';
 const WORLD_PHASES = new Set(['playing', 'ended']); // the match world is only shown in these
@@ -78,6 +79,9 @@ const AUTO_AIM_SELF_PX = 60;       // v4 §3.3: cursor this close to your champi
 const MOUSE_IDLE_MS = 1000;        // mouse not moved for this long → auto-aim (player request 2026-11-08)
 const CULL_PAD = 260;              // views farther than this outside the camera are hidden + not updated
 const FX_PREF_KEY = 'bugsmash.team.fx'; // 'auto' | 'high' | 'low' (localStorage)
+const CAM_LOCK_KEY = 'bugsmash.team.camLock'; // Pass 2 RP-08: '1' locked (default) | '0' free
+const EDGE_PAN_PX = 20;            // free camera: the mouse this close to a screen edge pans …
+const EDGE_PAN_SPEED = 1500;       // … at this many screen px / s
 const LOW_FPS = 45, LOW_FPS_MS = 3000, FPS_WARMUP_MS = 4000;
 const RECONNECT_EVERY_MS = 2000;   // §3.3: client.reconnect(token) cadence while in grace
 const STALL_MS = 8000;             // EP-07 watchdog: no patch / message this long while playing = suspect
@@ -139,6 +143,11 @@ export default class TeamModeScene extends Phaser.Scene {
     this._hoverPickAt = 0; this._hoverEnemy = null;
     this._sbOpen = false; this._chatActive = false; this._lastChatAt = 0;
     this._camInit = false; this._grayFx = null; this._meDead = false; this._hudChamp = null; this._lastPnow = 0;
+    // Pass 2 RP-08 camera: locked (follow) or free; a minimap drag "peeks" while locked.
+    let lockPref = '1';
+    try { lockPref = window.localStorage.getItem(CAM_LOCK_KEY) || '1'; } catch (_) { /* default */ }
+    this._camLocked = lockPref !== '0'; this._camPeek = false; this._camFreeX = 0; this._camFreeY = 0;
+    this._centerHeld = false; this._midDrag = null;
     this._camQ = [];
     this._msgStats = {};
     this._movePath = null; this._pathPrev = null; this._myPetId = null;
@@ -158,6 +167,7 @@ export default class TeamModeScene extends Phaser.Scene {
     this._reconn = null; this._wantHistory = true; this._stallAt = 0; this._lastRxAt = Date.now();
     this._reconnectS = TEAM_RECONNECT_GRACE_S; // review fix 2: an early drop (before `welcome`) still retries
     this._vote = null; this._voteMine = null; this._voteReqAt = 0; this._voteKey = 0;
+    this._rankRes = null; // Pass 2 RP-13
     this._firstBlood = null; this._firstBloodDone = false; this._lastCastSfx = 0; this._slowTickAt = 0; this._shopAssistAt = 0;
     const career = SaveManager.getCareer?.() || {};
     this._gamesPlayed = (career.teamGames | 0) + (career.teamPractice | 0);
@@ -187,6 +197,8 @@ export default class TeamModeScene extends Phaser.Scene {
       onShop: () => this._toggleShop(),
       onStartNow: () => this._send('startNow'),
       onMinimap: (x, y) => { if (this._canAct()) this._moveOrder(x, y, true); },
+      onMinimapView: (x, y, phase) => this._minimapView(x, y, phase), // Pass 2 RP-08
+      onCamToggle: () => this._toggleCamLock(),
       onScoreboard: () => this._setScoreboard(!this._sbOpen),
       onChat: () => this._openChat(),
       onAttack: () => this._attackNearest(),
@@ -197,6 +209,7 @@ export default class TeamModeScene extends Phaser.Scene {
       onVote: (yes) => this._castVote(yes),
     });
     this._initQuality();
+    this.hud.setCamLocked?.(this._camLocked);
     try { this.info = new InfoPanel(this, { onClose: () => {} }); } catch (e) { console.warn('[TeamMode] InfoPanel failed:', e?.message); this.info = null; }
     this._setupInput();
     this._buildChatInput();
@@ -270,21 +283,44 @@ export default class TeamModeScene extends Phaser.Scene {
           if (Array.isArray(sp) && validSpellPair(sp[0], sp[1])) this.mySpells = sp.slice(0, 2);
         } catch (_) { /* keep defaults */ }
       }
-      const room = await this.client.joinOrCreate('team', { name: this.playerName, champ: this.myChamp, autoLock: true, hat: SaveManager.getHat?.() || '' });
+      const room = await this.client.joinOrCreate('team', { name: this.playerName, champ: this.myChamp, autoLock: true, hat: SaveManager.getHat?.() || '', pid: getPid() });
       if (this._shuttingDown || visit !== this._visit) { try { room.leave(); } catch (_) { /* ignore */ } return; }
       this._adoptRoom(room, visit, { fresh: true });
+      // Pass 2 RP-06: the queue now waits 30 s for others — a deep link is "ready" at once
+      // (alone it starts right away; with others it starts when they are ready too).
+      try { room.send('startNow'); } catch (_) { /* closed */ }
       // Lobby / select only (the server ignores it later): our D / F picks.
       try { room.send('spells', { d: this.mySpells[0], f: this.mySpells[1] }); } catch (_) { /* closed */ }
     } catch (e) {
       if (this._shuttingDown || visit !== this._visit) return;
       console.warn('[TeamMode] join failed:', e?.message || e);
+      const je = joinError(e);
+      if (je.code === 'DUP_TAB') { this._dupTabModal(); return; }
+      if (je.code === 'IN_MATCH') { this._goLobbyRejoin(); return; }
       this._connFail(e?.message || String(e));
     }
   }
 
+  /** Pass 2 RP-03: this player is already playing in another tab. */
+  _dupTabModal() {
+    this.hud.setStatus('');
+    this.hud.modal({
+      title: DUP_TAB_TEXT.title, body: DUP_TAB_TEXT.body,
+      buttons: [
+        { label: '▶ PLAY HERE', color: 0x7ed957, fn: async () => { this.hud.closeModal(); this.hud.setStatus('closing the other tab…'); await takeover(); setTimeout(() => { if (!this._shuttingDown) this._connect(); }, 400); } },
+        { label: '☰ MENU', color: 0x8a94a8, fn: () => this._goMenu() },
+      ],
+    });
+  }
+
+  /** Pass 2 RP-05: still seated in a running match → the Team hub offers REJOIN. */
+  _goLobbyRejoin() { this._cleanup(); this.scene.start('TeamLobbyScene', { rejoin: true }); }
+
   /** Take over a joined room (deep link join, or handed over by TeamSelectScene — no re-join). */
   _adoptRoom(room, visit, { fresh = false, pending = null, rejoin = false } = {}) {
     this.room = room;
+    // Pass 2 RP-05: remember the match for REJOIN (the token changes after every reconnect).
+    if (room.roomId && room.reconnectionToken && room.state?.phase !== 'ended') saveMatch({ roomId: room.roomId, token: room.reconnectionToken, champ: this.myChamp, custom: !!room.state?.custom });
     this._wantHistory = fresh && !rejoin; // a rejoin keeps the chat already on screen
     this.localId = room.sessionId;
     const add = (u) => { if (typeof u === 'function') this._unsubs.push(u); };
@@ -338,6 +374,11 @@ export default class TeamModeScene extends Phaser.Scene {
   /** §3.3: a non-consented drop while the server keeps our seat (welcome.reconnectS) → reconnect. */
   _connLost(code, token = '') {
     if (this._shuttingDown || this._sim || this._reconn) return;
+    if (code === CLOSE_TAKEN_OVER) { // Pass 2: PLAY HERE in another tab took this seat
+      this._setScoreboard(false); this.shop?.close?.(); this.info?.close?.();
+      this.hud.modal({ title: DUP_TAB_TEXT.title, body: DUP_TAB_TEXT.kicked, buttons: [{ label: '☰ MENU', color: 0x39c2ff, fn: () => this._goMenu() }] });
+      return;
+    }
     const graceS = Number(this._reconnectS) || 0;
     const consented = code === 1000 || code === 4000;
     if (!consented && token && graceS > 0 && this._phase !== 'ended') { this._startReconnect(token, graceS); return; }
@@ -506,9 +547,10 @@ export default class TeamModeScene extends Phaser.Scene {
       }
       return new Fallback(this, ...args);
     };
-    this.shop = make(Shop, FallbackShopPanel, { onBuy: (id) => this._buy(id) });
+    this.shop = make(Shop, FallbackShopPanel, { onBuy: (id) => this._buy(id), onSell: (slot) => this._sell(slot) });
     this.scoreboard = make(Score, FallbackScoreboard);
     this.endScreen = make(End, FallbackEndScreen, { onPlayAgain: () => this._playAgain(), onMenu: () => this._goMenu() });
+    if (this._rankRes) { try { this.endScreen.setRank?.(this._rankRes); } catch (_) { /* fallback */ } }
     if (this._hudChamp) { try { this.shop.setChampion?.(this._hudChamp); } catch (_) { /* optional extra */ } }
     if (this._endPending) { const p = this._endPending; this._endPending = null; this._showEndScreen(p); }
   }
@@ -541,6 +583,10 @@ export default class TeamModeScene extends Phaser.Scene {
         if (m.big) AudioManager.reward?.(); else AudioManager.combo?.(2);
         break;
       case 'vote': this._onVote(m); break;
+      case 'rank': // Pass 2 RP-13: ranked result (sent at the end of the match)
+        this._rankRes = m;
+        try { this.endScreen?.setRank?.(m); } catch (_) { /* fallback end screen */ }
+        break;
       case 'voteEnd': {
         const was = this._vote;
         this._vote = null; this._voteMine = null;
@@ -722,6 +768,12 @@ export default class TeamModeScene extends Phaser.Scene {
 
   _onPointerDown(p, over) {
     if (this._shuttingDown || (over && over.length)) return;
+    // Pass 2 RP-08: middle-button drag pans the camera (and frees it).
+    if (p.middleButtonDown?.() && !this._isTouch && WORLD_PHASES.has(this._phase)) {
+      if (this._camLocked) this._setCamLock(false, true);
+      this._midDrag = { x: p.x, y: p.y, cx: this._camFreeX, cy: this._camFreeY };
+      return;
+    }
     if (this._isTouch && p !== this.input.mousePointer && this.hud.stickDown(p)) { this._moveDest = null; return; }
     if (!this._canAct()) return;
     const right = p.rightButtonDown?.();
@@ -734,6 +786,15 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _onPointerMove(p) {
+    if (this._midDrag) {
+      if (!p.middleButtonDown?.()) this._midDrag = null;
+      else {
+        const z = this.cameras.main.zoom || 1;
+        this._camFreeX = Math.max(0, Math.min(MAP_W, this._midDrag.cx - (p.x - this._midDrag.x) / z));
+        this._camFreeY = Math.max(0, Math.min(MAP_H, this._midDrag.cy - (p.y - this._midDrag.y) / z));
+        return;
+      }
+    }
     // Real cursor motion (not the world point shifting under a following camera) → aim follows the mouse.
     const lx = this._lastPtrX, ly = this._lastPtrY;
     if (lx === undefined || Math.abs(p.x - lx) + Math.abs(p.y - ly) > 3) { this._mouseMovedAt = this.time.now; this._lastPtrX = p.x; this._lastPtrY = p.y; }
@@ -747,6 +808,7 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _onPointerUp(p) {
+    this._midDrag = null;
     if (this.hud.stickUp(p)) return;
     this._mouseHeld = false;
   }
@@ -767,7 +829,8 @@ export default class TeamModeScene extends Phaser.Scene {
       case 'KeyP': this._toggleShop(); break;
       case 'Space': this._attackNearest(); break;
       case 'KeyS': if (this._canAct()) { this._order({ type: 'stop' }); this._moveDest = null; } break;
-      case 'KeyY': if (this._vote) this._castVote(true); break;
+      case 'KeyY': if (this._vote) this._castVote(true); else this._toggleCamLock(); break; // Pass 2: Y = camera lock (LoL)
+      case 'KeyZ': this._centerHeld = true; break;                                          // Pass 2: hold Z = look at you
       case 'KeyN': if (this._vote) this._castVote(false); break;
       default: break;
     }
@@ -775,6 +838,51 @@ export default class TeamModeScene extends Phaser.Scene {
 
   _onKeyUp(ev) {
     if (ev.code === 'Tab') this._setScoreboard(false); // key events only come from real keyboards
+    if (ev.code === 'KeyZ' && this._centerHeld) { // released: a free camera stays on your champion
+      this._centerHeld = false;
+      this._camFreeX = this._camX; this._camFreeY = this._camY;
+    }
+  }
+
+  // ───────────────────────── Pass 2 RP-08: camera ─────────────────────────
+  _toggleCamLock() { this._setCamLock(!this._camLocked); }
+
+  _setCamLock(locked, quiet = false) {
+    this._camLocked = !!locked;
+    this._camPeek = false;
+    if (!locked) { this._camFreeX = this._camX || this._camFreeX; this._camFreeY = this._camY || this._camFreeY; }
+    try { window.localStorage.setItem(CAM_LOCK_KEY, locked ? '1' : '0'); } catch (_) { /* session only */ }
+    this.hud.setCamLocked?.(this._camLocked);
+    if (!quiet) {
+      this.hud.toast(locked ? '🔒 Camera locked on you (Y)'
+        : (this._isTouch ? '🔓 Camera free — drag the minimap' : '🔓 Camera free — push the mouse to a screen edge · drag the minimap · hold Z = you'),
+      '#ffd23f', 2600);
+    }
+    AudioManager.uiClick?.();
+  }
+
+  /** Minimap drag (HUD): 'down' / 'move' = look at (x, y); 'up' = a locked camera snaps back. */
+  _minimapView(x, y, phase) {
+    if (!WORLD_PHASES.has(this._phase)) return;
+    if (phase === 'up') { this._camPeek = false; return; }
+    if (this._camLocked) this._camPeek = true;
+    this._camFreeX = x; this._camFreeY = y;
+    if (phase === 'down') { this._camX = x; this._camY = y; } // jump there (LoL), then follow the drag
+  }
+
+  /** Free camera: the mouse at a screen edge pans (desktop only, never over the HUD's modal / shop). */
+  _edgePan(dt) {
+    if (this._isTouch || this._pointerOut || this._midDrag || this.hud.modalOpen || this.shop?.isOpen || this._sbOpen || this._chatActive) return;
+    if (this._camPeek) return;
+    const p = this.input.activePointer;
+    if (!p || (p.x === 0 && p.y === 0)) return;
+    const W = this.scale.width, H = this.scale.height;
+    const vx = p.x < EDGE_PAN_PX ? -1 : (p.x > W - EDGE_PAN_PX ? 1 : 0);
+    const vy = p.y < EDGE_PAN_PX ? -1 : (p.y > H - EDGE_PAN_PX ? 1 : 0);
+    if (!vx && !vy) return;
+    const z = this.cameras.main.zoom || 1, step = (EDGE_PAN_SPEED / z) * dt; // dt in seconds (like approach())
+    this._camFreeX = Math.max(0, Math.min(MAP_W, this._camFreeX + vx * step));
+    this._camFreeY = Math.max(0, Math.min(MAP_H, this._camFreeY + vy * step));
   }
 
   _onEscape() {
@@ -812,6 +920,15 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!me) return;
     if (!this._canShop(me)) { this.hud.toast('🛒 Shop only in your break room (or while dead)', '#ff8a8a'); return; }
     this._send('buy', { item: id });
+    AudioManager.uiClick?.();
+  }
+
+  /** Pass 2 RP-07: sell the item in inventory slot `slot` (same place rules as buying). */
+  _sell(slot) {
+    const me = this._me();
+    if (!me || !Number.isInteger(slot)) return;
+    if (!this._canShop(me)) { this.hud.toast('🛒 Sell in your break room (or while dead)', '#ff8a8a'); return; }
+    this._send('sell', { slot });
     AudioManager.uiClick?.();
   }
 
@@ -898,7 +1015,7 @@ export default class TeamModeScene extends Phaser.Scene {
       || want('epic', alive && epicSoon, "✨ An epic monster spawns in under 30 s — group up, it pays the whole team.")
       || want('attack', alive && t > 75000, T ? '⚔ The big ⚔ button hits the nearest enemy — no aiming needed.' : '⚔ SPACE hits the nearest enemy — no aiming needed.')
       || want('scores', t > 150000, T ? '📊 Tap 📊 for the scoreboard — see who is carrying.' : '📊 Hold TAB for the scoreboard — see who is carrying.')
-      || want('minimap', t > 210000, T ? '🗺 Tap the minimap to walk there — jungle camps are free gold between waves.' : '🗺 Click the minimap to walk there — jungle camps are free gold between waves.');
+      || want('minimap', t > 210000, T ? '🗺 Tap the minimap to walk there — jungle camps are free gold between waves.' : '🗺 Right-click the minimap to walk there · drag it to look around (Y frees the camera)');
   }
 
   /** Inside an enemy tower's reach with no allied minion tanking it. */
@@ -1554,9 +1671,18 @@ export default class TeamModeScene extends Phaser.Scene {
     // Camera follows the predicted position (slightly below center: the HUD covers the bottom).
     const tgt = this._pred || me;
     if (tgt) {
-      if (!this._camInit) { this._camInit = true; this._camX = tgt.x; this._camY = tgt.y + 40; }
-      const k = approach(dt, 7);
-      this._camX += (tgt.x - this._camX) * k; this._camY += (tgt.y + 40 - this._camY) * k;
+      if (!this._camInit) { this._camInit = true; this._camX = tgt.x; this._camY = tgt.y + 40; this._camFreeX = this._camX; this._camFreeY = this._camY; }
+      // Pass 2 RP-08: follow when locked (and not peeking via the minimap) or while Z is held.
+      const follow = this._centerHeld || (this._camLocked && !this._camPeek);
+      if (follow) {
+        const k = approach(dt, this._centerHeld ? 14 : 7);
+        this._camX += (tgt.x - this._camX) * k; this._camY += (tgt.y + 40 - this._camY) * k;
+        this._camFreeX = this._camX; this._camFreeY = this._camY;
+      } else {
+        this._edgePan(dt);
+        const k = approach(dt, 16);
+        this._camX += (this._camFreeX - this._camX) * k; this._camY += (this._camFreeY - this._camY) * k;
+      }
       this.cameras.main.centerOn(this._camX, this._camY);
     }
     // Joystick / arrow keys → move orders toward a point ahead.
@@ -1819,6 +1945,7 @@ export default class TeamModeScene extends Phaser.Scene {
   _onEnded(st) {
     if (this._ended) return;
     this._ended = true;
+    if (this.room?.roomId) clearMatch(this.room.roomId); // Pass 2: nothing left to REJOIN
     this.shop?.close?.(); this.scoreboard?.hide?.(); this._sbOpen = false; this.info?.close?.();
     this.hud.closeModal();
     this._setGray(false);
@@ -1909,7 +2036,11 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   // ───────────────────────── leaving ─────────────────────────
-  _goMenu() { this._cleanup(); this.scene.start('MenuScene'); }
+  _goMenu() {
+    // Pass 2: leaving on purpose frees the seat for good (the bot keeps it) → no REJOIN offer.
+    if (this.room?.roomId) clearMatch(this.room.roomId);
+    this._cleanup(); this.scene.start('MenuScene');
+  }
   // Custom-room players go back to the rooms screen (keep the group together); quick play → lobby.
   // Round 2: an online quick match re-queues straight away (TeamLobbyScene { autoQueue }).
   _playAgain() {

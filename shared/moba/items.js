@@ -1,7 +1,8 @@
 // shared/moba/items.js — Team Mode shop (office gear). Shared by server + client.
 //
 // Buying happens inside your fountain (or while dead). 6 inventory slots, no
-// recipes (buy directly), no selling in v1. Stat fields (all additive):
+// recipes (buy directly). Pass 2: items can be SOLD (rules.sellValue: 70 %, or 100 % within
+// 10 s of buying). Stat fields (all additive):
 //   ad, ap, hp, mana, armor, ms (flat move speed), as (attack-speed %),
 //   haste (cooldown reduction, capped by rules.MAX_HASTE_PCT), lifesteal (fraction
 //   of attack + skill damage healed), apPct (× total AP)
@@ -24,6 +25,7 @@ export const ITEMS = {
   power_bank: { id: 'power_bank', name: 'Power Bank',        emoji: '🔋', cost: 350, tier: 'basic', stats: { mana: 220 },     desc: '+220 mana. Never die at 1%.' },
   pomodoro:   { id: 'pomodoro',   name: 'Pomodoro Timer',    emoji: '⏱️', cost: 450, tier: 'basic', stats: { haste: 0.1 },    desc: '10% cooldown reduction. 25 minutes of pure focus.' },
   sneakers:   { id: 'sneakers',   name: 'Office Sneakers',   emoji: '👟', cost: 300, tier: 'basic', group: 'boots', stats: { ms: 25 }, desc: '+25 move speed. Boots — only one pair.' },
+  sticky_notes: { id: 'sticky_notes', name: 'Sticky Notes',    emoji: '🗒️', cost: 350, tier: 'basic', stats: { ap: 12, mana: 120 }, desc: '+12 ability power, +120 mana. Every idea, stuck somewhere.' },
 
   // ── core ──
   rgb_keyboard:  { id: 'rgb_keyboard',  name: 'RGB Mechanical Keyboard', emoji: '⌨️', cost: 1300, tier: 'core', stats: { ad: 35, as: 0.15 },             desc: '+35 attack damage, +15% attack speed. Clicky = faster.' },
@@ -35,15 +37,25 @@ export const ITEMS = {
   server_rack:   { id: 'server_rack',   name: 'Server Rack Armor',       emoji: '🗄️', cost: 2600, tier: 'core', stats: { hp: 450, armor: 50 },          desc: '+450 health, +50 armor. Enterprise-grade uptime.' },
   rubber_duck:   { id: 'rubber_duck',   name: 'Rubber Duck',             emoji: '🦆', cost: 1100, tier: 'core', stats: { haste: 0.2, mana: 250 },       desc: '20% cooldown reduction, +250 mana. Explains your bugs back to you.' },
   jetpack:       { id: 'jetpack',       name: 'Jetpack Sneakers',        emoji: '🚀', cost: 1100, tier: 'core', group: 'boots', stats: { ms: 45, as: 0.2 }, desc: '+45 move speed, +20% attack speed. Boots — only one pair.' },
+  // ── Pass 2 RP-09 ──
+  slippers:       { id: 'slippers',       name: 'Fuzzy Slippers',     emoji: '🥿', cost: 1000, tier: 'core', group: 'boots', stats: { ms: 45, armor: 20 }, desc: '+45 move speed, +20 armor. Work-from-home comfort. Boots — only one pair.' },
+  smartwatch:     { id: 'smartwatch',     name: 'Smartwatch',         emoji: '⌚', cost: 1000, tier: 'core', group: 'boots', stats: { ms: 45, haste: 0.12 }, desc: '+45 move speed, 12% cooldown reduction. Reminds you to stand up. Boots slot — only one.' },
+  second_monitor: { id: 'second_monitor', name: 'Second Monitor',     emoji: '📺', cost: 1250, tier: 'core', stats: { ad: 25, haste: 0.15 }, desc: '+25 attack damage, 15% cooldown reduction. Docs on the left, code on the right.' },
+  cloud_credits:  { id: 'cloud_credits',  name: 'Cloud Credits',      emoji: '☁️', cost: 1350, tier: 'core', stats: { ap: 55, hp: 220 }, desc: '+55 ability power, +220 health. Free tier, for now.' },
+  energy_crate:   { id: 'energy_crate',   name: 'Energy Drink Crate', emoji: '🥤', cost: 1250, tier: 'core', stats: { as: 0.3, ms: 15 }, desc: '+30% attack speed, +15 move speed. Sleep is a deprecated feature.' },
+  vpn_hoodie:     { id: 'vpn_hoodie',     name: 'VPN Hoodie',         emoji: '🦺', cost: 2400, tier: 'core', stats: { hp: 300, armor: 45, haste: 0.1 }, desc: '+300 health, +45 armor, 10% cooldown reduction. Untraceable, unkillable.' },
+  letter_opener:  { id: 'letter_opener',  name: 'Letter Opener',      emoji: '🗡️', cost: 2900, tier: 'core', stats: { ad: 55, as: 0.2, lifesteal: 0.1 }, desc: '+55 attack damage, +20% attack speed, 10% lifesteal. Opens mail. And wounds.' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS);
-/** Shop display order: consumables, basics, core. */
+/** Shop display order: consumables, basics, core (boots · attack · magic/defence · late). */
 export const SHOP_ORDER = [
   'coffee',
-  'mouse', 'tech_book', 'chair', 'hoodie', 'power_bank', 'pomodoro', 'sneakers',
-  'rgb_keyboard', 'gauntlet', 'headphones', 'rubber_duck', 'standing_desk', 'jetpack',
-  'ultrawide', 'stackoverflow', 'server_rack',
+  'mouse', 'tech_book', 'chair', 'hoodie', 'power_bank', 'pomodoro', 'sneakers', 'sticky_notes',
+  'jetpack', 'slippers', 'smartwatch', 'rubber_duck',
+  'rgb_keyboard', 'second_monitor', 'energy_crate', 'gauntlet',
+  'headphones', 'cloud_credits', 'standing_desk', 'vpn_hoodie',
+  'ultrawide', 'letter_opener', 'stackoverflow', 'server_rack',
 ];
 
 export function isItemId(id) { return typeof id === 'string' && Object.hasOwn(ITEMS, id); }

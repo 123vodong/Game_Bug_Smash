@@ -2,7 +2,7 @@
 // Contract: .claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3 (frozen).
 //
 // 🚀 Startup (blue, bottom-left) vs 🏢 MegaCorp (red, top-right). Bots fill
-// every empty slot. Phases: lobby (12 s or startNow) → select → loading →
+// every empty slot. Phases: lobby (30–45 s, or everyone READY) → select → loading →
 // playing → ended (winner shown END_LINGER_MS, then everyone is disconnected).
 //
 // Layout of this file:
@@ -26,10 +26,16 @@
 // pick / lock / spells) → loading (LOADING_MS, frozen at the fountain) →
 // playing (champion records, bot brains and pets are created from the seats)
 // → ended. Summoner spells (`spell` D/F, shared/moba/spells.js) live in _doSpell.
+//
+// Pass 2 (PASS2_BREAKDOWN.md): player ids (join option `pid` → public id) — one live session per
+// player (Presence: DUP_TAB / IN_MATCH), seats held for the WHOLE match (manual reconnection, the
+// client keeps the token) with an abandon timer, ranked results at the end (Ranking), `sell`, and
+// a longer quick-play queue with a ready check (`ready` / startNow).
 import { Room } from '@colyseus/core';
 import { StateView } from '@colyseus/schema';
 import {
-  TEAM_SIZE, TEAMS, TEAM_INFO, LOBBY_MS, LOBBY_SOLO_MS, END_LINGER_MS, TICK_MS,
+  TEAM_SIZE, TEAMS, TEAM_INFO, LOBBY_MS, LOBBY_JOIN_EXTEND_MS, LOBBY_MAX_MS, LOBBY_FULL_MS, END_LINGER_MS, TICK_MS,
+  sellValue, ABANDON_MS, ABANDON_EMPTY_MS,
   SELECT_MS, SELECT_BOT_PICK_MS, SELECT_ALL_LOCKED_MS, LOADING_MS, PICK_RATE_MS,
   MAX_LEVEL, XP_TABLE, ULT_UNLOCK_LEVEL, levelForXp,
   START_GOLD, PASSIVE_GOLD_PER_SEC, PASSIVE_GOLD_DELAY_MS, KILL_GOLD, ASSIST_GOLD, FIRST_BLOOD_BONUS,
@@ -76,6 +82,10 @@ import {
 } from '../game/moba/lines.js';
 import { BOT_NAMES } from '../data/bots.js';
 import { sanitizeHat } from '../data/cosmetics.js'; // EP-06: the arena's hat allowlist (server-arena owns it)
+import { publicIdOf } from '../game/identity.js';
+import { Presence } from '../game/Presence.js';
+import { Ranking } from '../game/Ranking.js';
+import { perfScore } from '../../shared/moba/ranks.js';
 
 // Dev-only hooks are OPT-IN (fail-closed): start the server with BUG_SMASH_DEBUG=1.
 const DEBUG_HOOKS = process.env.BUG_SMASH_DEBUG === '1';
@@ -177,6 +187,13 @@ export class TeamRoom extends Room {
     this._votes = { blue: null, red: null };   // EP-04: active rollback vote per team (see _startVote)
     this._voteCd = { blue: 0, red: 0 };        // EP-04: no new vote before this (server ms) after a failed one
     this._lastVoteAt = new Map();              // EP-04: sid -> last processed `vote` (rate limit)
+    // Pass 2
+    this._pubs = new Map();        // sid -> public player id ('' = no id: unranked, no presence)
+    this._holds = new Map();       // sid -> Colyseus reconnection deferred (seat held for the match)
+    this._played = new Set();      // sids of humans connected at some point while 'playing' (ranked)
+    this._rankRes = new Map();     // sid -> `rank` message payload (resent on hello after a rejoin)
+    this._noHumanSince = 0;        // RP-04 abandon timer
+    this._lastSellAt = new Map();  // (champion records carry lastBuyAt; sells share the buy rate)
 
     this._buildStructures();             // before the bots: they precompute lane towers
     this.skills = new SkillEngine(this);
@@ -186,6 +203,8 @@ export class TeamRoom extends Room {
     this.onMessage('order', (client, msg) => this._doOrder(client.sessionId, msg));
     this.onMessage('cast', (client, msg) => this._doCast(client.sessionId, msg));
     this.onMessage('buy', (client, msg) => this._doBuy(client.sessionId, msg));
+    this.onMessage('sell', (client, msg) => this._doSell(client.sessionId, msg)); // RP-07
+    this.onMessage('ready', (client) => this._doReady(client.sessionId));           // RP-06
     this.onMessage('recall', (client) => this._doRecall(client.sessionId));
     this.onMessage('chat', (client, msg) => this._onChat(client.sessionId, msg));
     this.onMessage('startNow', (client) => this._doStartNow(client.sessionId));
@@ -208,6 +227,8 @@ export class TeamRoom extends Room {
       // already has a ballot (e.g. its bot voted while the human was away) → the client hides YES / NO.
       const v = m && this._votes[m.team];
       if (v) client.send('vote', { ...this._votePayload(v), mine: v.voters.has(client.sessionId) });
+      const rr = this._rankRes.get(client.sessionId); // RP-12: rejoined after the match ended
+      if (rr) client.send('rank', rr);
     });
     // Unknown message types (a newer client vs an older server, typos) are ignored —
     // Colyseus would otherwise drop the client (close 4002).
@@ -235,11 +256,19 @@ export class TeamRoom extends Room {
     console.log('[TeamRoom] created', this.roomId);
   }
 
-  /** Joins only while queueing (quick play: lobby · custom: room) — locked from champion select on. */
-  onAuth(_client, _options) {
+  /**
+   * Joins only while queueing (quick play: lobby · custom: room) — locked from champion select on.
+   * Pass 2: one live session per player id (Presence) — 'DUP_TAB' (another tab is playing) or
+   * 'IN_MATCH:<roomId>' (this player still has a seat in a running match → rejoin it instead).
+   * → { pub } (client.auth) when allowed.
+   */
+  onAuth(_client, options) {
     const ph = this.state.phase;
-    if (ph === 'room') return this.humanCount() < ROOM_MAX_HUMANS;
-    return ph === 'lobby';
+    if (ph === 'room' ? this.humanCount() >= ROOM_MAX_HUMANS : ph !== 'lobby') return false;
+    const pub = publicIdOf(options?.pid);
+    const why = Presence.check(pub, 'team', this);
+    if (why) throw new Error(why);
+    return { pub };
   }
 
   onJoin(client, options) {
@@ -257,16 +286,27 @@ export class TeamRoom extends Room {
     sl.s.champ = champ;
     sl.s.locked = autoLock && !!champ;
     sl.s.hat = sanitizeHat(options?.hat); // EP-06: allowlisted cosmetic ('' if unknown)
+    // Pass 2: player id → presence + rank badge (RP-02 / RP-12).
+    const pub = (client.auth && client.auth.pub) || '';
+    this._pubs.set(sid, pub);
+    sl.s.rank = pub ? Ranking.label(pub) : '';
+    if (pub) Presence.register(pub, { mode: 'team', room: this, sid, client });
     this._bindClient(client, team);
     if (ph === 'room') {
       if (!this.state.hostId) this.state.hostId = sid;
     } else {
-      // EP-19 r2 queue: a lone human starts LOBBY_SOLO_MS after joining; a 2nd human extends the
-      // countdown to LOBBY_MS from the FIRST join — never shorter than what is already shown.
+      // RP-06 queue: LOBBY_MS from the first join; a later join keeps ≥ LOBBY_JOIN_EXTEND_MS on the
+      // clock (never past LOBBY_MAX_MS from the first join); a full queue starts LOBBY_FULL_MS later.
+      // Never shorter than what is already shown. START NOW = ready check (_doReady).
       const now = Date.now();
       const st = this.state;
-      if (!st.lobbyEndsAt) { this._firstJoinAt = now; st.lobbyEndsAt = now + LOBBY_SOLO_MS; }
-      else if (this.humanCount() >= 2) st.lobbyEndsAt = Math.max(st.lobbyEndsAt, (this._firstJoinAt || now) + LOBBY_MS);
+      if (!st.lobbyEndsAt) { this._firstJoinAt = now; st.lobbyEndsAt = now + LOBBY_MS; }
+      else {
+        const cap = (this._firstJoinAt || now) + LOBBY_MAX_MS;
+        st.lobbyEndsAt = Math.max(st.lobbyEndsAt, Math.min(cap, now + LOBBY_JOIN_EXTEND_MS));
+      }
+      if (this.humanCount() >= MAX_HUMANS) st.lobbyEndsAt = Math.min(st.lobbyEndsAt, now + LOBBY_FULL_MS);
+      this._unready(); // a new player in the queue → everyone confirms again
       // 0 means "alive" in the contract — show the expected first spawns instead.
       const t0 = st.lobbyEndsAt + SELECT_MS + LOADING_MS;
       st.epicGoldenAt = t0 + EPICS.golden.firstSpawnMs;
@@ -288,12 +328,20 @@ export class TeamRoom extends Room {
     this._lastChatAt.delete(sid);
     this._lastSideAt.delete(sid);
     this._lastVoteAt.delete(sid);
+    this._lastSellAt.delete(sid);
     const phase = this.state.phase;
+    const pub = this._pubs.get(sid) || '';
+    // Pass 2 RP-04: a dropped (non-consented) human keeps the seat for the WHOLE match; a kicked
+    // duplicate tab (PLAY HERE → close 4010) too, so the new tab can take the seat back.
     const hold = !consented && (phase === 'select' || phase === 'loading' || phase === 'playing');
+    if (!hold) Presence.unregister(pub, this, sid);
+    else Presence.setConnected(pub, this, sid, false);
     if (phase === 'lobby' || phase === 'room') {
       if (!this.slots.has(sid)) return;
       this._removeSlot(sid);
+      this._pubs.delete(sid);
       if (phase === 'lobby' && this.humanCount() === 0) this.state.lobbyEndsAt = 0;
+      if (phase === 'lobby') this._checkReady();
       this._handOffHost(sid);
     } else if (phase === 'select' || phase === 'loading') {
       // v3: a bot takes the seat — it keeps a locked pick, else drafts for itself shortly.
@@ -329,22 +377,27 @@ export class TeamRoom extends Room {
     }
     if (hold) this._holdSeat(client);
     this._updateMetadata();
-    console.log(`[TeamRoom] -leave ${sid}${hold ? ` (seat held ${TEAM_RECONNECT_GRACE_S}s)` : ''} (humans ${this.humanCount()})`);
+    console.log(`[TeamRoom] -leave ${sid}${hold ? ' (seat held for the match)' : ''} (humans ${this.humanCount()})`);
   }
 
   _leaveFeed(name, sid, hold) {
     return hold
-      ? { text: fill(DISCONNECT_LINE, { a: name, s: TEAM_RECONNECT_GRACE_S }), color: '#8890a0', a: sid }
+      ? { text: fill(DISCONNECT_LINE, { a: name }), color: '#8890a0', a: sid }
       : { text: `🤖 ${name} disconnected — a bot took over their laptop`, color: '#8890a0', a: sid };
   }
 
-  /** EP-03: reserve the seat for a reconnect (allowReconnection must be called inside onLeave). */
+  /**
+   * EP-03 / Pass 2 RP-04: reserve the seat for a reconnect (allowReconnection must be called inside
+   * onLeave). 'manual' = held until the match is over (_releaseHolds) — the client keeps the token
+   * in localStorage, so a reload / closed tab / restarted browser can still come back.
+   */
   _holdSeat(client) {
     const sid = client.sessionId;
     let wait = null;
-    try { wait = this.allowReconnection(client, TEAM_RECONNECT_GRACE_S); } catch (_) { wait = null; }
+    try { wait = this.allowReconnection(client, 'manual'); } catch (_) { wait = null; }
     if (!wait || typeof wait.then !== 'function') return;
     this._away.add(sid);
+    this._holds.set(sid, wait);
     const guard = (fn) => { try { fn(); } catch (e) { console.warn('[TeamRoom] reconnect hook', e?.stack || e); } };
     wait.then((newClient) => guard(() => this._onReconnect(newClient, sid)), () => guard(() => this._onReconnectTimeout(sid)))
       .catch((e) => console.warn('[TeamRoom] reconnect hook', e?.stack || e));
@@ -357,9 +410,12 @@ export class TeamRoom extends Room {
    */
   _onReconnect(newClient, sid) {
     this._away.delete(sid);
+    this._holds.delete(sid);
     const st = this.state;
     const m = this._member(sid);
     if (!m || this._closing) return;
+    Presence.setConnected(this._pubs.get(sid) || '', this, sid, true, newClient);
+    if (st.phase === 'playing') this._played.add(sid);
     this._bindClient(newClient, m.team);
     const sl = this.slots.get(sid);
     if (sl) { sl.isBot = false; sl.s.isBot = false; sl.botPickAt = 0; }
@@ -378,8 +434,10 @@ export class TeamRoom extends Room {
     console.log(`[TeamRoom] reconnect ${sid} "${m.name}" (${st.phase}, humans ${this.humanCount()})`);
   }
 
-  /** EP-03: grace over (or the room is closing) — the bot keeps the seat for the rest of the match. */
+  /** EP-03: hold released (match over / room closing) — the bot keeps the seat. */
   _onReconnectTimeout(sid) {
+    this._holds.delete(sid);
+    Presence.unregister(this._pubs.get(sid) || '', this, sid);
     if (!this._away.delete(sid)) return;
     const ph = this.state.phase;
     if (this._closing || (ph !== 'select' && ph !== 'loading' && ph !== 'playing')) return;
@@ -388,7 +446,17 @@ export class TeamRoom extends Room {
     console.log(`[TeamRoom] reconnect grace over for ${sid} — the bot keeps the seat`);
   }
 
+  /** RP-04: the match is over — every held seat is let go (their reconnection is rejected). */
+  _releaseHolds() {
+    for (const [sid, wait] of [...this._holds]) {
+      this._holds.delete(sid);
+      try { wait.reject?.(new Error('match over')); } catch (_) { /* settled */ }
+    }
+  }
+
   onDispose() {
+    this._releaseHolds();
+    Presence.unregisterRoom(this);
     this._timers.length = 0;
     this.skills.clear();
     console.log('[TeamRoom] disposed', this.roomId);
@@ -439,11 +507,34 @@ export class TeamRoom extends Room {
   /** startNow — quick play: any queued human (lobby). Custom: host only, phase 'room', ≥ 1 human. */
   _doStartNow(sid) {
     const st = this.state;
-    if (st.phase === 'lobby') { if (this.slots.has(sid)) this._startSelect(); return false; }
+    if (st.phase === 'lobby') return this._doReady(sid, true); // RP-06: START NOW = I'm ready
     if (st.phase !== 'room' || sid !== st.hostId || !this.slots.has(sid) || this.humanCount() < 1) return false;
     this._startSelect();
     return true;
   }
+
+  /**
+   * RP-06 `ready` (quick-play lobby): toggles the sender's ready flag (`force` = set it). The match
+   * starts as soon as every queued human is ready — alone that is right away.
+   */
+  _doReady(sid, force = false) {
+    if (this.state.phase !== 'lobby') return false;
+    const sl = this.slots.get(sid);
+    if (!sl || sl.isBot) return false;
+    sl.s.ready = force ? true : !sl.s.ready;
+    this._checkReady();
+    return true;
+  }
+
+  /** Every queued human ready → champion select now. */
+  _checkReady() {
+    if (this.state.phase !== 'lobby') return;
+    let humans = 0, ready = 0;
+    for (const sl of this.slots.values()) { if (sl.isBot) continue; humans++; if (sl.s.ready) ready++; }
+    if (humans > 0 && ready === humans) this._startSelect();
+  }
+
+  _unready() { for (const sl of this.slots.values()) if (sl.s.ready) sl.s.ready = false; }
 
   /** side {team} — custom room, phase 'room': move to the other side (≤ TEAM_SIZE humans per side). */
   _doSide(client, msg) {
@@ -541,7 +632,7 @@ export class TeamRoom extends Room {
       hp: 0, mana: 0, maxHp: 0, maxMana: 0, ad: 0, ap: 0, armor: 0, ms: 0, range: 0, as: 0,
       haste: 0, lifesteal: 0, dmgTakenMul: 1,
       dead: false, respawnAt: 0, kills: 0, deaths: 0, assists: 0, cs: 0, streak: 0,
-      items: new Array(INVENTORY_SLOTS).fill(''),
+      items: new Array(INVENTORY_SLOTS).fill(''), boughtAt: new Array(INVENTORY_SLOTS).fill(0),
       cd: { q: 0, w: 0, e: 0, r: 0 },
       stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0,
       shields: [], buffs: [], regens: [],
@@ -677,6 +768,7 @@ export class TeamRoom extends Room {
     ch.level = 1; ch.xp = 0; ch.gold = START_GOLD;
     ch.kills = 0; ch.deaths = 0; ch.assists = 0; ch.cs = 0; ch.streak = 0;
     ch.items.fill('');
+    if (ch.boughtAt) ch.boughtAt.fill(0);
     ch.itemsVer = (ch.itemsVer || 0) + 1;
     ch.cd = { q: 0, w: 0, e: 0, r: 0 };
     ch.spellCd = { d: 0, f: 0 }; ch.burns = [];
@@ -769,6 +861,11 @@ export class TeamRoom extends Room {
       if (sl.isBot) this.bots.add(sl.id, ch.role);
     }
     for (const ch of this.champs.values()) this._spawnPet(ch);
+    // Pass 2: ranked = humans connected while playing (a seat that dropped in select / loading and
+    // never came back is a dodge). The room must outlive an empty client list (abandon timer).
+    for (const c of this.clients) if (this.champs.has(c.sessionId)) this._played.add(c.sessionId);
+    this._noHumanSince = 0;
+    this.autoDispose = false;
     this._nextWaveAt = now + WAVE_FIRST_MS;
     this._waveNo = 0;
     this._campsAt = now + CAMP_SPAWN_MS;
@@ -782,13 +879,14 @@ export class TeamRoom extends Room {
     console.log(`[TeamRoom] match started (${this.humanCount()} humans, ${this.champs.size} champions)`);
   }
 
-  /** reason: 'core' (Production Server destroyed) | 'rollback' (EP-04 vote passed — `vote` = that vote). */
+  /** reason: 'core' (Production Server destroyed) | 'rollback' (EP-04 vote passed — `vote` = that vote)
+   *  | 'abandon' (RP-04: no human connected for ABANDON_MS). */
   _endMatch(winner, now, reason = 'core', vote = null) {
     const st = this.state;
     if (st.phase !== 'playing') return;
     st.phase = 'ended';
     st.winner = winner;
-    st.winReason = reason === 'rollback' ? 'rollback' : 'core';
+    st.winReason = reason === 'rollback' || reason === 'abandon' ? reason : 'core';
     this._endAt = now + END_LINGER_MS;
     const loser = otherTeam(winner);
     const w = TEAM_INFO[winner];
@@ -806,7 +904,9 @@ export class TeamRoom extends Room {
     for (const ch of this.champs.values()) this._removePet(ch, true);
     this.skills.clear();
     this._shots.length = 0;
-    if (st.winReason === 'rollback') {
+    if (st.winReason === 'abandon') {
+      this._announce({ title: '🏳 MATCH ABANDONED', sub: `Nobody came back to the office — ${teamLabel(winner)} takes it`, color: w.css, big: true });
+    } else if (st.winReason === 'rollback') {
       this._announce({
         title: fill(ROLLBACK_PASS_TITLE, { team: teamLabel(loser), other: teamLabel(winner) }),
         sub: fill(ROLLBACK_PASS_SUB, { yes: vote ? vote.yes : ROLLBACK_NEED, need: ROLLBACK_NEED, t: took }),
@@ -822,8 +922,82 @@ export class TeamRoom extends Room {
     for (const u of this.units.values()) this._showInAllViews(u.s);
     this._sync(now);
     this._syncScores(true);
+    this._applyRanked(winner);
+    // The match is over: held seats are let go (their players can queue again).
+    this._releaseHolds();
     this._updateMetadata();
-    console.log(`[TeamRoom] match over: ${winner} wins after ${took} (kills blue ${st.blueKills} / red ${st.redKills})`);
+    console.log(`[TeamRoom] match over: ${winner} wins after ${took} (${st.winReason}, kills blue ${st.blueKills} / red ${st.redKills})`);
+  }
+
+  /**
+   * RP-11/12: ranked results for every human who played (connected at some point while 'playing').
+   * Leavers keep their team's result; an abandon is a loss for whoever was away. Sends `rank` to
+   * each connected one (kept in _rankRes for a rejoin during END_LINGER_MS).
+   */
+  _applyRanked(winner) {
+    const players = [];
+    const anonHumans = { blue: 0, red: 0 };
+    const abandon = this.state.winReason === 'abandon';
+    for (const sid of this._played) {
+      const ch = this.champs.get(sid);
+      if (!ch) continue;
+      const pub = this._pubs.get(sid) || '';
+      if (!pub) { anonHumans[ch.team]++; continue; }
+      players.push({ pub, name: ch.name, team: ch.team, abandoned: abandon && this._away.has(sid), sid });
+    }
+    if (!players.length) return;
+    // Performance bonus: the best performer of each team (bots included — a human has to out-play
+    // them): winning team → 'mvp' (+1 ★), losing team → 'svp' (half the loss).
+    const best = { blue: null, red: null };
+    for (const ch of this.champs.values()) {
+      const sc = perfScore(ch);
+      const b = best[ch.team];
+      if (!b || sc > b.sc || (sc === b.sc && ch.cs > b.ch.cs)) best[ch.team] = { sc, ch };
+    }
+    for (const pl of players) {
+      const b = best[pl.team];
+      // only for players still at their desk when it ends (a LEAVE / drop earns no bonus or protection)
+      const present = this.clients.some((c) => c.sessionId === pl.sid);
+      if (b && b.ch.id === pl.sid && !pl.abandoned && present) pl.perf = pl.team === winner ? 'mvp' : 'svp';
+    }
+    let res;
+    try {
+      res = Ranking.applyMatch({ players, winner, seats: { blue: TEAM_SIZE, red: TEAM_SIZE }, anonHumans });
+    } catch (e) { console.warn('[TeamRoom] ranked update failed', e?.stack || e); return; }
+    for (const pl of players) {
+      const r = res.get(pl.pub);
+      if (!r) continue;
+      const ch = this.champs.get(pl.sid);
+      const label = Ranking.label(pl.pub);
+      if (ch) { ch.s.rank = label; const sc = this.state.scores.get(pl.sid); if (sc) sc.rank = label; }
+      const msg = { ...r, custom: !!this.state.custom, place: Ranking.place(pl.pub) };
+      this._rankRes.set(pl.sid, msg);
+      const c = this.clients.find((cl) => cl.sessionId === pl.sid);
+      if (c) { try { c.send('rank', msg); } catch (_) { /* closing */ } }
+    }
+    console.log(`[TeamRoom] ranked: ${players.map((p) => { const r = res.get(p.pub); return r ? `${p.name} ${r.delta >= 0 ? '+' : ''}${r.delta}${r.bonus ? ` (${r.bonus})` : ''}` : ''; }).join(', ')}`);
+  }
+
+  /** RP-04: nobody human connected → after ABANDON_MS (ABANDON_EMPTY_MS with no seat held) the match ends. */
+  _tickAbandon(now) {
+    if (!this._played.size) return; // bots-only matches (harness) play out
+    let connected = 0;
+    for (const c of this.clients) if (this.champs.has(c.sessionId)) connected++;
+    if (connected > 0) { this._noHumanSince = 0; return; }
+    if (!this._noHumanSince) { this._noHumanSince = now; return; }
+    const wait = this._holds.size ? ABANDON_MS : ABANDON_EMPTY_MS;
+    if (now - this._noHumanSince < wait) return;
+    // The side ahead wins: fewer structures lost, then more kills, then blue.
+    const lost = { blue: 0, red: 0 };
+    for (const t of this.structs.values()) if (!t.alive) lost[t.team]++;
+    const st = this.state;
+    let winner = lost.blue !== lost.red ? (lost.blue < lost.red ? 'blue' : 'red')
+      : (st.blueKills !== st.redKills ? (st.blueKills > st.redKills ? 'blue' : 'red') : 'blue');
+    // Abandoners lose: if only one side had humans, the other side takes it.
+    const sides = { blue: 0, red: 0 };
+    for (const sid of this._played) { const ch = this.champs.get(sid); if (ch) sides[ch.team]++; }
+    if (sides.blue && !sides.red) winner = 'red'; else if (sides.red && !sides.blue) winner = 'blue';
+    this._endMatch(winner, now, 'abandon');
   }
 
   // ───────────────────────── intents (humans + bots) ─────────────────────────
@@ -920,8 +1094,31 @@ export class TeamRoom extends Room {
       if (slot < 0) return false;
       ch.items[slot] = id;
       ch.itemsVer = (ch.itemsVer || 0) + 1;
+      ch.boughtAt[slot] = now; // RP-07: 100 % refund ("undo") within SELL_UNDO_MS
     }
     ch.gold -= it.cost;
+    ch.lastBuyAt = now;
+    this._recalc(ch, now);
+    return true;
+  }
+
+  /** RP-07 sell {slot} — same place rules as buy; refund = rules.sellValue (70 %, or 100 % right after buying). */
+  _doSell(sid, msg) {
+    if (this.state.phase !== 'playing' || !msg || typeof msg !== 'object') return false;
+    const ch = this.champs.get(sid);
+    if (!ch) return false;
+    const slot = msg.slot;
+    if (!Number.isInteger(slot) || slot < 0 || slot >= INVENTORY_SLOTS) return false;
+    const now = Date.now();
+    if (now - ch.lastBuyAt < BUY_RATE_MS) return false;
+    const id = ch.items[slot];
+    if (!id || !isItemId(id)) return false;
+    if (SHOP_ONLY_IN_FOUNTAIN && !ch.dead && !this.inFountain(ch)) return false;
+    const refund = sellValue(ITEMS[id].cost, ch.boughtAt[slot], now);
+    ch.items[slot] = '';
+    ch.boughtAt[slot] = 0;
+    ch.itemsVer = (ch.itemsVer || 0) + 1;
+    ch.gold += refund;
     ch.lastBuyAt = now;
     this._recalc(ch, now);
     return true;
@@ -1318,6 +1515,7 @@ export class TeamRoom extends Room {
       }
       case 'win': {
         if (this.state.phase !== 'playing') break;
+        if (ch && Number.isFinite(msg.kills)) ch.kills = Math.max(0, Math.min(99, msg.kills | 0)); // harness: an MVP-worthy line
         const team = (msg.team === 'blue' || msg.team === 'red') ? msg.team : (ch?.team || 'blue');
         const core = this.structs.get(`${otherTeam(team)}_core`);
         if (core && core.alive) { core.hp = 0; this._onStructDeath(core, ch || null, now); }
@@ -1397,6 +1595,8 @@ export class TeamRoom extends Room {
     }
     const dt = Math.max(0, Math.min(MAX_TICK_DT, Number.isFinite(rawDt) ? rawDt : TICK_MS));
 
+    this._tickAbandon(now);
+    if (st.phase !== 'playing') return;
     this._expireTeamBuffs(now);
     if (!this._crunch && st.startedAt && now - st.startedAt >= CRUNCH_MS) {
       this._crunch = true;
@@ -2747,6 +2947,7 @@ export class TeamRoom extends Room {
     v = ch.dead ? ch.respawnAt : 0; if (sc.respawnAt !== v) sc.respawnAt = v;
     if (sc.spellD !== ch.spells.d) sc.spellD = ch.spells.d;
     if (sc.spellF !== ch.spells.f) sc.spellF = ch.spells.f;
+    if (sc.rank !== (ch.s.rank || '')) sc.rank = ch.s.rank || '';
   }
 
   _syncScore(sid, s) {
@@ -2766,6 +2967,7 @@ export class TeamRoom extends Room {
     if (sc.respawnAt !== s.respawnAt) sc.respawnAt = s.respawnAt;
     if (sc.spellD !== s.spellD) sc.spellD = s.spellD;
     if (sc.spellF !== s.spellF) sc.spellF = s.spellF;
+    if (sc.rank !== (s.rank || '')) sc.rank = s.rank || '';
   }
 
   _buffTags(ch, now) {

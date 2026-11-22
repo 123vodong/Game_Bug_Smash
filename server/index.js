@@ -17,6 +17,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { ArenaRoom } from './rooms/ArenaRoom.js';
 import { TeamRoom } from './rooms/TeamRoom.js';
+import { publicIdOf } from './game/identity.js';
+import { Presence } from './game/Presence.js';
+import { Ranking } from './game/Ranking.js';
 
 const PORT = process.env.PORT || 2567;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,6 +89,35 @@ app.get('/api/team/rooms', async (_req, res) => {
   }
 });
 
+// ── Pass 2: player status, ranking, one-tab takeover (PASS2_BREAKDOWN.md) ──
+// The secret `pid` only travels in POST bodies (never in a URL / log); responses carry the
+// public id. CORS-open like /api/stats (the :8000 dev client calls :2567).
+const cors = (res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); res.setHeader('Cache-Control', 'no-cache'); };
+app.options(['/api/me', '/api/session/takeover'], (_req, res) => { cors(res); res.setHeader('Access-Control-Allow-Methods', 'POST'); res.sendStatus(204); });
+
+// POST /api/me {pid} → { id, rank (profile + place), match: { roomId, phase, connected } | null }
+app.post('/api/me', (req, res) => {
+  cors(res);
+  const pub = publicIdOf(req.body?.pid);
+  if (!pub) { res.status(400).json({ error: 'bad pid' }); return; }
+  const rank = Ranking.profile(pub);
+  res.json({ id: pub, rank: { ...rank, place: Ranking.place(pub) }, match: Presence.teamSeat(pub) });
+});
+
+// POST /api/session/takeover {pid} → closes this player's other live tab(s) (close 4010).
+app.post('/api/session/takeover', (req, res) => {
+  cors(res);
+  const pub = publicIdOf(req.body?.pid);
+  if (!pub) { res.status(400).json({ error: 'bad pid' }); return; }
+  res.json({ closed: Presence.takeover(pub) });
+});
+
+// GET /api/rank/top → leaderboard (placed players, ≤ 50).
+app.get('/api/rank/top', (_req, res) => {
+  cors(res);
+  try { res.json(Ranking.top(50)); } catch (_) { res.json([]); }
+});
+
 // Dev-only Colyseus monitor (lists active rooms + clients and can DISPOSE them),
 // so it is OPT-IN: BUG_SMASH_MONITOR=1. Without it /colyseus is a plain 404.
 const MONITOR = process.env.BUG_SMASH_MONITOR === '1';
@@ -105,8 +137,8 @@ const gameServer = new Server({
 gameServer.define('arena', ArenaRoom).filterBy([]);
 
 // Team Mode ("Office Siege", 5v5 MOBA): rooms fill up to 10 humans during the
-// 12 s lobby, then lock; bots take every empty slot. joinOrCreate options:
-// { champ, name }.
+// 30–45 s lobby (or everyone READY), then lock; bots take every empty slot. joinOrCreate options:
+// { champ, name, hat, pid } (Pass 2: pid = the browser player id → one tab per player + ranking).
 // The define options win over client options, so a quick-play client can't turn itself custom.
 gameServer.define('team', TeamRoom, { custom: false });
 

@@ -44,8 +44,26 @@ Sources of truth in code:
 | New-session boost (EP-20) | ×2 bug-kill XP for a human's first 3 min (reconnect keeps the start time; bots never) | `server/game/rules.js` NEW_SESSION_XP_MUL / _MS |
 | Warm bot start XP (EP-20) | 0–240, squared-random (was 0–450) | `server/game/rules.js` BOT_WARM_XP_MAX |
 | Boss KO during truce (EP-20) | broken as usual, but no level/XP/score reset and no bug spew | `ArenaRoom._enterBroken` |
-| Team reconnect grace | 60 s (a bot holds the seat meanwhile) | `server/game/moba/tuning.js` TEAM_RECONNECT_GRACE_S |
+| Team reconnect grace | ~~60 s~~ → Pass 2: the seat is held for the whole match (see below) | `server/game/moba/tuning.js` TEAM_RECONNECT_GRACE_S |
 | Rollback (concede) vote | from 12:00 · open 20 s · 3 min cooldown · 4 of 5 yes and no human "no" | `shared/moba/rules.js` ROLLBACK_* |
+
+
+### Pass 2 (2026-11-21) — ranked, fair play, rejoin, shop & camera ([PASS2_BREAKDOWN.md](../tasks/PASS2_BREAKDOWN.md))
+| Lever | Value | Where |
+|---|---|---|
+| Quick-play queue | waits 30 s from the first join · a later join keeps ≥ 10 s on the clock · never past 45 s · full (10) → 3 s · START NOW = READY (starts when every human is ready; alone = now) | `shared/moba/rules.js` LOBBY_* |
+| Sell | 70 % of the cost · 100 % within 10 s of buying ("undo") · fountain or dead only | `shared/moba/rules.js` SELL_REFUND_PCT / SELL_UNDO_MS |
+| Rejoin | seat held for the whole match (Colyseus manual reconnection); the client auto-retries 300 s, then REJOIN from the menu / Team hub (saved token) | TeamRoom._holdSeat · tuning TEAM_RECONNECT_GRACE_S |
+| Abandon | no human connected for 5 min (held seats) / 10 s (everyone pressed LEAVE) → match ends; side ahead wins, abandoners lose | `shared/moba/rules.js` ABANDON_MS / ABANDON_EMPTY_MS |
+| Rating (two numbers, LoL-style) | **hidden MMR** starts 1000 (bots 1000) — Elo on team averages, K 48 for 5 placement games then 24 · **visible rank** starts at Intern IV 0 LP (700, also the floor) and moves by the MMR change × catch-up (below MMR: wins ×1…3, losses ×1…¼; above: wins ×½, losses ×2; a win ≥ +8 LP) | `shared/moba/ranks.js` visibleDelta |
+| Visible rank | Intern 700 · Junior 900 · Mid-level 1100 · Senior 1300 · Staff 1500 · Principal 1700 (IV–I, 50 rating = 100 LP per division) · CTO 1900+ | `shared/moba/ranks.js` TIERS |
+| Stars (display, Wild Rift / Arena of Valor style) | 5 ★ per division (1 ★ = 20 LP = 10 rank points) · filling the 5th ★ promotes · CTO: ★ keep counting · an even win ≈ +1 ★, a catch-up win +2–3 ★ (first win from Intern IV: +7 ★), a loss ≈ −1 ★ · seat badge "🎒 Intern III ★2/5" | `shared/moba/ranks.js` totalStars / starText |
+| Performance bonus (visible rank only) | Team MVP of the winning team: +1 ★ · best of the losing team: half the loss · best = KDA × 10 + 2 × kills + assists + CS / 25 vs everyone on the team (bots too) · only players still connected at the end · stops once the rank is 2 divisions above MMR (sim: always-MVP players settle ~100 points above their skill) | `shared/moba/ranks.js` applyPerfBonus · TeamRoom._applyRanked |
+| Climb (sim, 1 human + bots, median of 200) | 50 % wins → Junior IV after 15, Junior III after 30 · 65 % → Junior II / Junior I · 80 % → Junior I / Mid-level II (Senior by 60) · 35 % stays Intern | scratch sim (ranks.js) |
+| Who is ranked | humans with a player id who were connected at some point while playing (leavers keep the team result; leaving in champion select = dodge, no result; practice = unranked) | TeamRoom._applyRanked |
+| New items | Sticky Notes 350 (AP 12, mana 120) · Fuzzy Slippers 1000 (boots: MS 45, armor 20) · Smartwatch 1000 (boots: MS 45, 12 % CDR) · Second Monitor 1250 (AD 25, 15 % CDR) · Cloud Credits 1350 (AP 55, HP 220) · Energy Drink Crate 1250 (AS 30 %, MS 15) · VPN Hoodie 2400 (HP 300, armor 45, 10 % CDR) · Letter Opener 2900 (AD 55, AS 20 %, 10 % lifesteal) | `shared/moba/items.js` |
+| New champions | Sprint (jungle fighter: AoE slow, self buff, point-and-click dash stun, persistent zone ult) · Cache (marksman: piercing line, slow zone, blink, 2000-range piercing ult) · Hira (support: root skillshot, team heal + speed, slow area, delayed AoE stun ult) · Lint (mid controller: targeted slow, delayed root, shield + speed, knockback ult with wall-stun) | `shared/moba/champions.js` |
+| First balance read (team_ff, 12 bot matches) | no stuck / in-wall · new champions 25–100 % win rate on 2–7 games each (small sample) · first structure median 5:52 · length median 11.7 min | `tools/playtest/team_ff.mjs` |
 
 ## World events (`server/data/events.js`)
 | Event | Duration | Modifiers |
