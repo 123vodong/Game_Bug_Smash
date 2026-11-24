@@ -325,7 +325,9 @@ export class MobaHud {
   _buildMinimap(map) {
     const s = this.s;
     const size = this.touch ? 168 : 200;
-    this.mm = { x: 10, y: 10, size, k: size / MAP_W };
+    // 2026-11-25: the floor size comes from the world (Story Mode floors are not 6000 square)
+    const WW = this.o.world?.w || MAP_W, WH = this.o.world?.h || MAP_H;
+    this.mm = { x: 10, y: 10, size, k: size / Math.max(WW, WH) };
     // Static minimap baked once into a small texture (Graphics would re-tessellate every frame).
     if (map) {
       const g = s.make.graphics({}, false);
@@ -338,8 +340,8 @@ export class MobaHud {
     // (onMinimap). Touch: a quick tap = move (as before), press + drag = look. Without an
     // onMinimapView handler every press is a move order (old behaviour).
     const toWorld = (p) => ({
-      x: Math.max(0, Math.min(MAP_W, (p.x - this.mm.x) / this.mm.k)),
-      y: Math.max(0, Math.min(MAP_H, (p.y - this.mm.y) / this.mm.k)),
+      x: Math.max(0, Math.min(WW, (p.x - this.mm.x) / this.mm.k)),
+      y: Math.max(0, Math.min(WH, (p.y - this.mm.y) / this.mm.k)),
     });
     this._mmDrag = null;
     this._r(this.mm.x + size / 2, this.mm.y + size / 2, size, size, 0x000000, 0).setDepth(46).setInteractive()

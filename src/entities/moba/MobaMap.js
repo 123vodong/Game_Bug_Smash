@@ -698,9 +698,9 @@ function drawBush(ctx, b) {
   }
 }
 
-function wallLayout(k) {
+function wallLayout(k, walls = WALLS) {
   const pieces = [];
-  for (const w of WALLS) for (const pc of wallPieces(w)) pieces.push({ w, ...pc });
+  for (const w of walls) for (const pc of wallPieces(w)) pieces.push({ w, ...pc });
   for (let tries = 0; tries < 4; tries++, k *= 0.8) {
     const AW = 2048, frames = [];
     for (const pc of pieces) frames.push({ ...pc, fw: Math.max(1, Math.ceil((pc.b.x1 - pc.b.x0) * k)), fh: Math.max(1, Math.ceil((pc.b.y1 - pc.b.y0) * k)) });
@@ -1129,3 +1129,6 @@ const WALL_DRAW = {
     if (rand() < 0.7) { ctx.fillStyle = '#ffd23f'; rr(ctx, t.x + t.w * 0.5 - 14, t.y + t.h * 0.55 - 10, 28, 20, 6); ctx.fill(); }
   },
 };
+
+// 2026-11-25 (Story Mode 2.0): the furniture / plant art + palette for other floor renderers (src/story2/FloorMap.js).
+export { wallLayout, wallPieces, drawWall, drawBush, bushBounds, WALL_H, BUSH_ALPHA, BUSH_FOCUS_ALPHA, BUSH_SOIL, BUSH_EDGE, BUSH_MAP, FLOOR, GRID, CARPET, CARPET_EDGE, CARPET_LINE };

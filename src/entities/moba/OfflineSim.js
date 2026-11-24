@@ -27,10 +27,10 @@ import * as R from '../../../shared/moba/rules.js';
 import { CHAMPIONS, ROLE_ORDER, ROLE_PICKS } from '../../../shared/moba/champions.js';
 import { ITEMS, buyBlocker, itemStats } from '../../../shared/moba/items.js';
 import {
-  STRUCTURES, CAMPS, EPIC_SPOTS, FOUNTAIN, STRUCTURE_RADIUS, CHAMP_RADIUS, MINION_RADIUS, laneFor, clampToMap, unlockedBy, distToSeg, bushAt,
+  STRUCTURES, CAMPS, EPIC_SPOTS, STRUCTURE_RADIUS, CHAMP_RADIUS, MINION_RADIUS, laneFor, unlockedBy, distToSeg,
 } from '../../../shared/moba/map.js';
-import { pushOut, findPath, clipMove, nearestFree } from '../../../shared/moba/nav.js';
 import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, validSpellPair } from '../../../shared/moba/spells.js';
+import { WORLD_5V5 } from './world.js';
 
 const BOT_NAMES = ['Ada', 'Linus', 'Grace', 'Ken', 'Barbara', 'Dennis', 'Margaret', 'Guido', 'Bjarne', 'Yuki'];
 const LANE_OF_ROLE = { top: 'top', mid: 'mid', bot: 'bot', support: 'bot', jungle: null };
@@ -40,8 +40,11 @@ const PET_R = 18;
 const isStruct = (e) => e.kind === 'tower' || e.kind === 'core';
 
 export class OfflineSim {
-  constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null, hat = '' }) {
+  constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null, hat = '', world = null }) {
     this.localId = 'me';
+    // 2026-11-25: the floor (size, fountains, bushes, nav). Story Mode passes its own; 5v5 = the Open Office.
+    this.world = world || WORLD_5V5;
+    this.nav = this.world.nav;
     // Visibility filter on everything sent to the local player (blue).
     this.emit = (type, m) => {
       if (type === 'atk') { const a = m.filter((x) => !this._hidId(x.f) && !this._hidId(x.t)); if (a.length) emit(type, a); return; }
@@ -88,7 +91,7 @@ export class OfflineSim {
     if (type === 'chat') { this.emit('chat', { sid: this.localId, name: me.name, text: String(m.text || '').slice(0, 140) }); return; }
     if (this.state.phase !== 'playing' || !me) return;
     if (type === 'order') {
-      if (m.type === 'move' && Number.isFinite(m.x) && Number.isFinite(m.y)) { me._order = { type: 'move', ...clampToMap(m.x, m.y) }; me.targetId = ''; }
+      if (m.type === 'move' && Number.isFinite(m.x) && Number.isFinite(m.y)) { me._order = { type: 'move', ...this.world.clampToMap(m.x, m.y) }; me.targetId = ''; }
       else if (m.type === 'attack' && this._ent(m.id) && this._ent(m.id).kind !== 'pet' && !this._hidId(m.id)) { me._order = { type: 'attack', id: m.id }; me.targetId = m.id; }
       else if (m.type === 'stop') { me._order = null; me.targetId = ''; }
       this._cancelRecall(me);
@@ -117,7 +120,7 @@ export class OfflineSim {
       const x = Number.isFinite(a) ? a : 2100, y = Number.isFinite(b) ? b : 2500;
       let i = 0;
       st.champions.forEach((c) => {
-        const q = nearestFree(x + (i % 5) * 70 + (c.team === 'red' ? 260 : 0), y + Math.floor(i / 5) * 90, CHAMP_RADIUS);
+        const q = this.nav.nearestFree(x + (i % 5) * 70 + (c.team === 'red' ? 260 : 0), y + Math.floor(i / 5) * 90, CHAMP_RADIUS);
         c.x = q.x; c.y = q.y; c.dead = false; c.level = 8; c.xp = R.XP_TABLE[7]; this._recalc(c, true); c._order = null; c._nav = null; i++;
         this._placePet(c);
       });
@@ -128,7 +131,7 @@ export class OfflineSim {
   // ───────────────────────── world setup ─────────────────────────
   _addChamp(id, team, champId, name, isBot, role) {
     const def = CHAMPIONS[champId];
-    const f = FOUNTAIN[team];
+    const f = this.world.fountain[team];
     const c = {
       id, x: f.x + (Math.random() - 0.5) * 160, y: f.y + (Math.random() - 0.5) * 160, team, champ: champId, name, isBot,
       level: 1, xp: 0, gold: R.START_GOLD, hp: 1, maxHp: 1, mana: 1, maxMana: 1, ad: 0, ap: 0, armor: 0, ms: 0, range: 0, as: 0,
@@ -251,11 +254,11 @@ export class OfflineSim {
   _spawnPet(c) {
     const pet = CHAMPIONS[c.champ]?.pet;
     if (!pet || c.dead || this._petOf(c)) return;
-    const f = FOUNTAIN[c.team];
-    const q = nearestFree(c.x + (f.x < c.x ? -1 : 1) * 60, c.y + (f.y < c.y ? -1 : 1) * 60, PET_R);
+    const f = this.world.fountain[c.team];
+    const q = this.nav.nearestFree(c.x + (f.x < c.x ? -1 : 1) * 60, c.y + (f.y < c.y ? -1 : 1) * 60, PET_R);
     c._petId = this._addUnit({ x: q.x, y: q.y, team: c.team, kind: 'pet', hp: 1, owner: c.id, spec: { ...pet } });
   }
-  _placePet(c) { const u = this._petOf(c); if (u) { const q = nearestFree(c.x - 70, c.y + 40, PET_R); u.x = q.x; u.y = q.y; } }
+  _placePet(c) { const u = this._petOf(c); if (u) { const q = this.nav.nearestFree(c.x - 70, c.y + 40, PET_R); u.x = q.x; u.y = q.y; } }
   _despawnPet(c) {
     const u = this._petOf(c);
     c._petId = null;
@@ -269,11 +272,11 @@ export class OfflineSim {
     const c = this.state.champions.get(u.owner);
     if (!c || c.dead) { if (c) this._despawnPet(c); else { u.alive = false; this.state.units.delete(u.id); } return; }
     const sp = u._spec, t = this.t;
-    if (dist(u, c) > R.PET_LEASH) { const q = nearestFree(c.x, c.y + 40, PET_R); u.x = q.x; u.y = q.y; }
+    if (dist(u, c) > R.PET_LEASH) { const q = this.nav.nearestFree(c.x, c.y + 40, PET_R); u.x = q.x; u.y = q.y; }
     const mvx = c._mvx || (c.team === 'blue' ? 1 : -1), mvy = c._mvy || 0;
     const goal = { x: c.x - mvx * (sp.follow || 110) - mvy * 30, y: c.y - mvy * (sp.follow || 110) + mvx * 30 };
     if (dist(u, goal) > 24) this._step(u, goal, c.ms * R.PET_SPEED_MUL, dt);
-    const q = pushOut(u.x, u.y, PET_R); u.x = q.x; u.y = q.y;
+    const q = this.nav.pushOut(u.x, u.y, PET_R); u.x = q.x; u.y = q.y;
     let tgt = c._order?.type === 'attack' ? this._ent(c._order.id) : null;
     if (!this._alive(tgt) || tgt.team === c.team || tgt.kind === 'pet') tgt = null;
     if (!tgt && c._lastChampHit && t - c._lastChampHit.t <= R.PET_OWNER_HIT_MEMORY_MS) {
@@ -310,8 +313,8 @@ export class OfflineSim {
   // ───────────────────────── v4: bushes / visibility ─────────────────────────
   _updateBushes() {
     const st = this.state;
-    st.champions.forEach((c) => { c._bush = c.dead ? '' : bushAt(c.x, c.y); c.inBush = c._bush; });
-    st.units.forEach((u) => { u._bush = u.alive ? bushAt(u.x, u.y) : ''; });
+    st.champions.forEach((c) => { c._bush = c.dead ? '' : this.world.bushAt(c.x, c.y); c.inBush = c._bush; });
+    st.units.forEach((u) => { u._bush = u.alive ? this.world.bushAt(u.x, u.y) : ''; });
     const me = st.champions.get(this.localId), team = me?.team || 'blue';
     this._visC.clear(); this._visU.clear();
     st.champions.forEach((c, id) => { if (!this._hiddenFrom(c, team)) this._visC.set(id, c); });
@@ -353,7 +356,7 @@ export class OfflineSim {
   _stepNav(e, to, speed, dt) {
     const done = this._step(e, to, speed, dt);
     const r = this._navR(e);
-    if (r) { const q = pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y; }
+    if (r) { const q = this.nav.pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y; }
     return done;
   }
   /** Follow a cached nav path to `goal` (re-path when the goal moved > 150 px or the order changed). */
@@ -361,13 +364,13 @@ export class OfflineSim {
     const r = this._navR(e) || CHAMP_RADIUS;
     const gm = e._navGoal ? Math.hypot(goal.x - e._navGoal.x, goal.y - e._navGoal.y) : Infinity;
     if (e._navKey !== key || !e._nav || gm > 150 || (!e._nav.length && dist(e, goal) > 6)) {
-      e._nav = findPath(e.x, e.y, goal.x, goal.y, r); e._navKey = key; e._navGoal = { x: goal.x, y: goal.y };
+      e._nav = this.nav.findPath(e.x, e.y, goal.x, goal.y, r); e._navKey = key; e._navGoal = { x: goal.x, y: goal.y };
     }
     const wp = e._nav[0];
     if (!wp) return true;
     let arrived = false;
     if (this._step(e, wp, speed, dt)) { e._nav.shift(); arrived = !e._nav.length; }
-    const q = pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y;
+    const q = this.nav.pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y;
     return arrived;
   }
 
@@ -459,14 +462,14 @@ export class OfflineSim {
     const bstr = tags.join(',');
     if (bstr !== c.buffs) { c.buffs = bstr; this._recalc(c, false); }
     if (c.shield > 0 && t > c._shieldUntil) c.shield = 0;
-    const inFountain = dist(c, FOUNTAIN[c.team]) <= R.FOUNTAIN_RADIUS;
+    const inFountain = dist(c, this.world.fountain[c.team]) <= R.FOUNTAIN_RADIUS;
     const hpRate = inFountain ? R.FOUNTAIN_HEAL_PER_SEC : R.HP_REGEN_PCT_PER_SEC;
     c.hp = Math.min(c.maxHp, c.hp + c.maxHp * hpRate * dt * this._healMul(c));
     c.mana = Math.min(c.maxMana, c.mana + c.maxMana * (inFountain ? R.FOUNTAIN_MANA_PER_SEC : R.MANA_REGEN_PCT_PER_SEC) * dt);
     if (t - this.state.startedAt > R.PASSIVE_GOLD_DELAY_MS) c._goldAcc = (c._goldAcc || 0) + R.PASSIVE_GOLD_PER_SEC * dt;
     if (c._goldAcc >= 1) { c.gold += Math.floor(c._goldAcc); c._goldAcc -= Math.floor(c._goldAcc); }
     if (c.recallUntil) {
-      if (t >= c.recallUntil) { c.recallUntil = 0; const f = FOUNTAIN[c.team]; c.x = f.x; c.y = f.y; c._order = null; this._placePet(c); }
+      if (t >= c.recallUntil) { c.recallUntil = 0; const f = this.world.fountain[c.team]; c.x = f.x; c.y = f.y; c._order = null; this._placePet(c); }
       return;
     }
     if (c._dispUntil > t) return; // being knocked back
@@ -489,7 +492,7 @@ export class OfflineSim {
   _botThink(c) {
     if (this.t < c._thinkAt) return;
     c._thinkAt = this.t + 350 + Math.random() * 300;
-    const f = FOUNTAIN[c.team];
+    const f = this.world.fountain[c.team];
     if (c.hp < c.maxHp * 0.25 && dist(c, f) > 900) { c._order = { type: 'move', x: f.x, y: f.y }; c.targetId = ''; return; }
     if (c.hp < c.maxHp * 0.95 && dist(c, f) < R.FOUNTAIN_RADIUS * 0.6) return; // heal up
     if (this._botSpells(c)) return;
@@ -624,7 +627,7 @@ export class OfflineSim {
   }
 
   _respawn(c) {
-    const f = FOUNTAIN[c.team];
+    const f = this.world.fountain[c.team];
     c.dead = false; c.x = f.x; c.y = f.y; c.hp = c.maxHp; c.mana = c.maxMana; c.action = 'idle'; c.action_seq++;
     c._nav = null;
     this._spawnPet(c);
@@ -640,7 +643,7 @@ export class OfflineSim {
   _buy(c, id) {
     const it = ITEMS[id];
     if (!it) return;
-    const inFountain = dist(c, FOUNTAIN[c.team]) <= R.FOUNTAIN_RADIUS;
+    const inFountain = dist(c, this.world.fountain[c.team]) <= R.FOUNTAIN_RADIUS;
     if (!(inFountain || c.dead) || c.gold < it.cost || buyBlocker(c.items, id)) return;
     c.gold -= it.cost;
     if (it.consumable) { c._coffeeUntil = this.t + (it.effect?.ms || 6000); return; }
@@ -653,7 +656,7 @@ export class OfflineSim {
     if (!Number.isInteger(slot) || slot < 0 || slot >= R.INVENTORY_SLOTS) return;
     const id = c.items[slot], it = id && ITEMS[id];
     if (!it) return;
-    const inFountain = dist(c, FOUNTAIN[c.team]) <= R.FOUNTAIN_RADIUS;
+    const inFountain = dist(c, this.world.fountain[c.team]) <= R.FOUNTAIN_RADIUS;
     if (!(inFountain || c.dead)) return;
     c.gold += R.sellValue(it.cost, (c._boughtAt || [])[slot] || 0, this.t);
     c.items[slot] = '';
@@ -666,9 +669,9 @@ export class OfflineSim {
     if (!e || isStruct(e) || R.EPICS[e.kind] || e.kind === 'pet' || !this._alive(e)) return;
     const dx = e.x - fx0, dy = e.y - fy0, d = Math.hypot(dx, dy);
     const ux = d > 1 ? dx / d : 1, uy = d > 1 ? dy / d : 0;
-    const goal = clampToMap(e.x + ux * distPx, e.y + uy * distPx);
+    const goal = this.world.clampToMap(e.x + ux * distPx, e.y + uy * distPx);
     const r = this._navR(e) || MINION_RADIUS;
-    const end = clipMove(e.x, e.y, goal.x, goal.y, r);
+    const end = this.nav.clipMove(e.x, e.y, goal.x, goal.y, r);
     const wall = !!end.hit;
     const x0 = e.x, y0 = e.y;
     e.x = end.x; e.y = end.y;
@@ -712,7 +715,7 @@ export class OfflineSim {
     const aimX = Number.isFinite(m.x) ? m.x : c.x + 100, aimY = Number.isFinite(m.y) ? m.y : c.y;
     const towardRange = (range) => {
       const dx = aimX - c.x, dy = aimY - c.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, range);
-      return clampToMap(c.x + (dx / d) * r, c.y + (dy / d) * r);
+      return this.world.clampToMap(c.x + (dx / d) * r, c.y + (dy / d) * r);
     };
     switch (sk.type) {
       case 'projectile': {
@@ -766,9 +769,9 @@ export class OfflineSim {
         let want;
         if (okT) {   // like the server: stop at contact, and only the target is hit
           const d = dist(c, tgt) || 1, reach = Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
-          want = clampToMap(x0 + ((tgt.x - x0) / d) * reach, y0 + ((tgt.y - y0) / d) * reach);
+          want = this.world.clampToMap(x0 + ((tgt.x - x0) / d) * reach, y0 + ((tgt.y - y0) / d) * reach);
         } else want = towardRange(sk.range);
-        const p = clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS); // dashes stop at walls
+        const p = this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS); // dashes stop at walls
         let end = p, struck = [];
         if (okT) {
           if (dist(p, tgt) <= this._radius(tgt) + CHAMP_RADIUS + Math.max(sk.hitRadius || 0, 40)) struck = [tgt];
@@ -779,7 +782,7 @@ export class OfflineSim {
           if (first && sk.stopAtFirst) {
             struck = [first];
             const d = dist(c, first) || 1;
-            end = clipMove(x0, y0, first.x - ((first.x - x0) / d) * 50, first.y - ((first.y - y0) / d) * 50, CHAMP_RADIUS);
+            end = this.nav.clipMove(x0, y0, first.x - ((first.x - x0) / d) * 50, first.y - ((first.y - y0) / d) * 50, CHAMP_RADIUS);
           }
         }
         c.x = end.x; c.y = end.y; c._order = null; c._nav = null;
@@ -788,7 +791,7 @@ export class OfflineSim {
         break;
       }
       case 'blink': {
-        const x0 = c.x, y0 = c.y, tr = towardRange(sk.range), p = nearestFree(tr.x, tr.y, CHAMP_RADIUS); // blinks land on the nearest free spot
+        const x0 = c.x, y0 = c.y, tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS); // blinks land on the nearest free spot
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
         break;
@@ -828,8 +831,8 @@ export class OfflineSim {
       case 'blink': {
         if (c.rootedUntil > t || c._dispUntil > t || !Number.isFinite(m.x) || !Number.isFinite(m.y)) return false;
         const dx = m.x - c.x, dy = m.y - c.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, sp.range);
-        const aim = clampToMap(c.x + (dx / d) * r, c.y + (dy / d) * r);
-        const p = nearestFree(aim.x, aim.y, CHAMP_RADIUS); // crosses walls
+        const aim = this.world.clampToMap(c.x + (dx / d) * r, c.y + (dy / d) * r);
+        const p = this.nav.nearestFree(aim.x, aim.y, CHAMP_RADIUS); // crosses walls
         x0 = c.x; y0 = c.y;
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         this._placePet(c);
@@ -880,7 +883,7 @@ export class OfflineSim {
 
   /** Bots: rough, sensible summoner spell use. Returns true if the bot's think tick is used up. */
   _botSpells(c) {
-    const t = this.t, f = FOUNTAIN[c.team];
+    const t = this.t, f = this.world.fountain[c.team];
     const ready = (id) => {
       for (const K of ['D', 'F']) if (c['spell' + K] === id && c['cd' + K] <= t) return K.toLowerCase();
       return null;
