@@ -2,7 +2,7 @@
 // DEBUG dev server (static files + ws on the same port):
 //   BUG_SMASH_DEBUG=1 BUG_SMASH_RANKS=memory PORT=2650 node server/index.js
 //   GAME_URL=http://localhost:2650/ node tools/playtest/pass2_ui.mjs <outDir>
-// Screens: Team hub (16 champions, rank, 🏆 RANKS), leaderboard, select grid (offline), shop with 25
+// Screens: Team hub (16 champions, rank, 🏆 RANKS), leaderboard, select grid (offline), shop with 31
 // items + SELL, camera lock / edge pan / minimap drag, second tab (DUP_TAB card), close + reopen →
 // REJOIN banner → REJOIN prompt → back in the match. Prints PASS/FAIL lines + page errors.
 import { chromium } from 'playwright-core';
@@ -87,17 +87,25 @@ await A.keyboard.press('KeyP');
 await until(A, `${S}.shop.isOpen`, 3000);
 await A.waitForTimeout(400);
 await shot(A, '04_shop');
+// 2026-11-25: 31 items in rows of 5 — every tile inside the grid area, the panel inside the 1280 × 720 view
+const fit = await ev(A, `(() => { const sh = ${S}.shop, b = sh.root.getBounds(), inv = sh._inv[0];
+  const tiles = sh._tiles.length, gridR = inv.x - 8, out = sh._tiles.filter((t) => t.c.x + 166 > gridR || t.c.y + 58 > 612).map((t) => t.id);
+  return JSON.stringify({ tiles, out, left: Math.round(b.x), right: Math.round(b.right), top: Math.round(b.y), bottom: Math.round(b.bottom) }); })()`);
+const fitV = (() => { try { return JSON.parse(fit); } catch (_) { return {}; } })();
+check('shop: 31 item tiles, all inside the grid, panel inside the screen', fitV.tiles === 31 && fitV.out?.length === 0
+  && fitV.left >= 0 && fitV.right <= 1280 && fitV.top >= 0 && fitV.bottom <= 720, fit);
 await ev(A, `${S}._buy('mouse')`);
 await A.waitForTimeout(500);
 const g1 = await ev(A, `${S}._me().gold`);
-// click the first inventory slot (shop: RX 720 + left, inventory y0 = 88 + 252 + 16 + 14)
+// click the first inventory slot (positions read from the panel: its body's origin is the panel's top-left)
 const shopLeft = await ev(A, `${S}.shop._left`), shopTop = await ev(A, `${S}.shop._top`);
-await A.mouse.click(shopLeft + 720 + 20, shopTop + 88 + 252 + 16 + 14 + 20);
+const inv0 = { x: await ev(A, `${S}.shop._inv[0].x`), y: await ev(A, `${S}.shop._inv[0].y`) };
+await A.mouse.click(shopLeft + inv0.x + 20, shopTop + inv0.y + 20);
 await A.waitForTimeout(500);
 await shot(A, '05_sell_selected');
 const sellVisible = await ev(A, `${S}.shop._sellBtn.root.visible`);
 check('shop: clicking an owned item shows SELL (UNDO right after buying)', sellVisible === true, await ev(A, `${S}.shop._sellBtn.root.list.map(o => o.text).filter(Boolean).join('|')`));
-await A.mouse.click(shopLeft + 720 + 132, shopTop + 88 + 228);
+await A.mouse.click(shopLeft + await ev(A, `${S}.shop._sellBtn.root.x`), shopTop + await ev(A, `${S}.shop._sellBtn.root.y`));
 await A.waitForTimeout(600);
 const g2 = await ev(A, `${S}._me().gold`);
 const items = await ev(A, `[...${S}._me().items].filter(Boolean).length`);

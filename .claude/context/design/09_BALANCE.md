@@ -65,6 +65,17 @@ Sources of truth in code:
 | New champions | Sprint (jungle fighter: AoE slow, self buff, point-and-click dash stun, persistent zone ult) · Cache (marksman: piercing line, slow zone, blink, 2000-range piercing ult) · Hira (support: root skillshot, team heal + speed, slow area, delayed AoE stun ult) · Lint (mid controller: targeted slow, delayed root, shield + speed, knockback ult with wall-stun) | `shared/moba/champions.js` |
 | First balance read (team_ff, 12 bot matches) | no stuck / in-wall · new champions 25–100 % win rate on 2–7 games each (small sample) · first structure median 5:52 · length median 11.7 min | `tools/playtest/team_ff.mjs` |
 
+### 5v5 more (2026-11-24/25): adaptive bots, 6 items ([NEXT_WORK.md](../tasks/NEXT_WORK.md))
+| Lever | Value | Where |
+|---|---|---|
+| Bot level | picked at match start from the humans' average hidden MMR: < 1050 Easy (the old bots: 5 min grace, no ganks for 5 min, mercy after 2 deaths) · 1050–1199 Normal · ≥ 1200 Hard · bots-only matches Normal | `server/game/moba/MobaBots.js` BOT_SKILL / BOT_SKILL_MMR · TeamRoom._botSkillLevel |
+| What a level changes | grace / gank grace / mercy · retreat + fight HP thresholds · danger ratio · think 150–300 ms · aim + aggression rolls · step-in for nearly dead minions · Normal / Hard buy the first affordable build item | BOT_SKILL |
+| Measured (team_ff, 10 matches per level, seed 7) | kills per match Easy 17.8 · Normal 23.9 · Hard 43.2 · items per bot 3.7 / 4.2 / 4.8 · passive newcomer deaths by 5:00: Easy 0, Normal / Hard 0–3 | `team_ff.mjs --botskill=` |
+| New items | Caffeine Pills 350 (AS 12 %) · Red Pen 450 (AD 6, 6 % lifesteal) · Kanban Board 1800 (AD 30, HP 250, 10 % CDR) · Team Lunch 1500 (HP 200, mana 200, 15 % CDR) · Firewall Appliance 2000 (AP 65, armor 40) · Midnight Oil 2200 (AP 80, 12 % lifesteal, skills included) | `shared/moba/items.js` |
+| Item value (gold per stat, from the basics) | AD ≈ 29 · AP ≈ 16 · HP ≈ 2.5 · armor ≈ 22 · mana ≈ 1.6 · 1 % CDR ≈ 45 · 1 % AS ≈ 30 · 1 % lifesteal ≈ 52 · MS ≈ 12 → new basics 100–120 % efficient, new cores 87–108 % (late items lower, like Server Rack 85 %) | design note |
+| Shop | 31 items in rows of 5 (1 consumable · 10 basic · 20 core), panel 1174 × 612 | `src/ui/moba/ShopPanel.js` |
+| Balance read (team_ff, 20 matches, seed 7) | 0 exceptions / stuck / in-wall · sides 10–10 · champion win rates 38–60 % (Mop 17 % on 6 games) · every new item bought (Red Pen 26, Kanban 25, Team Lunch 15, Caffeine 11, Firewall 8, Midnight Oil 2 held at the end) · length median 14.6 min | `tools/playtest/team_ff.mjs` |
+
 ## World events (`server/data/events.js`)
 | Event | Duration | Modifiers |
 |---|---|---|

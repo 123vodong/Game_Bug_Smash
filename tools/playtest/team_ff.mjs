@@ -51,6 +51,7 @@ const { isBlocked } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/na
 const { CHAMPIONS } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/champions.js')).href);
 const STUCK_MS = 3000, STUCK_PX = 20;
 const champAgg = {};   // champ id -> { games, wins, k, d, a, cs, picks:{role:n} }
+const itemAgg = {};    // item id -> champions holding it at the end of a match
 const draftAgg = { problems: 0, log: [], selectMs: [], loadingMs: [] };
 const spellAgg = { casts: {}, smiteEpics: 0, smiteSteals: 0 };
 const totals = { exceptions: 0, stuck: 0, inWall: 0, knocks: 0, wallStuns: 0, petDmg: 0, petAtk: 0, zones: 0, ticks: 0, tickMs: 0, maxTick: 0, paths: 0, unitPaths: 0, deferred: 0, unstick: 0 };
@@ -540,6 +541,7 @@ for (let m = 0; m < MATCHES; m++) {
     a.games++; if (st.winner && c.team === st.winner) a.wins++;
     a.k += c.kills; a.d += c.deaths; a.a += c.assists; a.cs += c.cs;
     a.roles[c.role] = (a.roles[c.role] || 0) + 1;
+    for (const id of c.items) if (id) itemAgg[id] = (itemAgg[id] || 0) + 1;
   }
   for (const [k, n] of Object.entries(room.spellStats.casts)) spellAgg.casts[k] = (spellAgg.casts[k] || 0) + n;
   spellAgg.smiteEpics += room.spellStats.smiteEpics; spellAgg.smiteSteals += room.spellStats.smiteSteals;
@@ -565,6 +567,7 @@ for (let m = 0; m < MATCHES; m++) {
   console.log(`v3 spells cast (total · per match): ${SPELL_IDS.map((k) => `${k} ${spellAgg.casts[k] || 0} (${((spellAgg.casts[k] || 0) / MATCHES).toFixed(1)})`).join(' · ')}`);
   console.log(`v3 smite: epics secured with smite ${spellAgg.smiteEpics} · steals (enemy was on it) ${spellAgg.smiteSteals}`);
   console.log('champion  role(s)                  games  win%   K/D/A per game     K/D   cs   casts/game Q/W/E/R');
+  console.log(`items held at the end (all champions): ${Object.entries(itemAgg).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(' · ')}`);
   const ids = Object.keys(CHAMPIONS).sort((x, y) => (champAgg[y]?.games || 0) - (champAgg[x]?.games || 0));
   for (const id of ids) {
     const a = champAgg[id];

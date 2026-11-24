@@ -26,6 +26,9 @@ export const ITEMS = {
   pomodoro:   { id: 'pomodoro',   name: 'Pomodoro Timer',    emoji: '⏱️', cost: 450, tier: 'basic', stats: { haste: 0.1 },    desc: '10% cooldown reduction. 25 minutes of pure focus.' },
   sneakers:   { id: 'sneakers',   name: 'Office Sneakers',   emoji: '👟', cost: 300, tier: 'basic', group: 'boots', stats: { ms: 25 }, desc: '+25 move speed. Boots — only one pair.' },
   sticky_notes: { id: 'sticky_notes', name: 'Sticky Notes',    emoji: '🗒️', cost: 350, tier: 'basic', stats: { ap: 12, mana: 120 }, desc: '+12 ability power, +120 mana. Every idea, stuck somewhere.' },
+  // ── 2026-11-25 ──
+  caffeine:   { id: 'caffeine',   name: 'Caffeine Pills',    emoji: '💊', cost: 350, tier: 'basic', stats: { as: 0.12 },      desc: '+12% attack speed. Your heart rate is now a feature.' },
+  red_pen:    { id: 'red_pen',    name: 'Red Pen',           emoji: '🖊️', cost: 450, tier: 'basic', stats: { ad: 6, lifesteal: 0.06 }, desc: '+6 attack damage, 6% lifesteal. Every correction heals your ego a little.' },
 
   // ── core ──
   rgb_keyboard:  { id: 'rgb_keyboard',  name: 'RGB Mechanical Keyboard', emoji: '⌨️', cost: 1300, tier: 'core', stats: { ad: 35, as: 0.15 },             desc: '+35 attack damage, +15% attack speed. Clicky = faster.' },
@@ -45,17 +48,24 @@ export const ITEMS = {
   energy_crate:   { id: 'energy_crate',   name: 'Energy Drink Crate', emoji: '🥤', cost: 1250, tier: 'core', stats: { as: 0.3, ms: 15 }, desc: '+30% attack speed, +15 move speed. Sleep is a deprecated feature.' },
   vpn_hoodie:     { id: 'vpn_hoodie',     name: 'VPN Hoodie',         emoji: '🦺', cost: 2400, tier: 'core', stats: { hp: 300, armor: 45, haste: 0.1 }, desc: '+300 health, +45 armor, 10% cooldown reduction. Untraceable, unkillable.' },
   letter_opener:  { id: 'letter_opener',  name: 'Letter Opener',      emoji: '🗡️', cost: 2900, tier: 'core', stats: { ad: 55, as: 0.2, lifesteal: 0.1 }, desc: '+55 attack damage, +20% attack speed, 10% lifesteal. Opens mail. And wounds.' },
+  // ── 2026-11-25: fighters, supports, battle mages ──
+  kanban:       { id: 'kanban',       name: 'Kanban Board',       emoji: '🗂️', cost: 1800, tier: 'core', stats: { ad: 30, hp: 250, haste: 0.1 }, desc: '+30 attack damage, +250 health, 10% cooldown reduction. To Do → Doing → Done. You live in Doing.' },
+  team_lunch:   { id: 'team_lunch',   name: 'Team Lunch',         emoji: '🍱', cost: 1500, tier: 'core', stats: { hp: 200, mana: 200, haste: 0.15 }, desc: '+200 health, +200 mana, 15% cooldown reduction. Nobody fights on a full stomach. Except you.' },
+  firewall:     { id: 'firewall',     name: 'Firewall Appliance', emoji: '🧱', cost: 2000, tier: 'core', stats: { ap: 65, armor: 40 }, desc: '+65 ability power, +40 armor. Blocks port 22, and fists.' },
+  midnight_oil: { id: 'midnight_oil', name: 'Midnight Oil',       emoji: '🕯️', cost: 2200, tier: 'core', stats: { ap: 80, lifesteal: 0.12 }, desc: '+80 ability power, 12% lifesteal (skills too). Burn it, and drain everyone else\'s.' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS);
-/** Shop display order: consumables, basics, core (boots · attack · magic/defence · late). */
+/** Shop display order (rows of 5): consumables · basics (attack, magic / defence) · core (boots +
+ *  utility · attack · magic / defence · late). */
 export const SHOP_ORDER = [
   'coffee',
-  'mouse', 'tech_book', 'chair', 'hoodie', 'power_bank', 'pomodoro', 'sneakers', 'sticky_notes',
-  'jetpack', 'slippers', 'smartwatch', 'rubber_duck',
-  'rgb_keyboard', 'second_monitor', 'energy_crate', 'gauntlet',
-  'headphones', 'cloud_credits', 'standing_desk', 'vpn_hoodie',
-  'ultrawide', 'letter_opener', 'stackoverflow', 'server_rack',
+  'mouse', 'caffeine', 'red_pen', 'tech_book', 'sticky_notes',
+  'chair', 'hoodie', 'power_bank', 'pomodoro', 'sneakers',
+  'jetpack', 'slippers', 'smartwatch', 'rubber_duck', 'team_lunch',
+  'rgb_keyboard', 'second_monitor', 'energy_crate', 'gauntlet', 'kanban',
+  'headphones', 'cloud_credits', 'firewall', 'standing_desk', 'vpn_hoodie',
+  'ultrawide', 'letter_opener', 'stackoverflow', 'midnight_oil', 'server_rack',
 ];
 
 export function isItemId(id) { return typeof id === 'string' && Object.hasOwn(ITEMS, id); }

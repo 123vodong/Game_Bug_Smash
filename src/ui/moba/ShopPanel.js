@@ -27,10 +27,11 @@ import {
 } from './uiKit.js';
 
 const DEPTH = 86;
-const PW = 1000, PH = 612;                   // Pass 2: 25 items (1 + 8 + 16 → 7 rows)
 const GRID_X = 16, GRID_Y = 88, HEAD_H = 20, SECTION_GAP = 6;
-const TILE_W = 166, TILE_H = 58, COL_GAP = 8, ROW_GAP = 7, COLS = 4;
-const RX = 720, RW = 264;                    // right column: detail, inventory, recommended
+const TILE_W = 166, TILE_H = 58, COL_GAP = 8, ROW_GAP = 7, COLS = 5;
+const GRID_W = COLS * TILE_W + (COLS - 1) * COL_GAP;
+const RX = GRID_X + GRID_W + 16, RW = 264;   // right column: detail, inventory, recommended
+const PW = RX + RW + 16, PH = 612;           // 31 items (1 + 10 + 20 → 7 rows of 5) → 1174 × 612
 const DETAIL_H = 252;
 const DOUBLE_CLICK_MS = 380;
 const TIERS = [
@@ -206,7 +207,7 @@ export class ShopPanel {
 
   _buildGrid() {
     const s = this.scene, B = this._body;
-    const gridW = COLS * TILE_W + (COLS - 1) * COL_GAP;
+    const gridW = GRID_W;
     let y = GRID_Y;
     for (const tier of TIERS) {
       const ids = SHOP_ORDER.filter((id) => ITEMS[id] && ITEMS[id].tier === tier.id);
@@ -244,7 +245,9 @@ export class ShopPanel {
     const stat = s.add.text(48, TILE_H - 5, itemStatLine(it, true), {
       fontFamily: FONT_MONO, fontSize: 10, color: '#8fd0ff',
     }).setOrigin(0, 1);
-    // Pass 2: 3-stat items (VPN Hoodie, Letter Opener…) — shrink so the line stays inside the tile.
+    // Pass 2: 3-stat items (VPN Hoodie, Letter Opener…) — single spaces first, then shrink so the line
+    // stays inside the tile.
+    if (stat.width > TILE_W - 52) stat.setText(stat.text.replace(/ {2}/g, ' '));
     for (let fs = 9; fs >= 7 && stat.width > TILE_W - 52; fs--) stat.setFontSize(fs);
     const badge = s.add.text(TILE_W - 5, 4, '', {
       fontFamily: FONT_TITLE, fontSize: 10, color: '#7ed957', stroke: '#000000', strokeThickness: 3,
