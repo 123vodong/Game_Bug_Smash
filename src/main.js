@@ -46,6 +46,19 @@ if (inviteRoom && /^[A-Za-z0-9_-]{1,32}$/.test(inviteRoom) && !deepScene) {
     game.scene.start('TeamCustomScene', { joinCode: inviteRoom, name });
   });
 }
+// Story Mode 2.0 prototype (2026-11-25): ?scene=story[&champ=dev][&name=X][&floor=f1] — lazy-loaded.
+if (deepScene === 'story') {
+  game.events.once('ready', async () => {
+    game.scene.stop('MenuScene');
+    try {
+      const { launchStory } = await import('./story2/launch.js');
+      launchStory(game, { champ: params.get('champ') || 'dev', name: params.get('name') || 'Intern', floor: params.get('floor') || 'f1' });
+    } catch (e) {
+      console.error('[story] could not start Story Mode 2.0', e);
+      game.scene.start('MenuScene');
+    }
+  });
+}
 // The platformer prototype is hidden from the menu (EP-22) but stays reachable: ?scene=platformer
 if (deepScene === 'platformer') {
   game.events.once('ready', () => { game.scene.stop('MenuScene'); game.scene.start('PlatformerScene'); });

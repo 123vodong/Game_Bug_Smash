@@ -875,7 +875,18 @@ function pick(sprite, fallback) {
 }
 
 /** minion / camp variant / pet / epic → texture key (bug PNG fallback if looks weren't generated). */
+// 2026-11-25 (Story Mode 2.0): extra unit kinds (story bugs, nests) → { sprite, fallback?, name, size }.
+const EXTRA_UNITS = Object.create(null);
+/** Register extra unit kinds (idempotent). Unknown kinds keep the old ladybug fallback. */
+export function registerUnitKinds(map) { for (const [k, v] of Object.entries(map || {})) EXTRA_UNITS[k] = v; }
+/** The registered extra unit kind (or null). */
+export function extraUnit(kind) { return EXTRA_UNITS[kind] || null; }
+
 export function unitTextureKey(kind, campId = '') {
+  if (EXTRA_UNITS[kind]) {
+    const e = EXTRA_UNITS[kind];   // `external`: a texture the registering mode draws itself
+    return e.external ? e.sprite : pick(e.sprite, e.fallback || 'bug-ladybug');
+  }
   if (MINIONS[kind]) return pick(MINIONS[kind].sprite, MINIONS[kind].fallback);
   if (CAMPS[kind]) {
     const v = campVariant(campId, kind) || CAMPS[kind];
@@ -888,6 +899,7 @@ export function unitTextureKey(kind, campId = '') {
 
 /** Tooltip / feed name of a unit. */
 export function unitName(kind, campId = '') {
+  if (EXTRA_UNITS[kind]) return EXTRA_UNITS[kind].name || kind;
   if (MINIONS[kind]) return MINIONS[kind].name || kind;
   if (CAMPS[kind]) return (campVariant(campId, kind) || CAMPS[kind]).name || kind;
   if (kind === 'pet') return PET_NAME;

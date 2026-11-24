@@ -105,7 +105,7 @@ function serverUrl() {
 }
 
 export default class TeamModeScene extends Phaser.Scene {
-  constructor() { super('TeamModeScene'); }
+  constructor(key = 'TeamModeScene') { super(key); }   // Story Mode 2.0 subclasses pass their own key
 
   init(data) { this._data = data || {}; }
 
