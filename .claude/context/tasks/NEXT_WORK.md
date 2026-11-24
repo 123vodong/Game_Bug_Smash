@@ -1,6 +1,6 @@
-# Next work (handoff for the scheduled 4 AM run and later sessions)
+# Next work (handoff between sessions)
 
-**Written:** 2026-11-24, late evening.
+**Written:** 2026-11-24, late evening. **Updated:** 2026-11-25 morning, after the scheduled 4 AM run.
 **Mandate:** the user said "Free to decide by yourself", asked for a 4 AM continuation, and set these directions:
 1. **Story Mode:** stop following the Forgotten Warrior side-view model. Rebuild it on the 5v5 game: a map like the 5v5 one but more spacious, with more doors. Smash bugs, adventure, explore, and put the 5v5 champions into the story.
 2. **Drop the donation button.**
@@ -10,121 +10,134 @@
 
 - **Commits:** commit locally at each milestone, one concise line, **no Co-Authored-By trailer**.
 - **No push, merge or PR.** Pushing was refused by the permission check on 2026-11-24, so the user does it.
-- **Never** set `BUG_SMASH_DEBUG` on port 2567. The local server on :2567 serves the working tree of whichever branch is checked out.
-- **Gates:**
-  - 5v5: `cd tools/playtest && node team_ff.mjs 10 45 --quiet` must report 0 exceptions, 0 stuck, 0 inside a wall.
-  - Story: `node tools/playtest/story_rooms_check.mjs` and `GAME_URL=http://localhost:2567/ node tools/playtest/story_check.mjs <outDir>` on a Story branch.
+- **Never** set `BUG_SMASH_DEBUG` on port 2567. The local server on :2567 serves the working tree of whichever branch is checked out. Debug servers go on :2650.
+- **Gates** (run from `tools/playtest`):
+
+  | Gate | Command | Pass |
+  |---|---|---|
+  | 5v5 server | `node team_ff.mjs 10 45 --quiet` | 0 exceptions, 0 stuck, 0 inside a wall |
+  | 5v5 exploits | `SERVER=ws://localhost:2650 node team_sim.mjs --exploits` | all PASS (118) |
+  | 5v5 online UI | `GAME_URL=http://localhost:2650/ node pass2_ui.mjs <outDir>` | 16/16 |
+  | 5v5 offline | `GAME_URL=http://localhost:2650/ node offline_check.mjs <outDir>` | 6/6 |
+  | Story Mode 2.0 | `GAME_URL=http://localhost:2650/ node story2_check.mjs <outDir>` | 18/18 |
+
+  The debug server: `BUG_SMASH_DEBUG=1 BUG_SMASH_RANKS=memory PORT=2650 node server/index.js`. Restart it after server code changes.
 - Local `main` is stale (it stops at PR #2). **Always branch from `origin/main`** (after `git fetch origin`), then run `git branch --unset-upstream`.
 
-## Branches
+## Branches (none pushed)
 
-| Branch | State | What is in it |
-|---|---|---|
-| `chore/drop-donation` | committed `003318c`, **not pushed** | Donation button, `DonatePanel.js` and `assets/donate/` removed. Menu checked in the browser: renders, no errors. |
-| `feat/5v5-more` | committed `35434f6`, not pushed | Adaptive bots (below). **Continue the 5v5 work here.** |
-| `feat/story-mode` | committed `4136a43`, not pushed | Side-view Story Mode (Milestones A/B and the 1-1 rebuild). Superseded by the new direction; keep it for reuse (StoryDialog, script, save keys, art). |
+| Branch | Tip | Based on | What is in it |
+|---|---|---|---|
+| `chore/drop-donation` | `003318c` | origin/main | Donation button, `DonatePanel.js` and `assets/donate/` removed. |
+| `feat/5v5-more` | `450824e` | origin/main | Adaptive bots; 6 items + 5-column shop; 2 champions (Brew, Pager); balance notes. |
+| `feat/story-2` | latest | **feat/5v5-more** (stacked) | Story Mode 2.0: design doc, engine "worlds", playable floor 1 prototype. |
+| `feat/story-mode` | `4136a43` | older main | The superseded side-view Story Mode. Parts bin only. |
+
+**Push order for the user:** `chore/drop-donation` (independent), then `feat/5v5-more`, then `feat/story-2` (its PR shows the 5v5 commits until `feat/5v5-more` is merged).
 
 ## Done on 2026-11-24: the bots
 
-**Diagnosis** (`team_ff`, 10–30 bots-only matches):
-- **Passive:** about 8 kills by 9:00 (both teams); laners at about 1.8 K / 1.5 D per match.
-- **Poor farming:** about 2.5–4 CS per minute.
-- **Gold piles up:** 1,000–2,000 unspent gold at the end, because bots only buy the next item in build order.
-- **Spare humans on purpose:** no fights for 5:00, no ganks for 5:00, mercy after 2 deaths in 3:00. A seat driven by the same brain but flagged human died 1.8 times a match, against 2.8 for the enemy bot.
+Adaptive Easy / Normal / Hard bots, picked at match start from the humans' average hidden MMR (< 1050 Easy = the old bots, 1050–1199 Normal, ≥ 1200 Hard; bots-only = Normal). Measured kills per match: 17.8 / 23.9 / 43.2. Details: `09_BALANCE.md` → "5v5 more".
 
-**Fix** (`server/game/moba/MobaBots.js` `BOT_SKILL`; `TeamRoom._botSkillLevel()`; `Ranking.skill()`):
-- **Levels:** Easy, Normal and Hard, picked at match start from the humans' **average hidden MMR**.
-  - Under 1050 → Easy, which is the old behaviour, so every new player starts here.
-  - 1050 to under 1200 → Normal. 1200 and up → Hard.
-  - Bots-only matches play Normal.
-- **What a level sets:** grace, gank grace and mercy; retreat and fight HP thresholds; danger ratio; think speed; aim and aggression rolls; a "step into range when a minion is nearly dead" multiplier; and `shopAny` (Normal and Hard buy the first affordable build item).
-- **Feed line at match start:** "🤖 AI coworkers: Normal (they adapt to how well you play)".
-- **Harness:** `team_ff.mjs --botskill=easy|normal|hard`.
+## Done on 2026-11-25
 
-**Measured** (10 matches per level, seed 7):
+### 1. Six new items (`feat/5v5-more`, `9ece915`)
 
-| Level | Kills per match | Items per bot |
+| Item | Cost | Stats |
 |---|---|---|
-| Easy | 17.8 | 3.7 |
-| Normal | 23.9 | 4.2 |
-| Hard | 43.2 | 4.8 |
+| Caffeine Pills 💊 (basic) | 350 | +12% AS |
+| Red Pen 🖊️ (basic) | 450 | +6 AD, 6% lifesteal |
+| Kanban Board 🗂️ | 1800 | +30 AD, +250 HP, 10% CDR |
+| Team Lunch 🍱 | 1500 | +200 HP, +200 mana, 15% CDR |
+| Firewall Appliance 🧱 | 2000 | +65 AP, +40 armor |
+| Midnight Oil 🕯️ | 2200 | +80 AP, 12% lifesteal (skills too) |
 
-A passive newcomer (`--human=lane`) dies 0 times by 5:00 on Easy, and 1–3 times on Normal or Hard.
+- Changed from the plan:
+  - "Overclocked CPU" (AP + attack speed) became Midnight Oil, because basic attacks don't scale with AP.
+  - Kanban uses 🗂️, because 📋 is Brick's W icon.
+- The shop is now 5 columns × 7 rows (1174 × 612). The fallback shop is 8 × 4.
+- 12 champion builds use the new items.
+- `team_ff` now prints the items held at the end of each match.
+- `pass2_ui` reads shop positions from the panel and checks that all 31 tiles fit.
 
-Possible follow-ups:
-- **Last-hit prediction** (CS barely moved): count allied minions attacking the target and their hit timing.
-- **Difficulty choice:** let the host of a custom room pick the bot level.
+### 2. Two new champions (`feat/5v5-more`, `e87c7df` + `450824e`)
+
+The planned themes collided: Sprint is already "the Scrum Master" and Zero is "the Security Ninja", with Pen Test and Zero-Day. New themes:
+- **Brew, the Office Barista** (support):
+  - Q Hot Pour: piercing slow shot.
+  - W Espresso Shot: team +25% AS, +15% MS.
+  - E Decaf: delayed 1 s stun circle.
+  - R Break Room: a 4 s zone that heals allies and slows enemies (the first healing zone in the game).
+- **Pager, the On-Call SRE** (jungler):
+  - Q Ping: piercing slow, the main damage skill.
+  - W Incident Mode: shield, damage reduction, MS, AS.
+  - E Revert: a 400 blink.
+  - R On My Way: a 950-range, champion-only dash with a 1.2 s stun.
+- New costume parts in `looks.js`:
+  - outfits: barista apron, on-call hoodie;
+  - hats: flat cap, sleep mask;
+  - props: mug, pager;
+  - projectiles: coffee, ping.
+- The select screen has 9 columns; the hub's 6 × 3 grid fits 18.
+- Fixes:
+  - a `toTarget` dash with `targets: 'enemyChamp'` now locks onto champions only (server);
+  - the offline sim's targeted dash matched the server too loosely; it now stops at contact and hits only the target;
+  - zone heals show "per tick" in the skill tooltip.
+- **Balance tool:** `team_ff --feature=id` puts that champion on exactly one team, blue in even matches and red in odd ones.
+
+| Champion | Win rate |
+|---|---|
+| Brew | 47% featured (30 matches); 53–55% as a natural pick |
+| Pager | 40%, then 37% after a first buff, then **57%** (40 matches) once Ping became its main damage skill |
+
+### 3. Story Mode 2.0 (`feat/story-2`)
+
+- **Design:** [`.claude/context/design/11_STORY_MODE_2.md`](../design/11_STORY_MODE_2.md) covers the pitch, floors 1–5, systems, architecture, the floor file format, milestones and open questions.
+- **Engine worlds** (`ebbe6cf`, no 5v5 behavior change):
+  - `shared/moba/nav.js` exposes `createNav({ walls, w, h })` with `setDynamic(id, wall | null)` for doors (patches only the cached A* cells around the door). The old exports are the 5v5 instance: 0 differences over 16,000 random queries.
+  - `src/entities/moba/world.js`: `WORLD_5V5` and `makeWorld(floor)`.
+  - TeamModeScene, OfflineSim and the MobaHud minimap read size, fountains, bushes and nav from `this.world`.
+  - TeamModeScene hooks: `_makeWorld`, `_makeMap`, `_startWorld`; the constructor takes a key.
+  - MobaMap exports its wall and plant art; `wallLayout(k, walls)`.
+  - Unit-kind registry in `looks.js` (`registerUnitKinds`).
+- **Prototype M1** (`a5dbd4f`), **play it at `?scene=story&champ=dev`** (any champion id):
+  - `src/story2/`: StoryWorldScene, StorySim, FloorMap, `bugs.js`, `floors/f1.js`, `launch.js`. Lazy-loaded through a dynamic import in `main.js`.
+  - Floor 1, "Basement · Legacy Server Room", 7200 × 4800: 7 rooms around a hallway.
+  - Gameplay:
+    - bug packs (Null, Ladybug, Beetle, Race Condition) with aggro, pack wake-up, leash and bush stealth;
+    - a bug nest in a **lock-in** room that drops the **blue keycard**, which opens the Records door;
+    - **Ops** in the Manager's Office talks, then **joins as an ally** with its full kit;
+    - the break room heals, sells items and is where you respawn;
+    - the stairs up clear the floor and show the FLOOR CLEARED panel.
+  - UI:
+    - dialogue box (Rubber Duck and champion portraits; a conversation you start cuts in);
+    - objective tracker in the HUD top bar;
+    - pickups (coffee, gold, keycard, note);
+    - TALK prompt (T or click).
+- **Tests:** `story2_check` 18/18, `offline_check` 6/6, `pass2_ui` 16/16, `team_ff` 0 exceptions / stuck / in-wall, `team_sim --exploits` 118/118.
 
 ## Next steps, in order
 
-### 1. 5v5: six new items (branch `feat/5v5-more`)
+1. **Story M2: floor 1 complete** (`feat/story-2`):
+   - the Zero lieutenant arena: an enemy champion on the bot brain with an HP multiplier and adds, who joins after the fight;
+   - save and load (`SaveManager` key `story2`, checkpoint = break room);
+   - a menu entry: needs the user's choice (see below);
+   - `story2_floor_check.mjs`: rooms reachable with the right keys, doors not overlapping walls;
+   - a touch pass (TALK button on phones);
+   - floor music.
+2. **Story M3–M5:** floors 2–5 per the design doc (chasers, secret doors, the PM's door shuffles, the THE DEADLINE boss, the ending).
+3. **Housekeeping:**
+   - `feat/story-mode`'s `ShopCloset` lays items out in rows of 5 from `SHOP_ORDER`. If that branch is ever merged after `feat/5v5-more`, it needs the 7-row layout. Better: delete the branch once M2 lands.
+   - Possible 5v5 follow-ups: last-hit prediction for the bots; a bot-level choice for custom-room hosts.
 
-Use only the existing stats (`ad ap hp mana armor ms as haste lifesteal apPct`), so the server, the Story gear adapter and the bots need no new mechanics:
+## Decisions for the user
 
-| id | name | tier | cost | stats | fills the gap |
-|---|---|---|---|---|---|
-| `caffeine` | Caffeine Pills 💊 | basic | 350 | as 0.15 | no basic attack-speed item |
-| `red_pen` | Red Pen 🖊️ | basic | 450 | ad 6, lifesteal 0.06 | no basic sustain |
-| `kanban` | Kanban Board 📋 | core | 1800 | ad 30, hp 250, haste 0.1 | fighters (AD + HP) |
-| `team_lunch` | Team Lunch 🍱 | core | 1600 | hp 200, mana 200, haste 0.15 | supports |
-| `firewall` | Firewall Appliance 🧱 | core | 2000 | ap 65, armor 40 | battle mages |
-| `overclock` | Overclocked CPU 🔥 | core | 2600 | ap 80, as 0.3 | on-hit mages, late game |
-
-- **Shop screens:** `SHOP_ORDER` grows to 31 items. Both shops are fixed 5×5 grids and need a new layout:
-  - `src/ui/moba/ShopPanel.js` (5v5);
-  - `src/story/ShopCloset.js` on `feat/story-mode` only.
-  - Check every tile still fits at 1280×720 and on phones.
-- **Builds:** put the new items into a few `build` lists in `shared/moba/champions.js` (e.g. `kanban` for fighters, `team_lunch` for supports).
-- **Gates:** run `team_ff` (no exceptions; champion win rates still roughly 35–65% over 20+ matches). On a debug server on :2650 (never :2567), run `team_sim --exploits` and `pass2_ui`.
-
-### 2. 5v5: two new champions (same branch)
-
-Data-driven (`shared/moba/champions.js`). Reuse existing skill types and existing look parts from `src/entities/moba/looks.js` (outfit, hat, prop, palette). Check that ids and names are unique (`sprint` is already taken). Proposals:
-
-**`scrum`: "Standup, the Scrum Master"** (support, ranged ~525). Look: shirt, clipboard prop if there is one, palette yellow/teal.
-- **Q** Daily Stand-up: `circle`, radius 220, 400 ms telegraph, small damage, stun 0.8 s.
-- **W** Velocity: `allies` buff, msPct + as.
-- **E** Timebox: `zone`, 2.5 s, slows and ticks damage.
-- **R** Retrospective: `allies` heal plus shield.
-
-**`sec`: "Pentest, the Security Engineer"** (jungle assassin, melee). Look: dark hoodie, headset, palette black/green.
-- **Q** Port Scan: `projectile` with slow.
-- **W** Firewall: `self` shield plus dmgReduction.
-- **E** Zero-Day: `dash` toTarget.
-- **R** Exploit: `target` enemyChamp with `execute { missingHpPct }`.
-
-Also:
-- **Picks:** add them to `ROLE_PICKS` / `ROLE_ORDER` so bots draft them.
-- **Select screen:** check `TeamSelectScene` fits 18 champions.
-- **Balance:** win rates of the new two in `team_ff` (30+ matches) should land at 40–60%. Tune base, growth and damage if not.
-
-### 3. Story Mode 2.0: built on the 5v5 game
-
-First write `.claude/context/design/STORY_MODE_2.md`, then build a prototype.
-
-**What to reuse:**
-- `TeamModeScene` rendering: `MobaMap`, `ChampionView`, `UnitView`, `StructureView`, `MobaHud`, `MobaFx`.
-- `src/entities/moba/OfflineSim.js`: an in-browser 5v5 simulation with movement, casts, walls, bushes, pets and spells; already runs `?scene=team&offline=1`.
-- `shared/moba/*`: champions and kits, items, nav, map format.
-- From `feat/story-mode`: `StoryDialog` (cinematic dialogue), the script beats, the `SaveManager` story key.
-
-**Pitch:**
-- Top-down offline adventure on office floors built like the 5v5 map but larger: rooms and corridors joined by **doors** (keycards, lock-ins until a bug nest is cleared), bushes and side rooms to explore.
-- You play a 5v5 champion with its Q/W/E/R kit and 5v5 controls (click to move, keys or touch buttons).
-- Bugs are the PvE enemies (minion and camp types, bug nests, bosses).
-- 5v5 champions appear as story characters: mentors, allies who join your party, and rivals. 0xDEAD's Null Crew can be champions too.
-- Keep the AURORA-heist plot and the Rubber Duck guide, one office floor per world. Loot and the 5v5 item shop carry over.
-
-**Milestone 1 (the prototype):**
-1. A `StoryWorldScene` (or a `story` mode of `TeamModeScene`) loads one story floor: a map definition with rooms, doors and spawns, bigger than the 5v5 map.
-2. The player's champion with full controls.
-3. Roaming bug packs and one bug nest that locks a room until cleared.
-4. A keycard door.
-5. One NPC champion with a dialogue (reuse StoryDialog), then joins as a bot ally (OfflineSim bot brain).
-6. An exit to the next floor.
-7. Lazy-loaded like the current Story Mode, so no impact on 5v5.
-
-**Milestone 1 gates:** a headless check like `story_check.mjs` (loads, moves, opens a door, clears the nest, talks to the NPC, 0 page errors) plus the 5v5 gates.
+1. Push and merge the three branches in the order above.
+2. Story Mode 2.0 open questions (design doc §6):
+   - delete the side-view mode, or keep it as "Retro"?
+   - free champion pick (recommended), or story unlocks?
+   - one 10–15 minute map per floor (recommended), or 3 short stages per floor?
+3. Where Story Mode 2.0 goes in the menu: replace the single-player PLAY button, or add a new card?
 
 ## How to report back
 
