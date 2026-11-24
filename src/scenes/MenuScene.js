@@ -1,7 +1,6 @@
 // MenuScene — title screen for BUG SMASH: Save the Deadline.
 // The background already contains the title, stickman, bugs and code editor.
-// This scene adds the buttons (PLAY · Personal / Team · SETTINGS / CAREER / LEVELS ·
-// GIVE ME A DOLLAR),
+// This scene adds the buttons (PLAY · Personal / Team · SETTINGS / CAREER / LEVELS),
 // the daily-missions + DEV TIP cards, and the first-run welcome card.
 import { SaveManager } from '../core/SaveManager.js';
 import { Progress } from '../core/Progress.js';
@@ -14,7 +13,6 @@ import { SettingsPanel } from '../ui/SettingsPanel.js';
 import { ProfilePanel } from '../ui/ProfilePanel.js';
 import { LevelSelectPanel } from '../ui/LevelSelectPanel.js';
 import { WelcomePanel } from '../ui/WelcomePanel.js';
-import { DonatePanel, MONEY } from '../ui/DonatePanel.js';
 import { loadMatch, clearMatch, fetchMe } from '../core/Identity.js';
 
 // Stats API on the game server — same host rules as MultiPlayScene's SERVER_URL /
@@ -106,7 +104,6 @@ export default class MenuScene extends Phaser.Scene {
 
   _openSettings(tab = 'settings') { this._openPanel((onClose) => SettingsPanel.open(this, { tab, onClose })); }
   _openCareer() { this._openPanel((onClose) => ProfilePanel.open(this, { onClose })); }
-  _openDonate() { this._openPanel((onClose) => DonatePanel.open(this, { onClose })); }
   _openLevels() {
     this._openPanel((onClose) => LevelSelectPanel.open(this, {
       onClose, onPlay: (i) => { this._modal = null; this._startLevel(i); },
@@ -214,14 +211,6 @@ export default class MenuScene extends Phaser.Scene {
       color: NEON_TEAL, iconKind: 'grid',
     });
     levels.on('pointerup', () => this._openLevels());
-
-    // Donation (bottom-right, same row): the developer's VietQR + the dollar stickman video.
-    const donate = this._roundedNeonButton({
-      x: W - 131, y: subY, w: 230, h: 46, radius: 14,
-      label: 'GIVE ME A DOLLAR', fontSize: 13,
-      color: MONEY, iconKind: 'dollar',
-    });
-    donate.on('pointerup', () => this._openDonate());
 
     // About / credits link (bottom-left). The platformer prototype is no longer linked here
     // (reachable by URL only — coordinator wires ?scene=platformer in main.js).
@@ -469,17 +458,6 @@ export default class MenuScene extends Phaser.Scene {
       g.lineBetween(-12, -6, -6, -12);
       g.lineBetween( 12, -6,  6, -12);
       c.add(g);
-    } else if (kind === 'dollar') {
-      // Coin with a $ in it
-      const g = this.add.graphics();
-      g.fillStyle(color, 0.25);
-      g.fillCircle(0, 0, 11);
-      g.lineStyle(2.5, 0xffffff, 1);
-      g.strokeCircle(0, 0, 11);
-      c.add(g);
-      c.add(this.add.text(0, 0, '$', {
-        fontFamily: 'Arial Black, sans-serif', fontSize: 14, color: '#ffffff',
-      }).setOrigin(0.5));
     }
 
     return c;
