@@ -105,6 +105,13 @@ export const Ranking = {
     return view(pub, profiles.get(pub) || fresh());
   },
 
+  /** Hidden skill rating (MMR) of a player — MMR_START for a new or anonymous one (server-only). */
+  skill(pub) {
+    load();
+    const p = pub && profiles.get(pub);
+    return p && Number.isFinite(p.mmr) ? p.mmr : MMR_START;
+  },
+
   /** Seat label for lobby / select / scoreboard ('' without an id). */
   label(pub) {
     load();

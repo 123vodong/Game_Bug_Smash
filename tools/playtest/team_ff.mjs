@@ -7,6 +7,8 @@
 //   --human=lane  EP-05 newcomer check: one PASSIVE human stands in front of its mid outer tower (idle →
 //                 only auto-attacks what walks into range, never chases) — deaths in the first 5:00 reported
 //   --feed        print every feed/announce line
+//   --botskill=L  force the bot skill level: easy | normal | hard (default: the room's pick — normal
+//                 for bots-only, the humans' average MMR otherwise; the harness human is new → easy)
 //   --champ=ID    champion for the harness human (with --human)
 //   --spells=D,F  summoner spells for the harness human (with --human), e.g. ghost,ignite
 //   --jitter=P    v4: skip the state patch after a tick with probability P (two ticks per patch window,
@@ -35,6 +37,7 @@ const MAX_MIN = Number(positional[1] || 45);
 const QUIET = !!flag('quiet', false);
 const FEED = !!flag('feed', false);
 const HUMAN = flag('human', '');
+const BOTSKILL = flag('botskill', '');   // easy | normal | hard (default: the room's own pick)
 const JITTER = Number(flag('jitter', 0)) || 0;
 let seed = Number(flag('seed', Date.now() % 100000));
 
@@ -90,6 +93,7 @@ function makeRoom() {
   const handlers = {};
   room.onMessage = (type, cb) => { handlers[type] = cb; return () => {}; };
   room.onCreate({});
+  if (BOTSKILL) room._botSkillOverride = BOTSKILL;
   // v4: one observer client per team — counts the bytes of every team-filtered message (atk / fx).
   for (const team of ['blue', 'red']) {
     room.clients.push({
