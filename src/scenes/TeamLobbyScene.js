@@ -39,7 +39,7 @@ const STATS_URL = (() => {
 })();
 
 const NAME_MAX = 16;
-const COLS = 6;   // Pass 2: 16 champions → 6 × 3
+const COLS = 6;   // 18 champions → 6 × 3
 // Cards grouped by lane (top → jungle → mid → bot → support), then roster order.
 const ORDER = [...CHAMPION_IDS].sort((a, b) => {
   const la = ROLE_ORDER.indexOf(CHAMPIONS[a].lane), lb = ROLE_ORDER.indexOf(CHAMPIONS[b].lane);

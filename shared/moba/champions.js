@@ -441,6 +441,57 @@ export const CHAMPIONS = {
     build: ['tech_book', 'smartwatch', 'headphones', 'cloud_credits', 'stackoverflow', 'vpn_hoodie'],
     lines: { pick: 'Nit: everything.', kill: 'Changes requested.', death: 'LGTM... wait... no...' },
   },
+
+  // ── 2026-11-25 "Night Shift" hires ──
+  barista: {
+    id: 'barista', name: 'Brew', title: 'the Office Barista', role: 'Support', lane: 'support',
+    emoji: '☕', color: 0xc8864a, difficulty: 1, ranged: true,
+    blurb: 'Knows everyone\'s order and everyone\'s secrets. Runs the break room, and so runs the office.',
+    look: { outfit: 'barista', hat: 'flatcap', prop: 'mug', palette: [0x6f4e37, 0xf5e6d3] },
+    base:   { hp: 540, mana: 410, ad: 45, ap: 0, armor: 22, as: 0.63, range: 480, ms: 330 },
+    growth: { hp: 88,  mana: 42,  ad: 2.7, armor: 3.4, as: 0.011 },
+    skills: {
+      q: { name: 'Hot Pour', icon: '☕', type: 'projectile', mana: 50, cd: 8, color: 0xc8864a,
+           range: 800, speed: 1400, width: 80, pierce: true, dmg: { base: 50, perLevel: 12, ap: 0.45 }, slow: { pct: 0.3, ms: 1500 },
+           desc: 'Pours a scalding line of fresh coffee: damages and slows every enemy it splashes.' },
+      w: { name: 'Espresso Shot', icon: '⚡', type: 'allies', mana: 60, cd: 14, color: 0xffb347,
+           radius: 520, duration: 4000, buff: { as: 0.25, msPct: 0.15 },
+           desc: 'A double shot for everyone nearby: +25% attack speed and +15% move speed for 4 s.' },
+      e: { name: 'Decaf', icon: '😴', type: 'circle', mana: 65, cd: 13, color: 0x9b7bd4,
+           range: 750, radius: 170, delay: 650, dmg: { base: 40, perLevel: 10, ap: 0.35 }, stun: { ms: 1000 },
+           desc: 'Swaps an area\'s coffee for decaf. After a moment, enemies inside doze off (stun).' },
+      r: { name: 'Break Room', icon: '🛋️', type: 'zone', mana: 110, cd: 85, color: 0x7ed957,
+           range: 700, radius: 320, duration: 4000, tickMs: 500, heal: { base: 14, perLevel: 3, ap: 0.07 },
+           dmg: { base: 10, perLevel: 3, ap: 0.05 }, slow: { pct: 0.3, ms: 700 },
+           desc: 'Opens the break room for 4 s: allies inside heal every half second, enemies inside are slowed and scalded.' },
+    },
+    build: ['power_bank', 'sneakers', 'team_lunch', 'headphones', 'firewall', 'midnight_oil'],
+    lines: { pick: 'One oat-milk latte for the whole team!', kill: 'Order up!', death: 'Out of beans...' },
+  },
+
+  oncall: {
+    id: 'oncall', name: 'Pager', title: 'the On-Call SRE', role: 'Jungler', lane: 'jungle',
+    emoji: '📟', color: 0xff5252, difficulty: 2, ranged: false,
+    blurb: 'Has not slept through the night since 2019. Answers every page within a minute, and arrives angry.',
+    look: { outfit: 'hoodie', hat: 'sleepmask', prop: 'pager', palette: [0x2b2d42, 0xff5252] },
+    base:   { hp: 615, mana: 300, ad: 64, ap: 0, armor: 30, as: 0.67, range: 140, ms: 345 },
+    growth: { hp: 97,  mana: 34,  ad: 4.1, armor: 4,  as: 0.012 },
+    skills: {
+      q: { name: 'Ping', icon: '📶', type: 'projectile', mana: 35, cd: 5, color: 0xff5252,
+           range: 850, speed: 1700, width: 80, pierce: true, dmg: { base: 85, perLevel: 17, ad: 1.0 }, slow: { pct: 0.3, ms: 1200 },
+           desc: 'Pings everyone in a line: damage + slow. Nobody can ignore a ping.' },
+      w: { name: 'Incident Mode', icon: '🧯', type: 'self', mana: 50, cd: 14, color: 0xffb347,
+           duration: 3500, shield: { base: 70, perLevel: 15, ad: 0.3 }, buff: { dmgReduction: 0.15, msPct: 0.2, as: 0.25 },
+           desc: 'Declares an incident: a shield, 15% damage reduction, +20% move speed and +25% attack speed.' },
+      e: { name: 'Revert', icon: '⏪', type: 'blink', mana: 55, cd: 15, color: 0xffffff,
+           range: 400, desc: 'Reverts to the last known-good position nearby. Instantly.' },
+      r: { name: 'On My Way', icon: '🏃', type: 'dash', mana: 100, cd: 80, color: 0xff1744,
+           range: 950, toTarget: true, targets: 'enemyChamp', hitRadius: 60, stopAtFirst: true, dmg: { base: 170, perLevel: 24, ad: 0.95 }, stun: { ms: 1200 },
+           desc: 'Acknowledges the page and races to an enemy champion far away: big damage + 1.2 s stun on arrival.' },
+    },
+    build: ['red_pen', 'sneakers', 'gauntlet', 'kanban', 'rgb_keyboard', 'standing_desk'],
+    lines: { pick: 'Acknowledged.', kill: 'Incident resolved.', death: 'Escalating to the next on-call...' },
+  },
 };
 
 export const CHAMPION_IDS = Object.keys(CHAMPIONS);
@@ -449,11 +500,11 @@ export const CHAMPION_IDS = Object.keys(CHAMPIONS);
 export const ROLE_ORDER = ['top', 'jungle', 'mid', 'bot', 'support'];
 /** Champions bots may pick for each role — v2: a RANDOM available one (variety), else any free champion. */
 export const ROLE_PICKS = {
-  top: ['stack', 'guard', 'dev'],
-  jungle: ['zero', 'courier', 'sprint', 'dev'],
+  top: ['stack', 'guard', 'dev', 'oncall'],
+  jungle: ['zero', 'courier', 'sprint', 'dev', 'oncall'],
   mid: ['pixel', 'model', 'cleaner', 'lint'],
   bot: ['tester', 'appdev', 'cache', 'pixel'],
-  support: ['ops', 'embedded', 'hr', 'guard', 'model'],
+  support: ['ops', 'embedded', 'hr', 'guard', 'model', 'barista'],
 };
 
 /** v4 auto-aim policy (shared by client + server): does a no-direction cast of this skill aim at an

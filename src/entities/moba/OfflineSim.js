@@ -761,10 +761,18 @@ export class OfflineSim {
       }
       case 'dash': {
         const x0 = c.x, y0 = c.y, tgt = sk.toTarget ? this._ent(m.id) : null;
-        const want = tgt && tgt.kind !== 'pet' && this._alive(tgt) && dist(c, tgt) <= sk.range + 100 ? { x: tgt.x, y: tgt.y } : towardRange(sk.range);
+        const okT = !!tgt && tgt.kind !== 'pet' && this._alive(tgt) && tgt.team !== c.team && !isStruct(tgt)
+          && (sk.targets !== 'enemyChamp' || tgt.champ) && dist(c, tgt) <= sk.range + 100;
+        let want;
+        if (okT) {   // like the server: stop at contact, and only the target is hit
+          const d = dist(c, tgt) || 1, reach = Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
+          want = clampToMap(x0 + ((tgt.x - x0) / d) * reach, y0 + ((tgt.y - y0) / d) * reach);
+        } else want = towardRange(sk.range);
         const p = clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS); // dashes stop at walls
         let end = p, struck = [];
-        if (sk.hitRadius) {
+        if (okT) {
+          if (dist(p, tgt) <= this._radius(tgt) + CHAMP_RADIUS + Math.max(sk.hitRadius || 0, 40)) struck = [tgt];
+        } else if (sk.hitRadius) {
           struck = enemies((e) => distToSeg(e.x, e.y, x0, y0, p.x, p.y) <= sk.hitRadius + this._radius(e))
             .sort((a, b) => dist(a, c) - dist(b, c));
           const first = struck[0];

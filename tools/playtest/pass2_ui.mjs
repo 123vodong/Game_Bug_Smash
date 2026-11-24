@@ -2,7 +2,7 @@
 // DEBUG dev server (static files + ws on the same port):
 //   BUG_SMASH_DEBUG=1 BUG_SMASH_RANKS=memory PORT=2650 node server/index.js
 //   GAME_URL=http://localhost:2650/ node tools/playtest/pass2_ui.mjs <outDir>
-// Screens: Team hub (16 champions, rank, 🏆 RANKS), leaderboard, select grid (offline), shop with 31
+// Screens: Team hub (18 champions, rank, 🏆 RANKS), leaderboard, select grid (offline), shop with 31
 // items + SELL, camera lock / edge pan / minimap drag, second tab (DUP_TAB card), close + reopen →
 // REJOIN banner → REJOIN prompt → back in the match. Prints PASS/FAIL lines + page errors.
 import { chromium } from 'playwright-core';
@@ -57,7 +57,7 @@ await until(A, "window.__game?.scene.isActive('TeamLobbyScene')");
 await A.waitForTimeout(2200);
 await shot(A, '01_hub');
 const cards = await ev(A, "window.__game.scene.getScene('TeamLobbyScene')._cards.length");
-check('hub: 16 champion cards', cards === 16, `cards=${cards}`);
+check('hub: 18 champion cards', cards === 18, `cards=${cards}`);
 const rankTxt = await ev(A, "window.__game.scene.getScene('TeamLobbyScene')._careerText.text");
 check('hub: rank line from the server (tier + stars)', /Intern|Junior|Mid|Senior|Staff|Principal|CTO/.test(rankTxt) && /[★☆]/.test(rankTxt), rankTxt);
 await A.mouse.click(1280 - 84, 84);

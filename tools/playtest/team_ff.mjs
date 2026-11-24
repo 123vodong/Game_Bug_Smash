@@ -10,6 +10,8 @@
 //   --botskill=L  force the bot skill level: easy | normal | hard (default: the room's pick — normal
 //                 for bots-only, the humans' average MMR otherwise; the harness human is new → easy)
 //   --champ=ID    champion for the harness human (with --human)
+//   --feature=A,B balance read: bots draft each listed champion (in its lane) on exactly one team,
+//                 blue in even matches and red in odd ones (the other team never gets it)
 //   --spells=D,F  summoner spells for the harness human (with --human), e.g. ghost,ignite
 //   --jitter=P    v4: skip the state patch after a tick with probability P (two ticks per patch window,
 //                 like a real setInterval clock) — exercises StateView add/remove churn within one patch
@@ -38,6 +40,7 @@ const QUIET = !!flag('quiet', false);
 const FEED = !!flag('feed', false);
 const HUMAN = flag('human', '');
 const BOTSKILL = flag('botskill', '');   // easy | normal | hard (default: the room's own pick)
+const FEATURE = String(flag('feature', '') || '').split(',').filter(Boolean);   // champion ids, see --feature
 const JITTER = Number(flag('jitter', 0)) || 0;
 let seed = Number(flag('seed', Date.now() % 100000));
 
@@ -303,6 +306,19 @@ for (let m = 0; m < MATCHES; m++) {
   Math.random = mulberry32(seed + m);
   fake = 1_750_000_000_000 + m * 10_000_000;
   const { room, counts, lines, handlers, fakeClient, sent } = makeRoom();
+  if (FEATURE.length) {
+    // balance read: each featured champion is drafted (by a bot, in its own lane) by exactly ONE team,
+    // blue on even matches and red on odd ones — the other team never gets it.
+    const side = m % 2 ? 'red' : 'blue', orig = room._champForRole.bind(room);
+    room._champForRole = (team, role, sid) => {
+      if (team === side) for (const id of FEATURE) if (CHAMPIONS[id].lane === role && room._freeForTeam(team, id, sid)) return id;
+      const c = orig(team, role, sid);
+      if (team === side || !FEATURE.includes(c)) return c;
+      const alt = Object.keys(CHAMPIONS).filter((x) => !FEATURE.includes(x) && room._freeForTeam(team, x, sid));
+      const same = alt.filter((x) => CHAMPIONS[x].lane === role), pool = same.length ? same : alt;
+      return pool.length ? pool[Math.floor(Math.random() * pool.length)] : c;
+    };
+  }
   if (HUMAN) {
     room.clients.push(fakeClient);
     room.onJoin(fakeClient, { champ: flag('champ', 'pixel'), name: 'HarnessHuman', autoLock: true });

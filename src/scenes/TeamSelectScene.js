@@ -40,13 +40,13 @@ const ORDER = [...CHAMPION_IDS].sort((a, b) => {
   return (la - lb) || (CHAMPION_IDS.indexOf(a) - CHAMPION_IDS.indexOf(b));
 });
 const FILTERS = ['all', ...ROLE_ORDER];
-const COLS = 8;   // Pass 2: 16 champions = 2 rows of 8
+const COLS = 9;   // 2026-11-25: 18 champions = 2 rows of 9
 const SEND_GAP_MS = PICK_RATE_MS + 30;     // stay above the server's rate limit
 const OPTIMISTIC_MS = 900;                 // show our own hover before the server echoes it
 
 // ── Layout (1280×720) ──
 const SLOT = { w: 244, h: 88, step: 95, y: 84, lx: 14, rx: 1280 - 14 - 244 };
-const GRID = { x: 272, y: 106, w: 85, h: 106, gap: 8 };
+const GRID = { x: 272, y: 106, w: 76, h: 106, gap: 6 };   // 9 × 76 + 8 × 6 = 732 (DET is 736 wide)
 const CHIPS = { x: 272, y: 88 };
 const DET = { x: 272, y: 340, w: 736, h: 262 };
 const SPELLBAR = { x: 272, y: 612, w: 488, h: 96 };
