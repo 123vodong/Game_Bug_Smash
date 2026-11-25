@@ -42,7 +42,7 @@ export function skillMechanics(sk, def) {
   const L = [];
   const petName = def?.pet?.name || 'your pet';
   if (sk.dmg) L.push(`⚔ ${amountText(sk.dmg)} dmg${sk.type === 'zone' ? ' per tick' : ''}`);
-  if (sk.heal) L.push(`💚 heal ${amountText(sk.heal)}`);
+  if (sk.heal) L.push(`💚 heal ${amountText(sk.heal)}${sk.type === 'zone' ? ' per tick to allies inside' : ''}`);
   if (sk.shield) L.push(`🛡 shield ${amountText(sk.shield)}`);
   if (sk.type === 'zone') L.push(`🟦 Zone lasts ${sec(sk.duration)} · ticks every ${sec(sk.tickMs)}`);
   if ((sk.count | 0) > 1) L.push(`📱 Fan of ${sk.count} across ${sk.spread || 0}° · each enemy hit once`);

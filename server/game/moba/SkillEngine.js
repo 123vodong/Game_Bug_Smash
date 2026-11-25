@@ -180,7 +180,7 @@ export class SkillEngine {
     if (now < ch.rootedUntil) return false;
     const x0 = ch.x, y0 = ch.y;
     let target = null;
-    if (spec.toTarget) target = this.room._skillTarget(ch, aim, false, spec.range);
+    if (spec.toTarget) target = this.room._skillTarget(ch, aim, spec.targets === 'enemyChamp', spec.range);
     let dx, dy, reach;
     if (target) {
       const d = Math.hypot(target.x - x0, target.y - y0) || 1;

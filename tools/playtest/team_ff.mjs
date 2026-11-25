@@ -7,7 +7,11 @@
 //   --human=lane  EP-05 newcomer check: one PASSIVE human stands in front of its mid outer tower (idle →
 //                 only auto-attacks what walks into range, never chases) — deaths in the first 5:00 reported
 //   --feed        print every feed/announce line
+//   --botskill=L  force the bot skill level: easy | normal | hard (default: the room's pick — normal
+//                 for bots-only, the humans' average MMR otherwise; the harness human is new → easy)
 //   --champ=ID    champion for the harness human (with --human)
+//   --feature=A,B balance read: bots draft each listed champion (in its lane) on exactly one team,
+//                 blue in even matches and red in odd ones (the other team never gets it)
 //   --spells=D,F  summoner spells for the harness human (with --human), e.g. ghost,ignite
 //   --jitter=P    v4: skip the state patch after a tick with probability P (two ticks per patch window,
 //                 like a real setInterval clock) — exercises StateView add/remove churn within one patch
@@ -35,6 +39,8 @@ const MAX_MIN = Number(positional[1] || 45);
 const QUIET = !!flag('quiet', false);
 const FEED = !!flag('feed', false);
 const HUMAN = flag('human', '');
+const BOTSKILL = flag('botskill', '');   // easy | normal | hard (default: the room's own pick)
+const FEATURE = String(flag('feature', '') || '').split(',').filter(Boolean);   // champion ids, see --feature
 const JITTER = Number(flag('jitter', 0)) || 0;
 let seed = Number(flag('seed', Date.now() % 100000));
 
@@ -48,6 +54,7 @@ const { isBlocked } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/na
 const { CHAMPIONS } = await import(pathToFileURL(path.join(ROOT, 'shared/moba/champions.js')).href);
 const STUCK_MS = 3000, STUCK_PX = 20;
 const champAgg = {};   // champ id -> { games, wins, k, d, a, cs, picks:{role:n} }
+const itemAgg = {};    // item id -> champions holding it at the end of a match
 const draftAgg = { problems: 0, log: [], selectMs: [], loadingMs: [] };
 const spellAgg = { casts: {}, smiteEpics: 0, smiteSteals: 0 };
 const totals = { exceptions: 0, stuck: 0, inWall: 0, knocks: 0, wallStuns: 0, petDmg: 0, petAtk: 0, zones: 0, ticks: 0, tickMs: 0, maxTick: 0, paths: 0, unitPaths: 0, deferred: 0, unstick: 0 };
@@ -90,6 +97,7 @@ function makeRoom() {
   const handlers = {};
   room.onMessage = (type, cb) => { handlers[type] = cb; return () => {}; };
   room.onCreate({});
+  if (BOTSKILL) room._botSkillOverride = BOTSKILL;
   // v4: one observer client per team — counts the bytes of every team-filtered message (atk / fx).
   for (const team of ['blue', 'red']) {
     room.clients.push({
@@ -298,6 +306,19 @@ for (let m = 0; m < MATCHES; m++) {
   Math.random = mulberry32(seed + m);
   fake = 1_750_000_000_000 + m * 10_000_000;
   const { room, counts, lines, handlers, fakeClient, sent } = makeRoom();
+  if (FEATURE.length) {
+    // balance read: each featured champion is drafted (by a bot, in its own lane) by exactly ONE team,
+    // blue on even matches and red on odd ones — the other team never gets it.
+    const side = m % 2 ? 'red' : 'blue', orig = room._champForRole.bind(room);
+    room._champForRole = (team, role, sid) => {
+      if (team === side) for (const id of FEATURE) if (CHAMPIONS[id].lane === role && room._freeForTeam(team, id, sid)) return id;
+      const c = orig(team, role, sid);
+      if (team === side || !FEATURE.includes(c)) return c;
+      const alt = Object.keys(CHAMPIONS).filter((x) => !FEATURE.includes(x) && room._freeForTeam(team, x, sid));
+      const same = alt.filter((x) => CHAMPIONS[x].lane === role), pool = same.length ? same : alt;
+      return pool.length ? pool[Math.floor(Math.random() * pool.length)] : c;
+    };
+  }
   if (HUMAN) {
     room.clients.push(fakeClient);
     room.onJoin(fakeClient, { champ: flag('champ', 'pixel'), name: 'HarnessHuman', autoLock: true });
@@ -536,6 +557,7 @@ for (let m = 0; m < MATCHES; m++) {
     a.games++; if (st.winner && c.team === st.winner) a.wins++;
     a.k += c.kills; a.d += c.deaths; a.a += c.assists; a.cs += c.cs;
     a.roles[c.role] = (a.roles[c.role] || 0) + 1;
+    for (const id of c.items) if (id) itemAgg[id] = (itemAgg[id] || 0) + 1;
   }
   for (const [k, n] of Object.entries(room.spellStats.casts)) spellAgg.casts[k] = (spellAgg.casts[k] || 0) + n;
   spellAgg.smiteEpics += room.spellStats.smiteEpics; spellAgg.smiteSteals += room.spellStats.smiteSteals;
@@ -561,6 +583,7 @@ for (let m = 0; m < MATCHES; m++) {
   console.log(`v3 spells cast (total · per match): ${SPELL_IDS.map((k) => `${k} ${spellAgg.casts[k] || 0} (${((spellAgg.casts[k] || 0) / MATCHES).toFixed(1)})`).join(' · ')}`);
   console.log(`v3 smite: epics secured with smite ${spellAgg.smiteEpics} · steals (enemy was on it) ${spellAgg.smiteSteals}`);
   console.log('champion  role(s)                  games  win%   K/D/A per game     K/D   cs   casts/game Q/W/E/R');
+  console.log(`items held at the end (all champions): ${Object.entries(itemAgg).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(' · ')}`);
   const ids = Object.keys(CHAMPIONS).sort((x, y) => (champAgg[y]?.games || 0) - (champAgg[x]?.games || 0));
   for (const id of ids) {
     const a = champAgg[id];

@@ -13,18 +13,20 @@ export class FallbackShopPanel {
   constructor(scene, { onBuy }) {
     this.s = scene; this.onBuy = onBuy;
     const W = scene.scale.width;
-    this.c = pin(scene.add.container(W / 2 - 300, 110), 85).setVisible(false);
-    const bg = scene.add.rectangle(0, 0, 600, 380, 0x0a0f18, 0.96).setOrigin(0).setStrokeStyle(2, 0xffd23f, 0.9).setInteractive();
+    // 8 columns × 4 rows of 76 × 80 cells: room for 32 items (SHOP_ORDER has 31)
+    const COLS = 8, CW = 76, CH = 80, PW = 16 * 2 + COLS * CW - 6, rows = Math.ceil(SHOP_ORDER.length / COLS);
+    this.c = pin(scene.add.container(W / 2 - PW / 2, 80), 85).setVisible(false);
+    const bg = scene.add.rectangle(0, 0, PW, 50 + rows * CH + 10, 0x0a0f18, 0.96).setOrigin(0).setStrokeStyle(2, 0xffd23f, 0.9).setInteractive();
     bg.on('pointerdown', (p, x, y, ev) => ev?.stopPropagation?.());
     this.title = scene.add.text(16, 12, '🛒 OFFICE SUPPLY STORE', { fontFamily: FONT, fontSize: 18, color: '#ffd23f' });
-    this.note = scene.add.text(584, 16, '', { fontFamily: MONO, fontSize: 12, color: '#ff8a8a' }).setOrigin(1, 0);
+    this.note = scene.add.text(PW - 16, 16, '', { fontFamily: MONO, fontSize: 12, color: '#ff8a8a' }).setOrigin(1, 0);
     this.c.add([bg, this.title, this.note]);
     this.cells = SHOP_ORDER.map((id, i) => {
-      const it = ITEMS[id], x = 16 + (i % 6) * 96, y = 50 + Math.floor(i / 6) * 104;
-      const box = scene.add.rectangle(x, y, 88, 96, 0x131b2a, 1).setOrigin(0).setStrokeStyle(1, 0x3a4a66, 1).setInteractive({ useHandCursor: true });
-      const em = scene.add.text(x + 44, y + 30, it.emoji, { fontSize: 30 }).setOrigin(0.5);
-      const nm = scene.add.text(x + 44, y + 62, it.name, { fontFamily: MONO, fontSize: 10, color: '#dfe7f5', align: 'center', wordWrap: { width: 84 } }).setOrigin(0.5);
-      const cost = scene.add.text(x + 44, y + 86, `🪙 ${it.cost}`, { fontFamily: FONT, fontSize: 11, color: '#ffd23f' }).setOrigin(0.5);
+      const it = ITEMS[id], x = 16 + (i % COLS) * CW, y = 50 + Math.floor(i / COLS) * CH;
+      const box = scene.add.rectangle(x, y, CW - 6, CH - 6, 0x131b2a, 1).setOrigin(0).setStrokeStyle(1, 0x3a4a66, 1).setInteractive({ useHandCursor: true });
+      const em = scene.add.text(x + 35, y + 22, it.emoji, { fontSize: 24 }).setOrigin(0.5);
+      const nm = scene.add.text(x + 35, y + 47, it.name, { fontFamily: MONO, fontSize: 9, color: '#dfe7f5', align: 'center', wordWrap: { width: 66 } }).setOrigin(0.5);
+      const cost = scene.add.text(x + 35, y + 66, `🪙 ${it.cost}`, { fontFamily: FONT, fontSize: 10, color: '#ffd23f' }).setOrigin(0.5);
       box.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); this.onBuy?.(id); });
       this.c.add([box, em, nm, cost]);
       return { id, box, cost };

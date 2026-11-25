@@ -89,7 +89,7 @@ export const CHAMPIONS = {
            range: 0, radius: 340, delay: 0, dmg: { base: 180, perLevel: 20, ad: 0.5 }, stun: { ms: 1300 },
            desc: 'Locks every table in range. Nearby enemies are damaged and stunned.' },
     },
-    build: ['chair', 'sneakers', 'standing_desk', 'server_rack', 'gauntlet', 'rgb_keyboard'],
+    build: ['chair', 'sneakers', 'standing_desk', 'kanban', 'server_rack', 'gauntlet'],
     lines: { pick: 'Scaling up.', kill: '200 OK.', death: '503 Service Unavailable.' },
   },
 
@@ -114,7 +114,7 @@ export const CHAMPIONS = {
            radius: 750, duration: 3000, heal: { base: 180, perLevel: 25, ap: 0.6 }, shield: { base: 150, perLevel: 15, ap: 0.4 },
            desc: 'Swaps the whole team to a fresh deployment: big heal + shield.' },
     },
-    build: ['power_bank', 'sneakers', 'rubber_duck', 'headphones', 'standing_desk', 'stackoverflow'],
+    build: ['power_bank', 'sneakers', 'rubber_duck', 'team_lunch', 'headphones', 'stackoverflow'],
     lines: { pick: 'It is always DNS.', kill: 'Rolled back.', death: 'Pager is going off...' },
   },
 
@@ -163,7 +163,7 @@ export const CHAMPIONS = {
            range: 480, targets: 'enemyChamp', dmg: { base: 150, perLevel: 25, ad: 1.0 }, execute: { missingHpPct: 0.35 },
            desc: 'Exploits an unpatched champion. Bonus damage from their missing HP.' },
     },
-    build: ['mouse', 'sneakers', 'gauntlet', 'rgb_keyboard', 'ultrawide', 'standing_desk'],
+    build: ['red_pen', 'sneakers', 'gauntlet', 'rgb_keyboard', 'ultrawide', 'standing_desk'],
     lines: { pick: 'sudo make me a sandwich.', kill: 'Access granted.', death: 'Firewall says no.' },
   },
 
@@ -188,7 +188,7 @@ export const CHAMPIONS = {
            range: 1100, radius: 420, delay: 1200, dmg: { base: 320, perLevel: 35, ap: 1.0 },
            desc: 'Drops a petabyte on an area after a long load time. Enormous damage.' },
     },
-    build: ['tech_book', 'sneakers', 'headphones', 'stackoverflow', 'rubber_duck', 'server_rack'],
+    build: ['tech_book', 'sneakers', 'headphones', 'stackoverflow', 'rubber_duck', 'firewall'],
     lines: { pick: 'Correlation achieved.', kill: 'As predicted.', death: 'Outlier. Ignore it.' },
   },
 
@@ -214,7 +214,7 @@ export const CHAMPIONS = {
            range: 0, radius: 380, delay: 250, dmg: { base: 160, perLevel: 22, hp: 0.06 }, knockback: { dist: 300 }, wallStun: { ms: 1200 }, slow: { pct: 0.35, ms: 2000 },
            desc: 'Locks down the floor: every enemy nearby is damaged, slowed and thrown back. Walls stun.' },
     },
-    build: ['chair', 'sneakers', 'standing_desk', 'hoodie', 'server_rack', 'gauntlet'],
+    build: ['chair', 'sneakers', 'standing_desk', 'hoodie', 'kanban', 'server_rack'],
     lines: { pick: 'Badge, please.', kill: 'Escorted off the premises.', death: 'I need backup on floor 3...' },
   },
 
@@ -238,7 +238,7 @@ export const CHAMPIONS = {
            range: 900, radius: 360, duration: 4000, tickMs: 500, dmg: { base: 45, perLevel: 6, ap: 0.14 }, slow: { pct: 0.25, ms: 700 },
            desc: 'Floods a huge area with industrial cleaner for 4 s. Heavy damage over time + slow.' },
     },
-    build: ['tech_book', 'sneakers', 'headphones', 'stackoverflow', 'pomodoro', 'standing_desk'],
+    build: ['tech_book', 'sneakers', 'headphones', 'midnight_oil', 'stackoverflow', 'pomodoro'],
     lines: { pick: 'Who left pizza in the server room?', kill: 'Swept.', death: 'Caution... wet... floor...' },
   },
 
@@ -263,7 +263,7 @@ export const CHAMPIONS = {
            duration: 6000, buff: { msPct: 0.55, adPct: 0.3, dmgReduction: 0.15 },
            desc: 'Full throttle for 6 s: +55% move speed, +30% attack damage, 15% damage reduction.' },
     },
-    build: ['mouse', 'sneakers', 'gauntlet', 'rgb_keyboard', 'standing_desk', 'ultrawide'],
+    build: ['mouse', 'sneakers', 'gauntlet', 'kanban', 'rgb_keyboard', 'ultrawide'],
     lines: { pick: 'Order picked up!', kill: 'Delivered.', death: 'Customer not home...' },
   },
 
@@ -289,7 +289,7 @@ export const CHAMPIONS = {
            range: 0, radius: 380, delay: 700, dmg: { base: 200, perLevel: 25, ap: 0.8 }, stun: { ms: 1200 },
            desc: 'Servo overloads: after a short charge, everything around SERVO is shocked and stunned.' },
     },
-    build: ['power_bank', 'sneakers', 'headphones', 'rubber_duck', 'standing_desk', 'stackoverflow'],
+    build: ['power_bank', 'sneakers', 'headphones', 'rubber_duck', 'firewall', 'stackoverflow'],
     lines: { pick: 'Servo, boot up.', kill: 'Bit flipped.', death: 'Brown-out detected...' },
   },
 
@@ -314,7 +314,7 @@ export const CHAMPIONS = {
            range: 420, targets: 'enemyChamp', dmg: { base: 170, perLevel: 25, ad: 1.0 }, stun: { ms: 1300 },
            desc: 'Creates a merge conflict in an enemy champion. Big damage + long stun while they resolve it.' },
     },
-    build: ['mouse', 'sneakers', 'gauntlet', 'standing_desk', 'rgb_keyboard', 'server_rack'],
+    build: ['mouse', 'sneakers', 'gauntlet', 'kanban', 'standing_desk', 'server_rack'],
     lines: { pick: 'LGTM.', kill: 'Fixed in prod.', death: 'It compiled on my machine...' },
   },
 
@@ -338,7 +338,7 @@ export const CHAMPIONS = {
            range: 1200, speed: 1900, width: 70, count: 7, spread: 50, dmg: { base: 170, perLevel: 25, ad: 1.0 },
            desc: 'Launch day! A wide fan of 7 phones. Each enemy can be hit by one of them.' },
     },
-    build: ['mouse', 'jetpack', 'rgb_keyboard', 'gauntlet', 'ultrawide', 'standing_desk'],
+    build: ['caffeine', 'jetpack', 'rgb_keyboard', 'gauntlet', 'ultrawide', 'standing_desk'],
     lines: { pick: 'Shipping to both stores.', kill: '5 stars.', death: 'App not responding...' },
   },
 
@@ -364,7 +364,7 @@ export const CHAMPIONS = {
            range: 0, radius: 330, duration: 4000, tickMs: 500, dmg: { base: 35, perLevel: 6, ad: 0.2 }, slow: { pct: 0.3, ms: 700 },
            desc: 'Holds a 4 s review where you stand: enemies inside take damage every half second and are slowed.' },
     },
-    build: ['mouse', 'sneakers', 'gauntlet', 'second_monitor', 'standing_desk', 'letter_opener'],
+    build: ['red_pen', 'sneakers', 'gauntlet', 'second_monitor', 'standing_desk', 'letter_opener'],
     lines: { pick: "Let's timebox this.", kill: 'Done done.', death: 'Moving it to next sprint...' },
   },
 
@@ -413,7 +413,7 @@ export const CHAMPIONS = {
            range: 800, radius: 340, delay: 600, dmg: { base: 150, perLevel: 20, ap: 0.6 }, stun: { ms: 1300 },
            desc: 'Calls an all-hands: after a moment, every enemy in the area is damaged and stunned.' },
     },
-    build: ['power_bank', 'sneakers', 'rubber_duck', 'cloud_credits', 'vpn_hoodie', 'headphones'],
+    build: ['power_bank', 'sneakers', 'rubber_duck', 'team_lunch', 'cloud_credits', 'vpn_hoodie'],
     lines: { pick: "Let's circle back.", kill: 'Your position has been eliminated.', death: "I'll take this offline..." },
   },
 
@@ -441,6 +441,57 @@ export const CHAMPIONS = {
     build: ['tech_book', 'smartwatch', 'headphones', 'cloud_credits', 'stackoverflow', 'vpn_hoodie'],
     lines: { pick: 'Nit: everything.', kill: 'Changes requested.', death: 'LGTM... wait... no...' },
   },
+
+  // ── 2026-11-25 "Night Shift" hires ──
+  barista: {
+    id: 'barista', name: 'Brew', title: 'the Office Barista', role: 'Support', lane: 'support',
+    emoji: '☕', color: 0xc8864a, difficulty: 1, ranged: true,
+    blurb: 'Knows everyone\'s order and everyone\'s secrets. Runs the break room, and so runs the office.',
+    look: { outfit: 'barista', hat: 'flatcap', prop: 'mug', palette: [0x6f4e37, 0xf5e6d3] },
+    base:   { hp: 540, mana: 410, ad: 45, ap: 0, armor: 22, as: 0.63, range: 480, ms: 330 },
+    growth: { hp: 88,  mana: 42,  ad: 2.7, armor: 3.4, as: 0.011 },
+    skills: {
+      q: { name: 'Hot Pour', icon: '☕', type: 'projectile', mana: 50, cd: 8, color: 0xc8864a,
+           range: 800, speed: 1400, width: 80, pierce: true, dmg: { base: 50, perLevel: 12, ap: 0.45 }, slow: { pct: 0.3, ms: 1500 },
+           desc: 'Pours a scalding line of fresh coffee: damages and slows every enemy it splashes.' },
+      w: { name: 'Espresso Shot', icon: '⚡', type: 'allies', mana: 60, cd: 14, color: 0xffb347,
+           radius: 520, duration: 4000, buff: { as: 0.25, msPct: 0.15 },
+           desc: 'A double shot for everyone nearby: +25% attack speed and +15% move speed for 4 s.' },
+      e: { name: 'Decaf', icon: '😴', type: 'circle', mana: 65, cd: 13, color: 0x9b7bd4,
+           range: 750, radius: 170, delay: 650, dmg: { base: 40, perLevel: 10, ap: 0.35 }, stun: { ms: 1000 },
+           desc: 'Swaps an area\'s coffee for decaf. After a moment, enemies inside doze off (stun).' },
+      r: { name: 'Break Room', icon: '🛋️', type: 'zone', mana: 110, cd: 85, color: 0x7ed957,
+           range: 700, radius: 320, duration: 4000, tickMs: 500, heal: { base: 14, perLevel: 3, ap: 0.07 },
+           dmg: { base: 10, perLevel: 3, ap: 0.05 }, slow: { pct: 0.3, ms: 700 },
+           desc: 'Opens the break room for 4 s: allies inside heal every half second, enemies inside are slowed and scalded.' },
+    },
+    build: ['power_bank', 'sneakers', 'team_lunch', 'headphones', 'firewall', 'midnight_oil'],
+    lines: { pick: 'One oat-milk latte for the whole team!', kill: 'Order up!', death: 'Out of beans...' },
+  },
+
+  oncall: {
+    id: 'oncall', name: 'Pager', title: 'the On-Call SRE', role: 'Jungler', lane: 'jungle',
+    emoji: '📟', color: 0xff5252, difficulty: 2, ranged: false,
+    blurb: 'Has not slept through the night since 2019. Answers every page within a minute, and arrives angry.',
+    look: { outfit: 'hoodie', hat: 'sleepmask', prop: 'pager', palette: [0x2b2d42, 0xff5252] },
+    base:   { hp: 615, mana: 300, ad: 64, ap: 0, armor: 30, as: 0.67, range: 140, ms: 345 },
+    growth: { hp: 97,  mana: 34,  ad: 4.1, armor: 4,  as: 0.012 },
+    skills: {
+      q: { name: 'Ping', icon: '📶', type: 'projectile', mana: 35, cd: 5, color: 0xff5252,
+           range: 850, speed: 1700, width: 80, pierce: true, dmg: { base: 85, perLevel: 17, ad: 1.0 }, slow: { pct: 0.3, ms: 1200 },
+           desc: 'Pings everyone in a line: damage + slow. Nobody can ignore a ping.' },
+      w: { name: 'Incident Mode', icon: '🧯', type: 'self', mana: 50, cd: 14, color: 0xffb347,
+           duration: 3500, shield: { base: 70, perLevel: 15, ad: 0.3 }, buff: { dmgReduction: 0.15, msPct: 0.2, as: 0.25 },
+           desc: 'Declares an incident: a shield, 15% damage reduction, +20% move speed and +25% attack speed.' },
+      e: { name: 'Revert', icon: '⏪', type: 'blink', mana: 55, cd: 15, color: 0xffffff,
+           range: 400, desc: 'Reverts to the last known-good position nearby. Instantly.' },
+      r: { name: 'On My Way', icon: '🏃', type: 'dash', mana: 100, cd: 80, color: 0xff1744,
+           range: 950, toTarget: true, targets: 'enemyChamp', hitRadius: 60, stopAtFirst: true, dmg: { base: 170, perLevel: 24, ad: 0.95 }, stun: { ms: 1200 },
+           desc: 'Acknowledges the page and races to an enemy champion far away: big damage + 1.2 s stun on arrival.' },
+    },
+    build: ['red_pen', 'sneakers', 'gauntlet', 'kanban', 'rgb_keyboard', 'standing_desk'],
+    lines: { pick: 'Acknowledged.', kill: 'Incident resolved.', death: 'Escalating to the next on-call...' },
+  },
 };
 
 export const CHAMPION_IDS = Object.keys(CHAMPIONS);
@@ -449,11 +500,11 @@ export const CHAMPION_IDS = Object.keys(CHAMPIONS);
 export const ROLE_ORDER = ['top', 'jungle', 'mid', 'bot', 'support'];
 /** Champions bots may pick for each role — v2: a RANDOM available one (variety), else any free champion. */
 export const ROLE_PICKS = {
-  top: ['stack', 'guard', 'dev'],
-  jungle: ['zero', 'courier', 'sprint', 'dev'],
+  top: ['stack', 'guard', 'dev', 'oncall'],
+  jungle: ['zero', 'courier', 'sprint', 'dev', 'oncall'],
   mid: ['pixel', 'model', 'cleaner', 'lint'],
   bot: ['tester', 'appdev', 'cache', 'pixel'],
-  support: ['ops', 'embedded', 'hr', 'guard', 'model'],
+  support: ['ops', 'embedded', 'hr', 'guard', 'model', 'barista'],
 };
 
 /** v4 auto-aim policy (shared by client + server): does a no-direction cast of this skill aim at an

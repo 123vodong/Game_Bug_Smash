@@ -81,6 +81,34 @@ const PROVOKED_MS = 4000;             // a human who hit this bot this recently 
 const BOT_CHAT_GAP_MS = [2800, 5200];
 const IDLE_CHAT_EVERY_MS = [45000, 90000];
 // v3 summoner spells
+// ── Bot skill (adaptive) ──
+// Bots follow the humans' hidden skill rating (MMR, server/game/Ranking.js): new or struggling players
+// get the gentle "easy" bots (the EP-05 newcomer grace + mercy rule); players who keep beating bots
+// climb in MMR and meet sharper ones. The room picks the level at match start (setSkill) from the
+// humans' average MMR; bots-only matches play "normal". Easy = the constants above, unchanged.
+export const BOT_SKILL = {
+  easy: {
+    name: 'Easy', think: THINK_MS, aim: [0.55, 0.9], aggro: [0.5, 0.85],
+    retreatHp: RETREAT_HP, retreatOut: RETREAT_HP_OUTNUMBERED, fightMinHp: FIGHT_MIN_HP, danger: DANGER_RATIO,
+    graceMs: HUMAN_GRACE_MS, gankGraceMs: HUMAN_GANK_GRACE_MS, mercyDeaths: HUMAN_MERCY_DEATHS, mercyMs: HUMAN_MERCY_WINDOW_MS,
+    readyMul: 1.8, shopAny: false,
+  },
+  normal: {
+    name: 'Normal', think: [200, 300], aim: [0.7, 0.95], aggro: [0.6, 0.9],
+    retreatHp: 0.18, retreatOut: 0.38, fightMinHp: 0.28, danger: 1.8,
+    graceMs: 2 * 60000, gankGraceMs: 2 * 60000, mercyDeaths: 3, mercyMs: 120000,
+    readyMul: 2.2, shopAny: true,
+  },
+  hard: {
+    name: 'Hard', think: [150, 230], aim: [0.85, 1], aggro: [0.7, 0.95],
+    retreatHp: 0.15, retreatOut: 0.34, fightMinHp: 0.24, danger: 2.0,
+    graceMs: 0, gankGraceMs: 0, mercyDeaths: Infinity, mercyMs: 0,
+    readyMul: 2.6, shopAny: true,
+  },
+};
+export const BOT_SKILL_MMR = { normal: 1050, hard: 1200 };   // average human MMR from which bots step up
+export function botSkillFor(avgMmr) { return avgMmr >= BOT_SKILL_MMR.hard ? 'hard' : avgMmr >= BOT_SKILL_MMR.normal ? 'normal' : 'easy'; }
+
 const SPELL_FLASH_ESCAPE_HP = 0.22;   // Flash home when chased this low
 const SPELL_GHOST_ESCAPE_HP = 0.45;
 const SPELL_HEAL_HP = 0.28;           // Coffee Break self below this (in danger) …
@@ -104,6 +132,13 @@ export class MobaBots {
     this._idleChatAt = Date.now() + rand(...IDLE_CHAT_EVERY_MS);
     this._laneTowers = this._precomputeLaneTowers();
     this._humanDeaths = new Map(); // EP-05: human sid -> recent death times (mercy rule)
+    this.setSkill('normal');
+  }
+
+  /** Bot skill level for this match ('easy' | 'normal' | 'hard'); set before the brains are added. */
+  setSkill(level) {
+    this.skillLevel = BOT_SKILL[level] ? level : 'normal';
+    this.k = BOT_SKILL[this.skillLevel];
   }
 
   _newPlan() { return { epic: null, epicSince: 0, epicCooldownUntil: 0, defend: null, group: null, groupUntil: 0 }; }
@@ -121,10 +156,10 @@ export class MobaBots {
     }
     const b = {
       sid, role, lane: ROLE_LANE[role] || 'mid', silent,
-      skill: rand(0.55, 0.9),      // reaction + aim quality
-      aggro: rand(0.5, 0.85),      // appetite for trades (EP-05: was 0.35–0.75)
+      skill: rand(...this.k.aim),     // reaction + aim quality
+      aggro: rand(...this.k.aggro),   // appetite for trades (EP-05: was 0.35–0.75)
       side: Math.random() < 0.5 ? -1 : 1,
-      thinkMs: rand(...THINK_MS),
+      thinkMs: rand(...this.k.think),
       nextThinkAt: Date.now() + rand(100, 600),
       skills, lastHp: ch ? ch.hp : 0, hurtAt: 0,
       gankId: '', gankUntil: 0, nextGankAt: Date.now() + rand(...FIRST_GANK_MS),
@@ -360,8 +395,8 @@ export class MobaBots {
   }
 
   _shouldRetreat(b, ch, ctx) {
-    if (ctx.hp < RETREAT_HP) return true;
-    if (ctx.hp < RETREAT_HP_OUTNUMBERED && ctx.enemyChamps.some((e) => e.d < 900)) {
+    if (ctx.hp < this.k.retreatHp) return true;
+    if (ctx.hp < this.k.retreatOut && ctx.enemyChamps.some((e) => e.d < 900)) {
       const p = this._localPowers(ch.team, ch.x, ch.y, 1000);
       if (p.enemy > p.ally * 0.85) return true;
     }
@@ -369,7 +404,7 @@ export class MobaBots {
   }
 
   _pickFight(b, ch, ctx, now) {
-    if (ctx.hp < FIGHT_MIN_HP) return null;
+    if (ctx.hp < this.k.fightMinHp) return null;
     const reach = Math.max(ch.range + 320, 760);
     const alliesNear = ctx.allyChamps.filter((a) => a.d < 900).length;
     let best = null, bestScore = -Infinity;
@@ -783,7 +818,7 @@ export class MobaBots {
     if (!near.length) return null;
     const p = this._localPowers(ch.team, ch.x, ch.y, 1200);
     const ally = p.ally + (this._ownTowerAt(ch.x, ch.y, ch.team, -40) ? TOWER_POWER : 0);
-    return p.enemy > ally * DANGER_RATIO ? { near, ratio: p.enemy / Math.max(0.1, ally) } : null;
+    return p.enemy > ally * this.k.danger ? { near, ratio: p.enemy / Math.max(0.1, ally) } : null;
   }
 
   _backOff(b, ch, ctx, danger, now) {
@@ -838,13 +873,20 @@ export class MobaBots {
     }
   }
 
+  /**
+   * Next item of the champion's build. Easy bots wait for the next one in order (gold piles up while
+   * they save for a 3000-gold core item); normal / hard ones buy the first build item they can afford.
+   */
   _nextItem(ch) {
+    let first = null;
     for (const id of ch.def.build || []) {
       if (!ITEMS[id] || ch.items.includes(id)) continue;
       if (buyBlocker(ch.items, id)) continue;
-      return id;
+      if (!this.k.shopAny) return id;
+      if (!first) first = id;
+      if (ch.gold >= ITEMS[id].cost) return id;
     }
-    return null;
+    return first;
   }
 
   _shop(b, ch) {
@@ -960,7 +1002,7 @@ export class MobaBots {
     // Outgunned around the wave? Farm under our own tower instead.
     const lp = this._localPowers(team, pos.x, pos.y, 1200);
     const allyHere = lp.ally + (dist(ch, pos) > 1200 ? this._power(ch) : 0);
-    const unsafe = lp.enemy > allyHere * DANGER_RATIO;
+    const unsafe = lp.enemy > allyHere * this.k.danger;
     if (unsafe && targetP > ownP - 80) {
       targetP = Math.max(150, ownP - 80);
       pos = path.pointAt(targetP);
@@ -992,8 +1034,33 @@ export class MobaBots {
         return;
       }
     }
+    // 2b) A minion is nearly dead: be in range now, so the last hit isn't late (bots used to wait at
+    //     the back of the wave and walk in after an allied minion had already taken it).
+    if (!unsafe) {
+      const soon = this._soonLastHit(ch, ctx, enemyTower, tanked);
+      if (soon) {
+        const d = dist(ch, soon), want = ch.range - 30;
+        if (d > want + 20) {
+          const k = (d - want) / Math.max(1, d);
+          this._move(b, ch, ch.x + (soon.x - ch.x) * k, ch.y + (soon.y - ch.y) * k);
+        } else if (ch.order && ch.order.type === 'move') this._order(b, { type: 'stop' });
+        return;
+      }
+    }
     // 3) Hold position behind the wave.
     this._move(b, ch, pos.x + b.side * 40, pos.y - b.side * 40);
+  }
+
+  /** Enemy minion that will be last-hittable soon (HP within this skill level's reach of one auto). */
+  _soonLastHit(ch, ctx, enemyTower, tanked) {
+    let best = null;
+    for (const { e, d } of ctx.enemyMinions) {
+      if (d > ch.range + 420) continue;
+      if (enemyTower && !tanked && dist(e, enemyTower) <= TOWER.range + 40) continue;
+      if (e.hp > ch.ad * this.k.readyMul) continue;
+      if (!best || e.hp < best.hp) best = e;
+    }
+    return best;
   }
 
   /** Enemy minion we can kill with one auto right now. */
@@ -1029,7 +1096,7 @@ export class MobaBots {
         if (e.dead || e.team === ch.team || !room.canSee(ch.team, e, now)) continue;
         const d = dist(ch, e);
         if (d > 3200 || this._enemyTowerAt(e.x, e.y, ch.team, 150)) continue;
-        if (!e.isBot && room.matchMs(now) < HUMAN_GANK_GRACE_MS) continue; // let new humans learn their lane
+        if (!e.isBot && room.matchMs(now) < this.k.gankGraceMs) continue; // let new humans learn their lane
         if (this._spareHuman(ch, e, now)) continue;
         const allyNear = [...room.champs.values()].some((a) => a.team === ch.team && !a.dead && a !== ch && dist(a, e) < 1100);
         const score = (1 - hpPct(e)) + (allyNear ? 0.5 : 0) - d / 6000;
@@ -1290,8 +1357,8 @@ export class MobaBots {
   }
 
   /**
-   * EP-05: leave this HUMAN alone? Before HUMAN_GRACE_MS, or after HUMAN_MERCY_DEATHS deaths in
-   * HUMAN_MERCY_WINDOW_MS — unless they provoked this bot (hit it within PROVOKED_MS) or stand
+   * EP-05: leave this HUMAN alone? Before the skill level's graceMs, or after its mercyDeaths deaths in
+   * mercyMs (easy: 5:00 · 2 deaths in 3:00; hard: never) — unless they provoked this bot (hit it within PROVOKED_MS) or stand
    * under our tower. Bot-held seats (disconnected humans) are fair game.
    */
   _spareHuman(ch, e, now) {
@@ -1299,12 +1366,12 @@ export class MobaBots {
     const hit = ch.damagers.get(e.id);
     if (hit && now - hit < PROVOKED_MS) return false;
     if (this._ownTowerAt(e.x, e.y, ch.team, 0)) return false;
-    if (this.room.matchMs(now) < HUMAN_GRACE_MS) return true;
+    if (this.room.matchMs(now) < this.k.graceMs) return true;
     const log = this._humanDeaths.get(e.id);
     if (!log) return false;
     let n = 0;
-    for (let i = 0; i < log.length; i++) if (now - log[i] < HUMAN_MERCY_WINDOW_MS) n++;
-    return n >= HUMAN_MERCY_DEATHS;
+    for (let i = 0; i < log.length; i++) if (now - log[i] < this.k.mercyMs) n++;
+    return n >= this.k.mercyDeaths;
   }
 
   onChampDeath(victim, killer) {

@@ -223,6 +223,26 @@ hat('monocle', (ctx) => {                                    // Lint — slicked
   ctx.beginPath(); ctx.moveTo(26.8, 23.6); ctx.quadraticCurveTo(29, 29, 27, 33); ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 0.9; ctx.stroke();
   dot(ctx, 16, 20.6, 1.4, '#2d3436', null);
 });
+// ── 2026-11-25 "Night Shift" hires ──
+hat('flatcap', (ctx) => {                                    // Brew — barista flat cap
+  ctx.beginPath(); ctx.moveTo(9.6, 13); ctx.quadraticCurveTo(10, 5.2, 20, 4.8); ctx.quadraticCurveTo(29, 5, 31.6, 10.6);
+  ctx.lineTo(35.5, 12.6); ctx.lineTo(30, 13.6); ctx.closePath(); paint(ctx, '#6f4e37');
+  line(ctx, 12, 9.4, 28, 8, '#5a3d2b', 0.9);
+  rr(ctx, 9.6, 11.6, 21, 2.4, 1); paint(ctx, '#4a3222', null);
+  dot(ctx, 20, 5.4, 1.2, '#f5e6d3', null);
+});
+hat('sleepmask', (ctx) => {                                  // Pager — sleep mask pushed up + bed hair
+  ctx.beginPath(); ctx.moveTo(10, 12);
+  for (const [x, y] of [[10.6, 6], [13, 8], [14.5, 3], [17.5, 7], [20, 2.4], [23, 6.6], [25.6, 3.4], [27.4, 7.6], [30, 6], [30.4, 12]]) ctx.lineTo(x, y);
+  ctx.closePath(); paint(ctx, '#3b2f2f');
+  rr(ctx, 9.6, 10.4, 21, 2.6, 1.2); paint(ctx, '#ff5252', null);
+  rr(ctx, 15, 7.2, 13.6, 6.2, 3); paint(ctx, '#2b2d42', INK, 1);
+  ctx.strokeStyle = '#ff8a80'; ctx.lineWidth = 0.9;
+  for (const x of [18.6, 25]) { ctx.beginPath(); ctx.arc(x, 9.4, 1.8, 0.2, Math.PI - 0.2); ctx.stroke(); }
+  ctx.fillStyle = '#9fb3c8'; ctx.textAlign = 'left';
+  ctx.font = 'bold 5px Arial'; ctx.fillText('z', 31.5, 6);
+  ctx.font = 'bold 4px Arial'; ctx.fillText('z', 34.5, 3.4);
+});
 
 // Garments: 26×44 canvas, origin (0.5, 0.03) = the neck; torso runs straight down to the hip (y ≈ 34).
 const GAR = { w: 26, h: 44, ox: 0.5, oy: 0.03 };
@@ -362,6 +382,17 @@ outfit('tshirt', (ctx) => {
   rr(ctx, 10.9, 10.8, 4.2, 6.8, 0.8); paint(ctx, '#7ec8ff', null);
   dot(ctx, 13, 18.6, 0.55, '#ffffff', null);
 });
+outfit('barista', (ctx) => {                                 // Brew — white shirt + coffee-brown apron
+  torso(ctx, '#f5f1ea', { bottom: 33 });
+  poly(ctx, [9.4, 1.2, 13, 5, 8.8, 5.8]); paint(ctx, '#e3dccf', INK, 0.8);
+  poly(ctx, [16.6, 1.2, 13, 5, 17.2, 5.8]); paint(ctx, '#e3dccf', INK, 0.8);
+  line(ctx, 9, 2, 9.6, 9, '#4a3222', 1.1); line(ctx, 17, 2, 16.4, 9, '#4a3222', 1.1);
+  ctx.beginPath(); ctx.moveTo(8, 9); ctx.lineTo(18, 9); ctx.lineTo(19.6, 41.5); ctx.lineTo(6.4, 41.5); ctx.closePath(); paint(ctx, '#6f4e37', INK, 1.1);
+  rr(ctx, 9.4, 22, 7.2, 6.4, 1.4); paint(ctx, '#5a3d2b', INK, 0.8);
+  rr(ctx, 11, 12.6, 4, 4.4, 0.8); paint(ctx, '#f5e6d3', null);                 // cup logo
+  ctx.beginPath(); ctx.arc(15.2, 14.8, 1.2, -Math.PI / 2, Math.PI / 2); ctx.strokeStyle = '#f5e6d3'; ctx.lineWidth = 0.8; ctx.stroke();
+});
+outfit('hoodie-oncall', outfitHoodie(0x2b2d42, 0xff5252));   // Pager — 3 a.m. hoodie
 
 // Props: origin = the grip; drawn pointing UP (rotation 0), the pose table rotates them.
 const prop = (name, w, h, ox, oy, draw) => spec(`look-prop-${name}`, w, h, ox, oy, draw, { res: 3 });
@@ -477,6 +508,24 @@ prop('redpen', 8, 30, 0.5, 0.8, (ctx) => {                   // Lint — the red
   rr(ctx, 1.6, 5, 4.8, 5, 1); paint(ctx, '#d63031', null);
   line(ctx, 6.4, 9, 6.4, 18, '#9aa7b4', 1.1);
 });
+prop('mug', 16, 22, 0.5, 0.8, (ctx) => {                     // Brew — steaming coffee mug
+  ctx.globalAlpha = 0.75; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.9;
+  for (const x of [5, 9]) { ctx.beginPath(); ctx.moveTo(x, 7); ctx.quadraticCurveTo(x - 2, 4.5, x, 3); ctx.quadraticCurveTo(x + 2, 1.5, x, 0.4); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  rr(ctx, 1.4, 8, 11, 12, 2); paint(ctx, '#ffffff', INK, 1.1);
+  rr(ctx, 1.4, 8, 11, 3, 1.2); paint(ctx, '#6f4e37', null);
+  for (const [w, c] of [[1.8, INK], [0.8, '#ffffff']]) { ctx.beginPath(); ctx.arc(12.6, 13.6, 2.8, -Math.PI / 2, Math.PI / 2); ctx.strokeStyle = c; ctx.lineWidth = w; ctx.stroke(); }
+  ctx.font = 'bold 5px Arial'; ctx.fillStyle = '#c8864a'; ctx.textAlign = 'center'; ctx.fillText('♥', 7, 17.4);
+});
+prop('pager', 12, 18, 0.5, 0.75, (ctx) => {                  // Pager — the beeper
+  ctx.shadowColor = '#ff5252'; ctx.shadowBlur = 4;
+  rr(ctx, 1, 2, 10, 15, 2); paint(ctx, '#222222', INK, 1); ctx.shadowBlur = 0;
+  rr(ctx, 2.4, 4, 7.2, 4.8, 0.8); paint(ctx, '#9be37a', null);
+  ctx.fillStyle = '#1e3a12'; ctx.font = 'bold 3.4px monospace'; ctx.textAlign = 'center'; ctx.fillText('P1!', 6, 7.8);
+  dot(ctx, 8.6, 12.4, 1.3, '#ff5252', null);
+  for (const x of [3.6, 6]) { rr(ctx, x - 1, 11.4, 2, 2, 0.5); paint(ctx, '#555555', null); }
+  rr(ctx, 4, 0.4, 4, 2, 0.6); paint(ctx, '#444444', INK, 0.6);
+});
 
 // Rush's scooter (back layer): deck + stem + bars; wheels are separate images so they can spin.
 spec('look-scooter', 52, 50, 0.5, 46 / 50, (ctx) => {
@@ -502,7 +551,7 @@ spec('look-wheel', 13, 13, 0.5, 0.5, (ctx) => {
 // ── champion → costume pieces ──
 const HAT_KEY = { mask: 'mask', glasses: 'glasses' };
 function outfitKey(champId, outfitName) {
-  if (outfitName === 'hoodie') return champId === 'zero' ? 'look-outfit-hoodie-zero' : 'look-outfit-hoodie-dev';
+  if (outfitName === 'hoodie') return champId === 'zero' ? 'look-outfit-hoodie-zero' : champId === 'oncall' ? 'look-outfit-hoodie-oncall' : 'look-outfit-hoodie-dev';
   return `look-outfit-${outfitName}`;
 }
 /** The costume keys for a champion (missing textures are simply skipped by the views). */
@@ -668,6 +717,7 @@ export const PROJ_STYLE = {
   'proj-css': { spin: 0, upright: false }, 'proj-ticket': { spin: 0, upright: false },
   'proj-signal': { spin: 0, upright: false }, 'proj-pipe': { spin: 0, upright: false },
   'proj-tree': { spin: 0, upright: true }, 'proj-missile': { spin: 0, upright: false },
+  'proj-coffee': { spin: 0, upright: false }, 'proj-ping': { spin: 0, upright: false },
 };
 const proj = (key, w, h, draw) => spec(key, w, h, 0.5, 0.5, draw, { res: 2 });
 proj('proj-phone', 32, 18, (ctx) => {
@@ -750,6 +800,22 @@ proj('proj-bubble', 30, 24, (ctx) => {                       // Hira: feedback s
   poly(ctx, [8, 17, 6, 23, 13, 17.4]); paint(ctx, '#ffffff', '#f7a072', 1.4);
   for (const x of [9, 15, 21]) dot(ctx, x, 9.5, 1.8, '#f7a072', null);
 });
+// ── 2026-11-25 projectiles ──
+proj('proj-coffee', 34, 20, (ctx) => {                       // Brew: hot pour
+  ctx.globalAlpha = 0.45; line(ctx, 0.5, 10, 8, 10, '#c8864a', 2.2); ctx.globalAlpha = 1;
+  ctx.shadowColor = '#ffb347'; ctx.shadowBlur = 6;
+  ctx.beginPath(); ctx.moveTo(6, 10); ctx.quadraticCurveTo(16, 2, 30, 6.5); ctx.quadraticCurveTo(34, 10, 30, 13.5); ctx.quadraticCurveTo(16, 18, 6, 10); ctx.closePath();
+  paint(ctx, '#6f4e37', INK, 1); ctx.shadowBlur = 0;
+  ell(ctx, 24, 8.6, 4.6, 1.6); ctx.fillStyle = 'rgba(245,230,211,0.8)'; ctx.fill();
+  for (const [x, y, r] of [[10, 4.4, 1.3], [14, 16, 1.1], [31.5, 4, 1]]) dot(ctx, x, y, r, '#a0704f', null);
+});
+proj('proj-ping', 30, 30, (ctx) => {                         // Pager: ping
+  ctx.shadowColor = '#ff5252'; ctx.shadowBlur = 6;
+  dot(ctx, 6, 15, 3.2, '#ffe0e0', null);
+  ctx.strokeStyle = '#ff6b6b';
+  for (let i = 0; i < 3; i++) { ctx.lineWidth = 2.6 - i * 0.4; ctx.beginPath(); ctx.arc(6, 15, 7 + i * 6.5, -0.85, 0.85); ctx.stroke(); }
+  ctx.shadowBlur = 0;
+});
 
 const PROJ_KEYS = {
   pixel: { q: 'proj-css' },
@@ -763,6 +829,8 @@ const PROJ_KEYS = {
   appdev: { q: 'proj-phone', r: 'proj-phone' },
   cache: { q: 'proj-floppy', r: 'proj-floppy' },
   hr: { q: 'proj-bubble' },
+  barista: { q: 'proj-coffee' },
+  oncall: { q: 'proj-ping' },
 };
 
 // ═════════════════════════ WALLS (office furniture) ═════════════════════════

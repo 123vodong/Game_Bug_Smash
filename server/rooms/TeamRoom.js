@@ -60,7 +60,7 @@ import { ITEMS, isItemId, itemStats, buyBlocker } from '../../shared/moba/items.
 import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, isSpellId, validSpellPair } from '../../shared/moba/spells.js';
 import { TeamState, TeamChamp, TeamUnit, TeamStructure, TeamScore } from '../game/moba/schema.js';
 import { SkillEngine, MIN_AIM_DIST } from '../game/moba/SkillEngine.js';
-import { MobaBots } from '../game/moba/MobaBots.js';
+import { MobaBots, BOT_SKILL, botSkillFor } from '../game/moba/MobaBots.js';
 import { LANE_IDS, otherTeam, dist, minionPath, bushAtFast } from '../game/moba/geo.js';
 import { Mover, freeSpot, resolveWalls, nearWall } from '../game/moba/Mover.js';
 import {
@@ -845,6 +845,22 @@ export class TeamRoom extends Room {
     console.log(`[TeamRoom] loading: ${[...this.slots.values()].map((sl) => `${sl.team[0]}:${sl.s.champ}`).join(' ')}`);
   }
 
+  /**
+   * Bot skill for this match: the humans' average hidden skill rating (MMR) → easy / normal / hard
+   * (MobaBots.BOT_SKILL). New players start at MMR_START → easy bots; beating bots raises MMR → sharper
+   * bots. Bots-only matches: normal. `_botSkillOverride` (harness / debug) wins when set.
+   */
+  _botSkillLevel() {
+    if (this._botSkillOverride) return this._botSkillOverride;
+    let sum = 0, n = 0;
+    for (const sl of this.slots.values()) {
+      if (sl.isBot) continue;
+      sum += Ranking.skill(this._pubs.get(sl.id) || '');
+      n++;
+    }
+    return n ? botSkillFor(sum / n) : 'normal';
+  }
+
   /** Back-compat name (debug / harness): from the lobby this starts champion select. */
   _startMatch() { if (this.state.phase === 'lobby' || this.state.phase === 'room') this._startSelect(); }
 
@@ -856,6 +872,7 @@ export class TeamRoom extends Room {
     st.phase = 'playing';
     st.startedAt = now;
     st.loadingEndsAt = 0;
+    this.bots.setSkill(this._botSkillLevel());           // before the brains are added (aim / think rolls)
     for (const sl of this.slots.values()) {
       const ch = this._addChamp(sl);
       if (sl.isBot) this.bots.add(sl.id, ch.role);
@@ -872,6 +889,9 @@ export class TeamRoom extends Room {
     st.epicGoldenAt = now + EPICS.golden.firstSpawnMs;
     st.epicDeadlineAt = now + EPICS.deadline.firstSpawnMs;
     this._announce({ title: '🏁 SPRINT STARTED', sub: 'Push the bug waves · destroy the enemy Production Server', color: '#ffd23f', big: true });
+    let humans = 0;
+    for (const sl of this.slots.values()) if (!sl.isBot) humans++;
+    if (humans && this.bots.count) this._feed({ text: `🤖 AI coworkers: ${BOT_SKILL[this.bots.skillLevel].name} (they adapt to how well you play)`, color: '#9fd0ff' });
     this._feed({ text: `⚔️ ${teamLabel('blue')} vs ${teamLabel('red')} — first bug waves ship at ${fmtTime(WAVE_FIRST_MS)}`, color: '#ffd23f' });
     this.bots.onMatchStart();
     this._updateMetadata();
