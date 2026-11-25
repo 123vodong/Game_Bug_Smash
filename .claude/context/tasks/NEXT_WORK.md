@@ -33,7 +33,8 @@
 | `chore/drop-donation` | `003318c` | origin/main | Donation button, `DonatePanel.js` and `assets/donate/` removed. |
 | `feat/5v5-more` | `450824e` | origin/main | Adaptive bots; 6 items + 5-column shop; 2 champions (Brew, Pager); balance notes. |
 | `feat/story-2` | latest | **feat/5v5-more** (stacked) | Story Mode 2.0: design doc, engine "worlds", playable floor 1 prototype, STORY card + free pick. |
-| `feat/story-mode` | `4136a43` | older main | The superseded side-view Story Mode. Parts bin only. |
+
+`feat/story-mode` (the side-view Story Mode, never pushed) was **deleted on 2026-11-25** at the user's request. Its last commit `4136a43` stays recoverable for about 30 days (`git branch feat/story-mode 4136a43`).
 
 **Push order for the user:** `chore/drop-donation` (independent), then `feat/5v5-more`, then `feat/story-2` (its PR shows the 5v5 commits until `feat/5v5-more` is merged).
 
@@ -160,18 +161,16 @@ The user answered: **free pick, one map per floor, add a new story card.**
    - switching champion at a break room (design §3); today you switch between runs (CHAMPION on FLOOR CLEARED);
    - `story2_floor_check.mjs`: rooms reachable with the right keys, doors not overlapping walls;
    - a touch pass (TALK button on phones);
-   - floor music.
+   - floor music. The deleted side-view branch had a small procedural music loop (`storyMusic` in `src/core/AudioManager.js`); while `4136a43` is recoverable, `git show 4136a43:src/core/AudioManager.js` shows it.
 2. **Story M3–M5:** floors 2–5 per the design doc (chasers, secret doors, the PM's door shuffles, the THE DEADLINE boss, the ending).
 3. **Housekeeping:**
-   - `feat/story-mode`'s `ShopCloset` lays items out in rows of 5 from `SHOP_ORDER`. If that branch is ever merged after `feat/5v5-more`, it needs the 7-row layout. Better: delete the branch once M2 lands.
    - Possible 5v5 follow-ups: last-hit prediction for the bots; a bot-level choice for custom-room hosts.
 
 ## Decisions for the user
 
 1. Push and merge the three branches in the order above.
-2. Still open (design doc §6): delete the side-view Story Mode on `feat/story-mode`, or keep it as a bonus "Retro" mode?
 
-Answered on 2026-11-25: free champion pick · one map per floor · a new STORY card.
+Answered on 2026-11-25: free champion pick · one map per floor · a new STORY card · delete the side-view Story Mode (done).
 
 ## How to report back
 

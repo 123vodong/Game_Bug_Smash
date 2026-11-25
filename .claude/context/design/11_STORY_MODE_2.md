@@ -1,6 +1,6 @@
 # 11 · Story Mode 2.0: "Night Shift" on the 5v5 engine
 
-**Status:** design, 2026-11-25; M1 prototype built, menu entry and free pick built (2026-11-25). Replaces the side-view Story Mode on `feat/story-mode` (kept only as a parts bin).
+**Status:** design, 2026-11-25; M1 prototype built, menu entry and free pick built (2026-11-25). Replaces the side-view Story Mode, which was deleted on 2026-11-25 at the user's request (branch `feat/story-mode`, last commit `4136a43`).
 **Decided by the user (2026-11-25):** free pick of all 18 champions · one 10–15 minute map per floor · a new STORY card on the main menu (the single-player PLAY button stays). See §6.
 **Request (2026-11-24):** stop following the side-view platformer model. Build Story Mode on the 5v5 game: a map like the 5v5 map but more spacious, with more doors. Smash bugs, adventure, explore, and put the 5v5 champions into the story.
 
@@ -85,7 +85,7 @@ A top-down action adventure, offline and single player, played with the 5v5 cont
 - Keycards, gold piles, coffee (heal), AI power-ups (temporary buffs, reusing the Personal Mode tiers), lore notes (Rubber Duck lines).
 
 **Dialogue:**
-- Port `StoryDialog` from `feat/story-mode`, using champion portraits from `drawChampionPortrait`.
+- Built into StoryWorldScene: a typewriter dialogue box with the Rubber Duck and champion portraits (`drawChampionPortrait`); a conversation you start cuts in.
 - Floor scripts are data, as beats: `{ who, line, act? }`, with acts `join`, `give`, `duel`, `open`.
 
 ## 4. Architecture: reuse first, 5v5 untouched
@@ -152,6 +152,6 @@ Answered on 2026-11-25:
 - **Champion choice:** free pick from all 18. No unlocks.
 - **Floor length:** one 10–15 minute map per floor, with break-room checkpoints.
 - **Menu:** a new STORY card. The single-player PLAY button keeps the campaign.
+- **The side-view Story Mode:** deleted, no "Retro" mode. The `feat/story-mode` branch is gone.
 
-Still open:
-1. Delete the side-view Story Mode (`feat/story-mode`) for good once M2 lands, or keep it as a bonus "Retro" mode?
+Nothing is open.
