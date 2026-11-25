@@ -40,9 +40,9 @@
 // EP-11 join option `hat`. EP-21 first-buy nudge, AudioManager team hooks, short offline timers.
 import { CHAMPIONS, isChampionId, autoAimsAtEnemy, autoAimReach } from '../../shared/moba/champions.js';
 import * as R from '../../shared/moba/rules.js';
-import { MAP_W, MAP_H, FOUNTAIN, CHAMP_RADIUS, MINION_RADIUS, clampToMap, distToSeg, bushAt } from '../../shared/moba/map.js';
-import { findPath, clipMove, nearestFree, pushOut, isBlocked, segmentClear } from '../../shared/moba/nav.js';
+import { CHAMP_RADIUS, MINION_RADIUS, distToSeg } from '../../shared/moba/map.js';
 import { SPELLS, DEFAULT_SPELLS, validSpellPair } from '../../shared/moba/spells.js';
+import { WORLD_5V5 } from '../entities/moba/world.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { getPid, takeover, joinError, saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
@@ -105,7 +105,7 @@ function serverUrl() {
 }
 
 export default class TeamModeScene extends Phaser.Scene {
-  constructor() { super('TeamModeScene'); }
+  constructor(key = 'TeamModeScene') { super(key); }   // Story Mode 2.0 subclasses pass their own key
 
   init(data) { this._data = data || {}; }
 
@@ -121,6 +121,8 @@ export default class TeamModeScene extends Phaser.Scene {
     // Phaser reuses this instance across visits — reset every per-visit field.
     const d = this._data || {};
     const params = new URLSearchParams(window.location.search);
+    // 2026-11-25 (Story Mode 2.0): the floor this scene plays on (size, fountains, bushes, nav).
+    this.world = this._makeWorld(d) || WORLD_5V5;
     this._visit = (this._visit || 0) + 1;
     this._shuttingDown = false;
     this.room = null; this.client = null; this._sim = null;
@@ -179,7 +181,7 @@ export default class TeamModeScene extends Phaser.Scene {
     this._setupCameras();
     ensureMobaTextures(this);
     try { LOOKS?.ensureMobaLooks?.(this); } catch (e) { console.warn('[TeamMode] ensureMobaLooks failed:', e?.message || e); }
-    this.map = new MobaMap(this);
+    this.map = this._makeMap(d);
     this.fx = new MobaFx(this, (id) => this._aimOf(id));
     this._aimG = this.add.graphics().setDepth(D.ground + 0.8);
     this._targetMark = this.add.ellipse(0, 0, 96, 34).setStrokeStyle(3, 0xff4a4a, 0.95).setDepth(D.ground + 0.9).setVisible(false);
@@ -188,7 +190,7 @@ export default class TeamModeScene extends Phaser.Scene {
       fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffd23f', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5, 1).setDepth(D.numbers).setVisible(false);
     this.hud = new MobaHud(this, {
-      touch: this._isTouch, map: this.map,
+      touch: this._isTouch, map: this.map, world: this.world,
       onSkill: (slot, viaButton) => this._tryCast(slot, viaButton),
       onSpell: (slot, viaButton) => this._trySpell(slot, viaButton),
       onInfo: () => this._toggleInfo(),
@@ -218,12 +220,13 @@ export default class TeamModeScene extends Phaser.Scene {
     // Review fix 3: a phone resuming from sleep must not look like a dead link to the watchdog.
     this._onVis = () => { if (document.visibilityState === 'visible') { this._lastRxAt = Date.now(); this._stallAt = 0; } };
     document.addEventListener('visibilitychange', this._onVis);
-    this.cameras.main.centerOn(FOUNTAIN.blue.x, FOUNTAIN.blue.y);
+    this.cameras.main.centerOn(this.world.fountain.blue.x, this.world.fountain.blue.y);
 
     // Only data decides (main.js reads the deep link once) — a later PLAY AGAIN in
     // the same page must not stay offline. { room } = handed over by TeamSelectScene.
     this.cameras.main.setVisible(false); // no world until the phase is 'playing'
-    if (d.room) this._adoptRoom(d.room, this._visit, { pending: d.pending });
+    if (this._startWorld(d)) { /* a subclass (Story Mode) runs its own world */ }
+    else if (d.room) this._adoptRoom(d.room, this._visit, { pending: d.pending });
     else if (d.offline) this._startOffline(d);
     else this._connect();
   }
@@ -231,7 +234,7 @@ export default class TeamModeScene extends Phaser.Scene {
   // ───────────────────────── cameras ─────────────────────────
   _setupCameras() {
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, MAP_W, MAP_H);
+    cam.setBounds(0, 0, this.world.w, this.world.h);
     this._zoom = this._isTouch ? 0.72 : 0.8;
     cam.setZoom(this._zoom);
     this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
@@ -497,6 +500,14 @@ export default class TeamModeScene extends Phaser.Scene {
     this.hud.showVote(null);
     this._setGray(false); this._meDead = false;
   }
+
+  // ── Story Mode 2.0 hooks (2026-11-25): 5v5 defaults; StoryWorldScene overrides them ──
+  /** The floor: size, fountains, bushes, nav (src/entities/moba/world.js). */
+  _makeWorld(d) { return WORLD_5V5; }
+  /** The static map renderer (MobaMap API: update, rustle, setBushFocus, setQuality, drawMinimap). */
+  _makeMap(d) { return new MobaMap(this); }
+  /** Start a custom world instead of online / offline 5v5 → true when handled. */
+  _startWorld(d) { return false; }
 
   _startOffline(d = {}) {
     this.hud.closeModal();
@@ -790,8 +801,8 @@ export default class TeamModeScene extends Phaser.Scene {
       if (!p.middleButtonDown?.()) this._midDrag = null;
       else {
         const z = this.cameras.main.zoom || 1;
-        this._camFreeX = Math.max(0, Math.min(MAP_W, this._midDrag.cx - (p.x - this._midDrag.x) / z));
-        this._camFreeY = Math.max(0, Math.min(MAP_H, this._midDrag.cy - (p.y - this._midDrag.y) / z));
+        this._camFreeX = Math.max(0, Math.min(this.world.w, this._midDrag.cx - (p.x - this._midDrag.x) / z));
+        this._camFreeY = Math.max(0, Math.min(this.world.h, this._midDrag.cy - (p.y - this._midDrag.y) / z));
         return;
       }
     }
@@ -881,8 +892,8 @@ export default class TeamModeScene extends Phaser.Scene {
     const vy = p.y < EDGE_PAN_PX ? -1 : (p.y > H - EDGE_PAN_PX ? 1 : 0);
     if (!vx && !vy) return;
     const z = this.cameras.main.zoom || 1, step = (EDGE_PAN_SPEED / z) * dt; // dt in seconds (like approach())
-    this._camFreeX = Math.max(0, Math.min(MAP_W, this._camFreeX + vx * step));
-    this._camFreeY = Math.max(0, Math.min(MAP_H, this._camFreeY + vy * step));
+    this._camFreeX = Math.max(0, Math.min(this.world.w, this._camFreeX + vx * step));
+    this._camFreeY = Math.max(0, Math.min(this.world.h, this._camFreeY + vy * step));
   }
 
   _onEscape() {
@@ -935,7 +946,7 @@ export default class TeamModeScene extends Phaser.Scene {
   _canShop(me) {
     if (!me || !this.myTeam) return false;
     if (me.dead) return true;
-    const p = this._pred || me, f = FOUNTAIN[this.myTeam];
+    const p = this._pred || me, f = this.world.fountain[this.myTeam];
     return Math.hypot(p.x - f.x, p.y - f.y) <= R.FOUNTAIN_RADIUS;
   }
 
@@ -976,7 +987,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const c = this._coach;
     if (!c || this._phase !== 'playing' || this._ended || this._reconn) return;
     { // time out of base (tracked every tick, not just when a tip is due)
-      const f = FOUNTAIN[this.myTeam], p = this._pred || me;
+      const f = this.world.fountain[this.myTeam], p = this._pred || me;
       const atBase = !!f && Math.hypot(p.x - f.x, p.y - f.y) <= R.FOUNTAIN_RADIUS;
       if (atBase || me.dead) this._leftBaseAt = 0; else if (!this._leftBaseAt) this._leftBaseAt = Date.now();
     }
@@ -994,7 +1005,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const seen = this._coach.seen, T = this._isTouch;
     const want = (id, cond, text) => (!seen.has(id) && cond ? [id, text] : null);
     const hpPct = me.maxHp ? me.hp / me.maxHp : 1;
-    const f = FOUNTAIN[this.myTeam];
+    const f = this.world.fountain[this.myTeam];
     const atBase = !!f && Math.hypot(p.x - f.x, p.y - f.y) <= R.FOUNTAIN_RADIUS;
     const alive = !me.dead;
     // Round 2: gold piling up far from the shop (> 90 s out of base) → recall nudge, every ~2 min.
@@ -1125,12 +1136,12 @@ export default class TeamModeScene extends Phaser.Scene {
 
   /** Move order + local path (nav.findPath, same as the server) for prediction and the path preview. */
   _moveOrder(x, y, mark, preview = mark) {
-    const c = clampToMap(x, y);
+    const c = this.world.clampToMap(x, y);
     this._order({ type: 'move', x: Math.round(c.x), y: Math.round(c.y) });
     const from = this._pred || this._me();
     if (from) { const dx = c.x - from.x, dy = c.y - from.y, l = Math.hypot(dx, dy); if (l > 20) this._lastMoveDir = { x: dx / l, y: dy / l }; }
     let path = null;
-    if (from) { try { path = findPath(from.x, from.y, c.x, c.y, CHAMP_RADIUS); } catch (_) { path = null; } }
+    if (from) { try { path = this.world.nav.findPath(from.x, from.y, c.x, c.y, CHAMP_RADIUS); } catch (_) { path = null; } }
     if (!path || !path.length) path = [{ x: c.x, y: c.y }];
     this._movePath = path.map((q) => ({ x: q.x, y: q.y }));
     const end = this._movePath[this._movePath.length - 1];
@@ -1200,7 +1211,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const wantsTarget = sk.type === 'target' || (sk.type === 'dash' && sk.toTarget);
     if (wantsTarget && !id) {
       // Hovered enemy first (never a pet / structure), then the nearest champion, then a unit.
-      const t = this._targetNear(aim.x, aim.y, sk.targets === 'enemyChamp');
+      const t = this._targetNear(aim.x, aim.y, this._champOnly(sk));
       if (t) { id = t.id; aim = { x: t.x, y: t.y }; }
     }
     if (sk.type === 'target') {
@@ -1237,7 +1248,7 @@ export default class TeamModeScene extends Phaser.Scene {
     // Escape moves (blinks, pure dashes) never auto-aim at an enemy — shared policy with the server.
     if (autoAimsAtEnemy(sk)) {
       const reach = autoAimReach(sk, R.AUTO_AIM_SLACK ?? 150);
-      const champOnly = sk.targets === 'enemyChamp';
+      const champOnly = this._champOnly(sk);
       const t = this._nearestEnemyTo(pos.x, pos.y, reach, true) || (champOnly ? null : this._nearestEnemyTo(pos.x, pos.y, reach, false));
       if (t) return { x: t.x, y: t.y, id: t.id };
     }
@@ -1288,6 +1299,9 @@ export default class TeamModeScene extends Phaser.Scene {
     }
     return best;
   }
+
+  /** `targets: 'enemyChamp'` skills only aim at champions (Story Mode 2.0 overrides: bugs count too). */
+  _champOnly(sk) { return sk.targets === 'enemyChamp'; }
 
   /** Point-and-click skill target near a world point: picked enemy › nearest champion › nearest unit. */
   _targetNear(x, y, champOnly) {
@@ -1438,7 +1452,7 @@ export default class TeamModeScene extends Phaser.Scene {
         v.update(dt, now);
         // Own-team units inside a bush: translucent ("hidden" look).
         if (bushTick && v.team === this.myTeam && !v.dying) {
-          const inB = !!bushAt(v.x, v.y);
+          const inB = !!this.world.bushAt(v.x, v.y);
           if (inB !== !!v._inBush) { v._inBush = inB; if (v.setHidden) v.setHidden(inB); else v.c.setAlpha(inB ? 0.55 : 1); }
         }
       } else {
@@ -1476,7 +1490,7 @@ export default class TeamModeScene extends Phaser.Scene {
         v.update(dt, now, srvNow, isMe);
         this._spellTrails(id, v, c, now);
         if (bushTick && !v.dead) {
-          const b = bushAt(v.x, v.y);
+          const b = this.world.bushAt(v.x, v.y);
           if (b !== (v._bushNow || '')) { v._bushNow = b; if (b) this.map.rustle(b); }
         }
       } else {
@@ -1494,7 +1508,7 @@ export default class TeamModeScene extends Phaser.Scene {
     }
     if (f % 4 === 0) this._layoutPlates();
     // The bush you stand in thins out so you can see yourself.
-    this.map.setBushFocus(this._pred && me && !me.dead ? bushAt(this._pred.x, this._pred.y) : '');
+    this.map.setBushFocus(this._pred && me && !me.dead ? this.world.bushAt(this._pred.x, this._pred.y) : '');
     this._worldReady = true;
   }
 
@@ -1561,7 +1575,7 @@ export default class TeamModeScene extends Phaser.Scene {
    *  Revealed (client approximation of the server rule): attacked / cast within BUSH_REVEAL_MS,
    *  or a visible enemy champion stands in the same bush. */
   _applyHidden(v, c, isMe, now) {
-    const bush = v.dead ? '' : (typeof c.inBush === 'string' ? c.inBush : (isMe && this._pred ? bushAt(this._pred.x, this._pred.y) : ''));
+    const bush = v.dead ? '' : (typeof c.inBush === 'string' ? c.inBush : (isMe && this._pred ? this.world.bushAt(this._pred.x, this._pred.y) : ''));
     let hidden = false, why = '';
     if (bush) {
       const act = Math.max(v._actAt || -1e9, isMe ? this._myCastAt : -1e9);
@@ -1570,7 +1584,7 @@ export default class TeamModeScene extends Phaser.Scene {
       else {
         for (const e of this.views.champs.values()) {
           if (e.team === this.myTeam || e.dead || e._gone) continue;
-          if (Math.abs(e.x - v.x) < 500 && Math.abs(e.y - v.y) < 500 && bushAt(e.x, e.y) === bush) { hidden = false; why = 'enemy'; break; }
+          if (Math.abs(e.x - v.x) < 500 && Math.abs(e.y - v.y) < 500 && this.world.bushAt(e.x, e.y) === bush) { hidden = false; why = 'enemy'; break; }
         }
       }
     }
@@ -1632,7 +1646,7 @@ export default class TeamModeScene extends Phaser.Scene {
       const canMove = !((c.stunnedUntil || 0) > srvNow) && !((c.rootedUntil || 0) > srvNow) && !((c.recallUntil || 0) > srvNow);
       if (this._moveDest && canMove && this._replan) {
         this._replan = false;
-        const path = findPath(p.x, p.y, this._moveDest.x, this._moveDest.y, CHAMP_RADIUS);
+        const path = this.world.nav.findPath(p.x, p.y, this._moveDest.x, this._moveDest.y, CHAMP_RADIUS);
         this._movePath = path.length ? path : null;
       }
       if (this._moveDest && canMove) {
@@ -1654,7 +1668,7 @@ export default class TeamModeScene extends Phaser.Scene {
         const k = approach(dt, 9); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k;
       }
       // Never show yourself inside furniture (reconcile blending can cut a corner).
-      if (isBlocked(p.x, p.y, CHAMP_RADIUS - 4)) { const q = pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
+      if (this.world.nav.isBlocked(p.x, p.y, CHAMP_RADIUS - 4)) { const q = this.world.nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
     }
     v.setDisplayPos(p.x, p.y);
   }
@@ -1749,7 +1763,7 @@ export default class TeamModeScene extends Phaser.Scene {
   /** Knockback arrow from (x,y) along (ux,uy) for `dist`, clipped by walls like the server (nav.clipMove). */
   _knockArrow(g, x, y, ux, uy, dist, r, wallStun, col, a) {
     const tx = x + ux * dist, ty = y + uy * dist;
-    const end = clipMove(x, y, tx, ty, r);
+    const end = this.world.nav.clipMove(x, y, tx, ty, r);
     const len = Math.hypot(end.x - x, end.y - y);
     g.lineStyle(5, col, 0.85 * a); g.lineBetween(x, y, end.x, end.y);
     const nx = -uy, ny = ux, L = Math.min(24, len * 0.6 + 8);
@@ -1907,7 +1921,7 @@ export default class TeamModeScene extends Phaser.Scene {
       if (kb) this._knockArrowsInCircle(g, cx, cy, sk.radius, sk, col, a);
     } else if (sk.type === 'dash') {
       const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
-      const end = clipMove(p.x, p.y, tx, ty, CHAMP_RADIUS);
+      const end = this.world.nav.clipMove(p.x, p.y, tx, ty, CHAMP_RADIUS);
       g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, end.x, end.y);
       g.strokeCircle(end.x, end.y, 28);
       if (end.hit) { // stopped by furniture
@@ -1921,14 +1935,14 @@ export default class TeamModeScene extends Phaser.Scene {
       }
     } else if (sk.type === 'blink') {
       const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
-      const land = nearestFree(tx, ty, CHAMP_RADIUS);
+      const land = this.world.nav.nearestFree(tx, ty, CHAMP_RADIUS);
       g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, land.x, land.y);
       g.strokeCircle(land.x, land.y, 28);
       if (Math.hypot(land.x - tx, land.y - ty) > 6) { // aimed into a wall → lands on the nearest free spot
         g.lineStyle(2, col, 0.35 * a); g.strokeCircle(tx, ty, 20); g.lineBetween(tx, ty, land.x, land.y);
       }
     } else if (sk.type === 'target') {
-      const tv = autoT || this._targetNear(aim.x, aim.y, sk.targets === 'enemyChamp');
+      const tv = autoT || this._targetNear(aim.x, aim.y, this._champOnly(sk));
       if (tv) {
         const inRange = Math.hypot(tv.x - p.x, tv.y - p.y) <= sk.range + 90;
         const tc = inRange ? col : 0xff4a4a;
@@ -2120,7 +2134,7 @@ export default class TeamModeScene extends Phaser.Scene {
           tx = pos.x + dir.x * sp.range; ty = pos.y + dir.y * sp.range;
         } else { tx = mouse.x; ty = mouse.y; }
         const dx = tx - pos.x, dy = ty - pos.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, sp.range);
-        const c = clampToMap(pos.x + (dx / d) * r, pos.y + (dy / d) * r);
+        const c = this.world.clampToMap(pos.x + (dx / d) * r, pos.y + (dy / d) * r);
         return { x: c.x, y: c.y };
       }
       case 'dot': {
@@ -2188,8 +2202,8 @@ export default class TeamModeScene extends Phaser.Scene {
     const aim = flash ? { x: flash.x, y: flash.y } : this._spellAim(sp, p, auto);
     if (sp.kind === 'blink') {
       g.lineStyle(3, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.range);
-      const land = nearestFree(aim.x, aim.y, CHAMP_RADIUS);
-      const over = !segmentClear(p.x, p.y, land.x, land.y, 4);
+      const land = this.world.nav.nearestFree(aim.x, aim.y, CHAMP_RADIUS);
+      const over = !this.world.nav.segmentClear(p.x, p.y, land.x, land.y, 4);
       g.lineStyle(4, col, (over ? 0.35 : 0.6) * a); g.lineBetween(p.x, p.y, land.x, land.y);
       g.fillStyle(col, 0.18 * a); g.fillCircle(land.x, land.y, CHAMP_RADIUS + 4);
       g.lineStyle(3, col, 0.95 * a); g.strokeCircle(land.x, land.y, CHAMP_RADIUS + 4);

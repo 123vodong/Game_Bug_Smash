@@ -119,7 +119,7 @@ Above Lv6 = "Super Senior" baseline. Earned variants (cosmetic only):
 
 | Item | Source | Why parked |
 |---|---|---|
-| Platformer Level 01 (Code Runner) | [../plan/LEVEL_01_CODE_RUNNER.md](../plan/LEVEL_01_CODE_RUNNER.md) | Engine layer reset would be needed; prototype sealed in `PlatformerScene.js` |
+| Platformer Level 01 (Code Runner) | [../plan/LEVEL_01_CODE_RUNNER.md](../plan/LEVEL_01_CODE_RUNNER.md) | Dropped: the prototype (`PlatformerScene.js`) was removed on 2026-11-25 |
 | Platformer Level 02 (Vertical Scroll) | [../plan/LEVEL_02_VERTICAL_SCROLL.md](../plan/LEVEL_02_VERTICAL_SCROLL.md) | Same — depends on Level 01 |
 | Platformer Level 03 (Mixed Scroll) | [../plan/LEVEL_03_MIXED_SCROLL.md](../plan/LEVEL_03_MIXED_SCROLL.md) | Same — depends on engine layer |
 | Full 3D Babylon rewrite | [../ideas/MULTIPLAYER_3D_PROPOSAL.md](../ideas/MULTIPLAYER_3D_PROPOSAL.md) | Pivoted to 2D MP after seeing TankGank achieve "looks 3D" with sprites |

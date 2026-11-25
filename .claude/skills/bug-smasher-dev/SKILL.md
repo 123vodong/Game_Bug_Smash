@@ -18,7 +18,7 @@ For multi-step features, follow the agent-team pipeline in
 - **Structure (active):**
   ```
   index.html · src/main.js
-  src/scenes/   MenuScene.js HuntScene.js (SP campaign) MultiPlayScene.js (MP arena) PlatformerScene.js (sealed prototype)
+  src/scenes/   MenuScene.js HuntScene.js (SP campaign) MultiPlayScene.js (MP arena)
   src/ui/       HUD.js MPOverlay.js          src/entities/  Hunter.js Bug(s).js SkillPickup.js MPBossView.js
   src/core/     AudioManager.js SaveManager.js   src/data/  levels bugs skills tips talk cosmetics missions
   server/       index.js · rooms/ArenaRoom.js · game/{rules,schema,BotDirector,EventDirector}.js · data/*.js

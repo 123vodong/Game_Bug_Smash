@@ -3,7 +3,6 @@
 // Active flow: MenuScene -> HuntScene.
 import MenuScene from './scenes/MenuScene.js';
 import HuntScene from './scenes/HuntScene.js';
-import PlatformerScene from './scenes/PlatformerScene.js';
 import MultiPlayScene from './scenes/MultiPlayScene.js';
 import TeamLobbyScene from './scenes/TeamLobbyScene.js';
 import TeamModeScene from './scenes/TeamModeScene.js';
@@ -24,7 +23,7 @@ const config = {
     default: 'arcade',
     arcade: { gravity: { y: 1400 }, debug: false },
   },
-  scene: [MenuScene, HuntScene, PlatformerScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
+  scene: [MenuScene, HuntScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
 };
 
 const game = new Phaser.Game(config);
@@ -46,9 +45,20 @@ if (inviteRoom && /^[A-Za-z0-9_-]{1,32}$/.test(inviteRoom) && !deepScene) {
     game.scene.start('TeamCustomScene', { joinCode: inviteRoom, name });
   });
 }
-// The platformer prototype is hidden from the menu (EP-22) but stays reachable: ?scene=platformer
-if (deepScene === 'platformer') {
-  game.events.once('ready', () => { game.scene.stop('MenuScene'); game.scene.start('PlatformerScene'); });
+// Story Mode 2.0 (lazy-loaded): ?scene=story → the champion pick (the menu's STORY card does the same);
+// ?scene=story&champ=dev[&name=X][&floor=f1] → straight onto the floor (shareable, used by the harness).
+if (deepScene === 'story') {
+  game.events.once('ready', async () => {
+    game.scene.stop('MenuScene');
+    try {
+      const { launchStory, openStoryPick } = await import('./story2/launch.js');
+      if (params.get('champ')) launchStory(game, { champ: params.get('champ'), name: params.get('name') || 'Intern', floor: params.get('floor') || 'f1' });
+      else openStoryPick(game);
+    } catch (e) {
+      console.error('[story] could not start Story Mode 2.0', e);
+      game.scene.start('MenuScene');
+    }
+  });
 }
 if (deepScene === 'lobby' || deepScene === 'team') {
   game.events.once('ready', () => {

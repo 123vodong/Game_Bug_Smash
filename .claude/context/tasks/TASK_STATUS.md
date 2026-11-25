@@ -91,19 +91,16 @@ Two `code-reviewer`s + one `playtester` in parallel; every finding verified by t
 - **Audio** (smashHit, bugKill, combo, etc.) ported from SP — WebAudio synth, no files
 - **Smash range buffered** server-side (96 vs client 96) so latency doesn't cause ghost-out-of-range rejections; chase hugs target at 28px to stay well inside the cone
 
-### Platformer prototype (sealed Phase 0)
+### Platformer prototype: removed (2026-11-25)
 
-- [src/scenes/PlatformerScene.js](../../../src/scenes/PlatformerScene.js) — isolated proof of concept
-- Player + Arcade physics + horizontal camera + stable + bug-eaten platforms
-- WASD/arrows + jump with coyote time + jump buffering
-- Section 1 + 2 of Level 01, ends at x=3000 with "PROTOTYPE END" overlay
-- Not merged anywhere — stays as a separate scene until/unless we decide to expand
+- `src/scenes/PlatformerScene.js` and its `?scene=platformer` link were deleted at the user's request, together with the side-view Story Mode. Story Mode 2.0 is top-down on the 5v5 engine instead.
+- It was a proof of concept: Arcade physics, a horizontal camera, stable and bug-eaten platforms, and sections 1–2 of Level 01.
 
 ### Planning docs
 
 - [plan/3D_MP_PHASES.md](../plan/3D_MP_PHASES.md) — multiplayer pivot plan (pivoted from full 3D Babylon to 2D + multiplayer + pre-rendered sprite path)
 - [plan/bug_smash_deadline_hunter_development_plan.md](../plan/bug_smash_deadline_hunter_development_plan.md) — original dev plan for the single-player campaign
-- [plan/LEVEL_01_CODE_RUNNER.md](../plan/LEVEL_01_CODE_RUNNER.md), [LEVEL_02_VERTICAL_SCROLL.md](../plan/LEVEL_02_VERTICAL_SCROLL.md), [LEVEL_03_MIXED_SCROLL.md](../plan/LEVEL_03_MIXED_SCROLL.md) — platformer levels (deferred)
+- [plan/LEVEL_01_CODE_RUNNER.md](../plan/LEVEL_01_CODE_RUNNER.md), [LEVEL_02_VERTICAL_SCROLL.md](../plan/LEVEL_02_VERTICAL_SCROLL.md), [LEVEL_03_MIXED_SCROLL.md](../plan/LEVEL_03_MIXED_SCROLL.md) — platformer levels (the prototype was removed; kept as reference only)
 
 ### Proposals + raw ideas
 
@@ -267,7 +264,6 @@ src/
 └── scenes/
     ├── MenuScene.js
     ├── HuntScene.js          ← SP campaign
-    ├── PlatformerScene.js    ← prototype
     └── MultiPlayScene.js     ← MP arena
 ```
 

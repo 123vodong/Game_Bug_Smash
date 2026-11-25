@@ -8,7 +8,7 @@
 // no HP bar, hover bob, never targetable (hitTest → false, `targetable` = false).
 import { MINIONS, CAMPS, EPICS } from '../../../shared/moba/rules.js';
 import { FONT, BAR, depthAt, teamColor, relation, approach, calmPrefs } from './mobaGfx.js';
-import { ensureMobaLooks, unitTextureKey, unitName, lookMeta } from './looks.js';
+import { ensureMobaLooks, unitTextureKey, unitName, lookMeta, extraUnit } from './looks.js';
 
 // Bug PNGs are colorful → light tint; robot textures are neutral grays → stronger tint.
 const TEAM_TINT = { blue: 0xc4e0ff, red: 0xffc6c6, neutral: 0xd9e4b4 };
@@ -19,6 +19,8 @@ const HIDDEN_ALPHA = 0.5, LEAF_TINT = 0xa6f0a0, FADE_MS = 200;
 
 export function unitKindInfo(kind, campId = '') {
   const sprite = unitTextureKey(kind, campId), name = unitName(kind, campId);
+  const ex = extraUnit(kind);   // Story Mode bugs / nests (looks.registerUnitKinds)
+  if (ex) return { cls: 'monster', sprite, name, size: ex.size || 44, ranged: (ex.range || 0) > 200 };
   if (MINIONS[kind]) return { cls: 'minion', sprite, name, size: MINIONS[kind].size, ranged: MINIONS[kind].range > 200 };
   if (CAMPS[kind]) return { cls: 'monster', sprite, name, size: CAMPS[kind].size };
   if (kind === 'pet') return { cls: 'pet', sprite, name, size: PET_SIZE };

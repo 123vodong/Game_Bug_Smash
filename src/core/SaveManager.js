@@ -8,6 +8,7 @@
 //   levelStars { [levelId]: 0..3 }   — best stars per campaign level
 //   career     += teamPractice, teamTakedowns, bestStreak, campaignLevels, campaignStars
 //                 (campaignLevels / campaignStars are DERIVED from levelStars on read; see careerOf)
+//   story2     { champ, spells, floors: { [floorId]: { clears, bestMs, smashed, champ } } }  (Story Mode 2.0)
 import './FxPrefs.js'; // side effect: camera shake/flash obey settings.shake / settings.flashes
 
 const KEY = 'bugSmashHunter.save.v1';
@@ -204,6 +205,43 @@ export const SaveManager = {
   // -------- Team Mode: last picked champion (id from shared/moba/champions.js) --------
   getTeamChamp() { return read().teamChamp ?? ''; },
   setTeamChamp(id) { const d = read(); d.teamChamp = String(id || '').slice(0, 32); write(d); },
+
+  // -------- Story Mode 2.0 (2026-11-25): last pick + best clear per floor --------
+  /** { champ, spells: [d, f] | null, floors: { [floorId]: { clears, bestMs, smashed, champ } } } */
+  getStory2() {
+    const s = read().story2;
+    const o = (s && typeof s === 'object') ? s : {};
+    return {
+      champ: typeof o.champ === 'string' ? o.champ : '',
+      spells: Array.isArray(o.spells) && o.spells.length === 2 ? o.spells.slice(0, 2) : null,
+      floors: (o.floors && typeof o.floors === 'object') ? o.floors : {},
+    };
+  },
+  /** Remember the champion (and summoner spells) picked for Story Mode. */
+  setStory2Pick(champ, spells = null) {
+    const d = read();
+    const s = (d.story2 && typeof d.story2 === 'object') ? d.story2 : {};
+    s.champ = String(champ || '').slice(0, 32);
+    if (Array.isArray(spells) && spells.length === 2) s.spells = spells.map((x) => String(x).slice(0, 16));
+    d.story2 = s;
+    write(d);
+  },
+  /** A floor was cleared: count it and keep the best time. Returns the floor record plus `best` (a new best time). */
+  recordStory2Clear(floorId, { ms = 0, smashed = 0, champ = '' } = {}) {
+    const d = read();
+    const s = (d.story2 && typeof d.story2 === 'object') ? d.story2 : {};
+    const floors = (s.floors && typeof s.floors === 'object') ? s.floors : {};
+    const id = String(floorId || '').slice(0, 16);
+    const f = { clears: 0, bestMs: 0, smashed: 0, champ: '', ...(floors[id] || {}) };
+    const t = Math.round(Number(ms) || 0);
+    const best = t > 0 && (!f.bestMs || t < f.bestMs);
+    f.clears = (f.clears | 0) + 1;
+    if (best) { f.bestMs = t; f.champ = String(champ || '').slice(0, 32); }
+    f.smashed = Math.max(f.smashed | 0, smashed | 0);
+    floors[id] = f; s.floors = floors; d.story2 = s;
+    write(d);
+    return { ...f, best };
+  },
 
   // -------- Daily missions (progress resets each local day) --------
   getDaily(day) {
