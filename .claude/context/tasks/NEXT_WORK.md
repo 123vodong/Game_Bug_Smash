@@ -35,6 +35,7 @@
 | `feat/story-2` | latest | **feat/5v5-more** (stacked) | Story Mode 2.0: design doc, engine "worlds", playable floor 1 prototype, STORY card + free pick. |
 
 `feat/story-mode` (the side-view Story Mode, never pushed) was **deleted on 2026-11-25** at the user's request. Its last commit `4136a43` stays recoverable for about 30 days (`git branch feat/story-mode 4136a43`).
+The hidden **platformer prototype** (`src/scenes/PlatformerScene.js`, `?scene=platformer`) was removed the same day, on `feat/story-2`: that branch already edits the lines next to it in `main.js`, so a separate branch would have conflicted. The three platformer level plans in `.claude/context/plan/` stay as reference.
 
 **Push order for the user:** `chore/drop-donation` (independent), then `feat/5v5-more`, then `feat/story-2` (its PR shows the 5v5 commits until `feat/5v5-more` is merged).
 

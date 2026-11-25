@@ -3,7 +3,6 @@
 // Active flow: MenuScene -> HuntScene.
 import MenuScene from './scenes/MenuScene.js';
 import HuntScene from './scenes/HuntScene.js';
-import PlatformerScene from './scenes/PlatformerScene.js';
 import MultiPlayScene from './scenes/MultiPlayScene.js';
 import TeamLobbyScene from './scenes/TeamLobbyScene.js';
 import TeamModeScene from './scenes/TeamModeScene.js';
@@ -24,7 +23,7 @@ const config = {
     default: 'arcade',
     arcade: { gravity: { y: 1400 }, debug: false },
   },
-  scene: [MenuScene, HuntScene, PlatformerScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
+  scene: [MenuScene, HuntScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
 };
 
 const game = new Phaser.Game(config);
@@ -60,10 +59,6 @@ if (deepScene === 'story') {
       game.scene.start('MenuScene');
     }
   });
-}
-// The platformer prototype is hidden from the menu (EP-22) but stays reachable: ?scene=platformer
-if (deepScene === 'platformer') {
-  game.events.once('ready', () => { game.scene.stop('MenuScene'); game.scene.start('PlatformerScene'); });
 }
 if (deepScene === 'lobby' || deepScene === 'team') {
   game.events.once('ready', () => {

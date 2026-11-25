@@ -234,7 +234,7 @@ export default class MenuScene extends Phaser.Scene {
     donate.on('pointerup', () => this._openDonate());
 
     // About / credits link (bottom-left). The platformer prototype is no longer linked here
-    // (reachable by URL only — coordinator wires ?scene=platformer in main.js).
+    // (the prototype itself was removed on 2026-11-25).
     const about = this.add.text(16, H - 10, 'ⓘ about · credits', {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff',
     }).setOrigin(0, 0.5).setDepth(11).setInteractive({ useHandCursor: true });

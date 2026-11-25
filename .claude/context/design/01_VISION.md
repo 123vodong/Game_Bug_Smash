@@ -36,7 +36,7 @@ Players who play perfectly rarely burn out and feel like gods. Players who play 
 ## What we are NOT
 
 - ❌ A 3D shooter — explicitly pivoted away (see [../plan/3D_MP_PHASES.md](../plan/3D_MP_PHASES.md))
-- ❌ A platformer — the platformer prototype is sealed and parked
+- ❌ A platformer — the platformer prototype was removed (2026-11-25)
 - ❌ A deep RPG — no skill trees, no item drops, no inventory
 - ❌ A simulator — bugs aren't actual code, PMs aren't actual managers; everything is heightened cartoon
 - ❌ Pay-to-win — cosmetics only, never stat boosts
