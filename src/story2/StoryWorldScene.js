@@ -17,6 +17,7 @@ import { makeWorld } from '../entities/moba/world.js';
 import { drawChampionPortrait } from '../entities/moba/looks.js';
 import { depthAt } from '../entities/moba/mobaGfx.js';
 import { FloorMap } from './FloorMap.js';
+import { fmtRunTime } from './catalog.js';
 import { StorySim } from './StorySim.js';
 import { ensureStoryTextures } from './bugs.js';
 import F1 from './floors/f1.js';
@@ -61,6 +62,9 @@ export default class StoryWorldScene extends TeamModeScene {
     return true;
   }
 
+  /** Story rule (StorySim._champTargetOk): champion-only skills aim at bugs and nests too. */
+  _champOnly() { return false; }
+
   // ───────────────────────── messages ─────────────────────────
   _onMsg(type, m) {
     if (type !== 'story') { super._onMsg(type, m); return; }
@@ -75,7 +79,10 @@ export default class StoryWorldScene extends TeamModeScene {
         if (m.kind === 'gold') AudioManager.coin?.(); else AudioManager.skillPickup?.(m.kind === 'keycard' ? 'buff' : 'heal');
         break;
       case 'objective': this._objective = { text: m.text, optional: m.optional }; this._flashTracker(); break;
-      case 'cleared': this._clearedStats = m; break;
+      case 'cleared':
+        this._clearedStats = m;
+        this._clearRecord = SaveManager.recordStory2Clear(this._floorDef.id, { ms: m.ms, smashed: m.smashed, champ: this.myChamp });
+        break;
       default: break;
     }
   }
@@ -261,24 +268,26 @@ export default class StoryWorldScene extends TeamModeScene {
     const bg = this.add.rectangle(0, 0, 560, 330, 0x070b16, 0.97).setStrokeStyle(4, 0xffd23f, 1);
     const title = this.add.text(0, -122, '🏆 FLOOR CLEARED', { fontFamily: 'Arial Black, sans-serif', fontSize: 34, color: '#ffd23f', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5);
     const sub = this.add.text(0, -80, `${this._floorDef.name} · ${this._floorDef.clock}`, { fontFamily: 'Arial Black, sans-serif', fontSize: 16, color: '#c9d6ee' }).setOrigin(0.5);
-    const secs = Math.round((st.ms || 0) / 1000);
+    const rec = this._clearRecord;
+    const best = !rec ? '' : (rec.best ? (rec.clears > 1 ? '  🏅 new best!' : '') : `  (best ${fmtRunTime(rec.bestMs)})`);
     const lines = [
       `🐞 Bugs smashed: ${st.smashed ?? s.smashed ?? 0}`,
-      `⏱ Time: ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
+      `⏱ Time: ${fmtRunTime(st.ms)}${best}`,
       `🤝 Coworkers in your party: ${st.allies ?? s.allies?.length ?? 0}`,
       'Next: 1F · Open Office (coming soon)',
     ];
     const body = this.add.text(0, -20, lines.join('\n'), { fontFamily: 'Consolas, monospace', fontSize: 17, color: '#eef3ff', align: 'center', lineSpacing: 8 }).setOrigin(0.5, 0.3);
     const btn = (x, label, col, fn) => {
-      const r = this.add.rectangle(x, 118, 210, 50, 0x0b1322, 1).setStrokeStyle(3, col, 1).setInteractive({ useHandCursor: true });
-      const t = this.add.text(x, 118, label, { fontFamily: 'Arial Black, sans-serif', fontSize: 17, color: '#ffffff' }).setOrigin(0.5);
+      const r = this.add.rectangle(x, 118, 170, 50, 0x0b1322, 1).setStrokeStyle(3, col, 1).setInteractive({ useHandCursor: true });
+      const t = this.add.text(x, 118, label, { fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffffff' }).setOrigin(0.5);
       r.on('pointerover', () => r.setFillStyle(0x17243b, 1)); r.on('pointerout', () => r.setFillStyle(0x0b1322, 1));
       r.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); AudioManager.uiClick?.(); fn(); });
       return [r, t];
     };
     c.add([dim, bg, title, sub, body,
-      ...btn(-120, '▶ PLAY AGAIN', 0x7ed957, () => { const d = this._data; this._cleanup(); this.scene.start('StoryWorldScene', d); }),
-      ...btn(120, '🏠 MENU', 0x39c2ff, () => this._goMenu())]);
+      ...btn(-180, '▶ PLAY AGAIN', 0x7ed957, () => { const d = this._data; this._cleanup(); this.scene.start('StoryWorldScene', d); }),
+      ...btn(0, '👥 CHAMPION', 0xffd23f, () => { const champ = this.myChamp; this._cleanup(); this.scene.start('StoryPickScene', { champ }); }),
+      ...btn(180, '🏠 MENU', 0x39c2ff, () => this._goMenu())]);
     c.setScale(0.9).setAlpha(0);
     this.tweens.add({ targets: c, scale: 1, alpha: 1, duration: 220, ease: 'Back.easeOut' });
     this._clearedPanel = c;

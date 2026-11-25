@@ -1,6 +1,7 @@
 # 11 · Story Mode 2.0: "Night Shift" on the 5v5 engine
 
-**Status:** design, 2026-11-25. Replaces the side-view Story Mode on `feat/story-mode` (kept only as a parts bin).
+**Status:** design, 2026-11-25; M1 prototype built, menu entry and free pick built (2026-11-25). Replaces the side-view Story Mode on `feat/story-mode` (kept only as a parts bin).
+**Decided by the user (2026-11-25):** free pick of all 18 champions · one 10–15 minute map per floor · a new STORY card on the main menu (the single-player PLAY button stays). See §6.
 **Request (2026-11-24):** stop following the side-view platformer model. Build Story Mode on the 5v5 game: a map like the 5v5 map but more spacious, with more doors. Smash bugs, adventure, explore, and put the 5v5 champions into the story.
 
 ## 1. The pitch
@@ -53,7 +54,9 @@ A top-down action adventure, offline and single player, played with the 5v5 cont
 ## 3. Systems
 
 **Champion and progression:**
-- Pick any of the 18 champions on a new save. You can switch at a break room.
+- Pick any of the 18 champions on a new save. You can switch at a break room. *(Built: the STORY card opens a free pick of all 18 with summoner spells; CHAMPION on the FLOOR CLEARED panel switches between runs. Switching at a break room mid-floor is not built yet.)*
+- **Story rule:** skills that only hit champions in 5v5 (Zero-Day, Merge Conflict, On My Way, Regression Barrage) also hit bugs and nests, so every kit works on every floor. If you play a champion the floor casts as an NPC, a stand-in (the floor's `alt`, else another champion of that lane) takes the part.
+- Summoner spells in the pick: Alt+Tab, Coffee Break, Overtime, Ctrl+Z (Escalate and kill -9 have no targets on a story floor yet).
 - Levels run 1 to 18, from XP for smashing bugs (floor 1 reaches about level 6). Items are bought with bug gold, and gold, items and level carry between floors.
 - A **promotion** perk per floor (table above).
 - A collection log tracks bugs smashed, secrets found and champions met.
@@ -136,15 +139,19 @@ export default {
 2. **M2 floor 1 complete:**
    - Zero's arena;
    - break room with shop and save;
-   - menu entry (replaces the old Story button);
+   - menu entry: **a new STORY card** on the main menu (decided 2026-11-25; built);
    - floor-data checker;
    - mobile pass (touch "TALK / OPEN" context button).
 3. **M3 floors 2–3:** chasers and the secret doors.
 4. **M4 floors 4–5:** PM door shuffles, THE DEADLINE boss, the ending.
 5. **M5 polish:** music per floor, juice, balance, collection log.
 
-## 6. Open questions for the user
+## 6. Questions for the user
 
-1. Delete the side-view Story Mode for good once M2 lands, or keep it as a bonus "Retro" mode?
-2. Champion choice: free pick from all 18 (recommended: it shows off the roster), or start with 3 and unlock the rest through the story?
-3. Floor length: one 10–15 minute map per floor with break-room checkpoints (recommended), or 3 short stages per floor like the old mode?
+Answered on 2026-11-25:
+- **Champion choice:** free pick from all 18. No unlocks.
+- **Floor length:** one 10–15 minute map per floor, with break-room checkpoints.
+- **Menu:** a new STORY card. The single-player PLAY button keeps the campaign.
+
+Still open:
+1. Delete the side-view Story Mode (`feat/story-mode`) for good once M2 lands, or keep it as a bonus "Retro" mode?

@@ -46,13 +46,15 @@ if (inviteRoom && /^[A-Za-z0-9_-]{1,32}$/.test(inviteRoom) && !deepScene) {
     game.scene.start('TeamCustomScene', { joinCode: inviteRoom, name });
   });
 }
-// Story Mode 2.0 prototype (2026-11-25): ?scene=story[&champ=dev][&name=X][&floor=f1] — lazy-loaded.
+// Story Mode 2.0 (lazy-loaded): ?scene=story → the champion pick (the menu's STORY card does the same);
+// ?scene=story&champ=dev[&name=X][&floor=f1] → straight onto the floor (shareable, used by the harness).
 if (deepScene === 'story') {
   game.events.once('ready', async () => {
     game.scene.stop('MenuScene');
     try {
-      const { launchStory } = await import('./story2/launch.js');
-      launchStory(game, { champ: params.get('champ') || 'dev', name: params.get('name') || 'Intern', floor: params.get('floor') || 'f1' });
+      const { launchStory, openStoryPick } = await import('./story2/launch.js');
+      if (params.get('champ')) launchStory(game, { champ: params.get('champ'), name: params.get('name') || 'Intern', floor: params.get('floor') || 'f1' });
+      else openStoryPick(game);
     } catch (e) {
       console.error('[story] could not start Story Mode 2.0', e);
       game.scene.start('MenuScene');

@@ -1211,7 +1211,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const wantsTarget = sk.type === 'target' || (sk.type === 'dash' && sk.toTarget);
     if (wantsTarget && !id) {
       // Hovered enemy first (never a pet / structure), then the nearest champion, then a unit.
-      const t = this._targetNear(aim.x, aim.y, sk.targets === 'enemyChamp');
+      const t = this._targetNear(aim.x, aim.y, this._champOnly(sk));
       if (t) { id = t.id; aim = { x: t.x, y: t.y }; }
     }
     if (sk.type === 'target') {
@@ -1248,7 +1248,7 @@ export default class TeamModeScene extends Phaser.Scene {
     // Escape moves (blinks, pure dashes) never auto-aim at an enemy — shared policy with the server.
     if (autoAimsAtEnemy(sk)) {
       const reach = autoAimReach(sk, R.AUTO_AIM_SLACK ?? 150);
-      const champOnly = sk.targets === 'enemyChamp';
+      const champOnly = this._champOnly(sk);
       const t = this._nearestEnemyTo(pos.x, pos.y, reach, true) || (champOnly ? null : this._nearestEnemyTo(pos.x, pos.y, reach, false));
       if (t) return { x: t.x, y: t.y, id: t.id };
     }
@@ -1299,6 +1299,9 @@ export default class TeamModeScene extends Phaser.Scene {
     }
     return best;
   }
+
+  /** `targets: 'enemyChamp'` skills only aim at champions (Story Mode 2.0 overrides: bugs count too). */
+  _champOnly(sk) { return sk.targets === 'enemyChamp'; }
 
   /** Point-and-click skill target near a world point: picked enemy › nearest champion › nearest unit. */
   _targetNear(x, y, champOnly) {
@@ -1939,7 +1942,7 @@ export default class TeamModeScene extends Phaser.Scene {
         g.lineStyle(2, col, 0.35 * a); g.strokeCircle(tx, ty, 20); g.lineBetween(tx, ty, land.x, land.y);
       }
     } else if (sk.type === 'target') {
-      const tv = autoT || this._targetNear(aim.x, aim.y, sk.targets === 'enemyChamp');
+      const tv = autoT || this._targetNear(aim.x, aim.y, this._champOnly(sk));
       if (tv) {
         const inRange = Math.hypot(tv.x - p.x, tv.y - p.y) <= sk.range + 90;
         const tc = inRange ? col : 0xff4a4a;

@@ -1,6 +1,6 @@
 # Next work (handoff between sessions)
 
-**Written:** 2026-11-24, late evening. **Updated:** 2026-11-25 morning, after the scheduled 4 AM run.
+**Written:** 2026-11-24, late evening. **Updated:** 2026-11-25, after the user answered the Story Mode questions (free pick, one map per floor, a new STORY card).
 **Mandate:** the user said "Free to decide by yourself", asked for a 4 AM continuation, and set these directions:
 1. **Story Mode:** stop following the Forgotten Warrior side-view model. Rebuild it on the 5v5 game: a map like the 5v5 one but more spacious, with more doors. Smash bugs, adventure, explore, and put the 5v5 champions into the story.
 2. **Drop the donation button.**
@@ -8,7 +8,7 @@
 
 ## Rules for any session working from this file
 
-- **Commits:** commit locally at each milestone, one concise line, **no Co-Authored-By trailer**.
+- **Commits:** one concise line, **no Co-Authored-By trailer**. Scheduled runs commit locally at each milestone (the user allowed that for those runs); in a live session, commit only when the user asks.
 - **No push, merge or PR.** Pushing was refused by the permission check on 2026-11-24, so the user does it.
 - **Never** set `BUG_SMASH_DEBUG` on port 2567. The local server on :2567 serves the working tree of whichever branch is checked out. Debug servers go on :2650.
 - **Gates** (run from `tools/playtest`):
@@ -20,8 +20,10 @@
   | 5v5 online UI | `GAME_URL=http://localhost:2650/ node pass2_ui.mjs <outDir>` | 16/16 |
   | 5v5 offline | `GAME_URL=http://localhost:2650/ node offline_check.mjs <outDir>` | 6/6 |
   | Story Mode 2.0 | `GAME_URL=http://localhost:2650/ node story2_check.mjs <outDir>` | 18/18 |
+  | Story menu + pick | `GAME_URL=http://localhost:2650/ node story2_pick_check.mjs <outDir>` | 29/29 (about 2.5 min: every champion plays the floor) |
 
   The debug server: `BUG_SMASH_DEBUG=1 BUG_SMASH_RANKS=memory PORT=2650 node server/index.js`. Restart it after server code changes.
+- **Syntax check:** `node --check` does NOT catch syntax errors in these ES module files (a broken file passes). Parse with `vm.SourceTextModule` instead (`node --experimental-vm-modules`), or load the page and watch for page errors.
 - Local `main` is stale (it stops at PR #2). **Always branch from `origin/main`** (after `git fetch origin`), then run `git branch --unset-upstream`.
 
 ## Branches (none pushed)
@@ -30,7 +32,7 @@
 |---|---|---|---|
 | `chore/drop-donation` | `003318c` | origin/main | Donation button, `DonatePanel.js` and `assets/donate/` removed. |
 | `feat/5v5-more` | `450824e` | origin/main | Adaptive bots; 6 items + 5-column shop; 2 champions (Brew, Pager); balance notes. |
-| `feat/story-2` | latest | **feat/5v5-more** (stacked) | Story Mode 2.0: design doc, engine "worlds", playable floor 1 prototype. |
+| `feat/story-2` | latest | **feat/5v5-more** (stacked) | Story Mode 2.0: design doc, engine "worlds", playable floor 1 prototype, STORY card + free pick. |
 | `feat/story-mode` | `4136a43` | older main | The superseded side-view Story Mode. Parts bin only. |
 
 **Push order for the user:** `chore/drop-donation` (independent), then `feat/5v5-more`, then `feat/story-2` (its PR shows the 5v5 commits until `feat/5v5-more` is merged).
@@ -116,12 +118,46 @@ The planned themes collided: Sprint is already "the Scrum Master" and Zero is "t
     - TALK prompt (T or click).
 - **Tests:** `story2_check` 18/18, `offline_check` 6/6, `pass2_ui` 16/16, `team_ff` 0 exceptions / stuck / in-wall, `team_sim --exploits` 118/118.
 
+### 4. The user's Story Mode decisions, applied (`feat/story-2`)
+
+The user answered: **free pick, one map per floor, add a new story card.**
+- **Menu:** a STORY MODE card on the left of the main menu, mirroring DAILY MISSIONS. It shows:
+  - your story champion's portrait;
+  - the next floor (name, clock, room);
+  - 5 floor pips and your best time;
+  - a PLAY STORY strip.
+  - Tap it or press **S**. `src/story2` is still downloaded only at that moment.
+- **Free pick:** `src/story2/StoryPickScene.js`.
+  - All 18 champions in a 9 × 2 grid, no locks; the skill detail of the hovered / picked champion.
+  - Tonight's floor with the 5-floor ladder.
+  - Summoner spells (Alt+Tab, Coffee Break, Overtime, Ctrl+Z; click or D / F).
+  - START, and MENU / ESC back.
+  - The pick is saved in `SaveManager.story2` (`getStory2`, `setStory2Pick`, `recordStory2Clear`).
+- **One map per floor:** already how floor 1 works; recorded in the design doc. `src/story2/catalog.js` lists the 5 floors (only floor 1 is ready).
+- **FLOOR CLEARED:** records the clear and the best time; buttons PLAY AGAIN · CHAMPION (back to the pick) · MENU.
+- **Deep links:** `?scene=story` opens the pick; `?scene=story&champ=<id>` goes straight onto the floor.
+- **Free-pick fixes:**
+  - Four ultimates only hit champions in 5v5: Zero-Day (Zero), Merge Conflict (Patch), On My Way (Pager) and Regression Barrage (Tester). Floor 1 has no enemy champions, so they did nothing there. In Story Mode they now hit bugs and nests. Hooks with the old behavior as the default: `OfflineSim._champTargetOk` and `TeamModeScene._champOnly`; the story classes override them.
+  - If you play Ops, floor 1's Ops NPC becomes Brew (`alt` in the floor file, else another champion of the same lane). The NPC lines are spoken by the stand-in.
+- **A regression the gates caught and fixed:** the menu first loaded the stickman image under the shared `stick-idle` key. A direct link (`?scene=team&offline=1`) then loaded it twice, and Phaser logged "Texture key already in use". The menu now loads its own copy (`menu-stick`), and `drawChampionPortrait` takes the key as an optional last argument.
+- **Merge:** a dry-run merge with `chore/drop-donation` (which also edits MenuScene) is clean.
+- **Tests:**
+
+  | Check | Result |
+  |---|---|
+  | `story2_pick_check` (new) | 29/29: every champion starts the floor and casts Q W E R; the four champion-only ults hit bugs |
+  | `story2_check` | 18/18 |
+  | `offline_check` | 6/6, three runs |
+  | `pass2_ui` | 16/16 |
+  | `team_ff` (10 matches) | 0 exceptions, 0 stuck, 0 inside a wall |
+  | `team_sim --exploits` | 118/118 |
+
 ## Next steps, in order
 
 1. **Story M2: floor 1 complete** (`feat/story-2`):
-   - the Zero lieutenant arena: an enemy champion on the bot brain with an HP multiplier and adds, who joins after the fight;
-   - save and load (`SaveManager` key `story2`, checkpoint = break room);
-   - a menu entry: needs the user's choice (see below);
+   - the Zero lieutenant arena: an enemy champion on the bot brain with an HP multiplier and adds, who joins after the fight. If the player picked Zero, a stand-in takes the part (same `alt` rule as the NPCs);
+   - save and load mid-floor (`SaveManager.story2` already holds the pick and the clears; add the checkpoint = break room);
+   - switching champion at a break room (design §3); today you switch between runs (CHAMPION on FLOOR CLEARED);
    - `story2_floor_check.mjs`: rooms reachable with the right keys, doors not overlapping walls;
    - a touch pass (TALK button on phones);
    - floor music.
@@ -133,11 +169,9 @@ The planned themes collided: Sprint is already "the Scrum Master" and Zero is "t
 ## Decisions for the user
 
 1. Push and merge the three branches in the order above.
-2. Story Mode 2.0 open questions (design doc §6):
-   - delete the side-view mode, or keep it as "Retro"?
-   - free champion pick (recommended), or story unlocks?
-   - one 10–15 minute map per floor (recommended), or 3 short stages per floor?
-3. Where Story Mode 2.0 goes in the menu: replace the single-player PLAY button, or add a new card?
+2. Still open (design doc §6): delete the side-view Story Mode on `feat/story-mode`, or keep it as a bonus "Retro" mode?
+
+Answered on 2026-11-25: free champion pick · one map per floor · a new STORY card.
 
 ## How to report back
 

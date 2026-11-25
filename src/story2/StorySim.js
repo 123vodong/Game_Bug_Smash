@@ -12,7 +12,7 @@
 // bugs and nests are 'red' units with `_story` set. No waves, towers, camps or epics.
 import { OfflineSim } from '../entities/moba/OfflineSim.js';
 import * as R from '../../shared/moba/rules.js';
-import { CHAMPIONS } from '../../shared/moba/champions.js';
+import { CHAMPIONS, CHAMPION_IDS } from '../../shared/moba/champions.js';
 import { CHAMP_RADIUS, distToSeg } from '../../shared/moba/map.js';
 import { STORY_BUGS } from './bugs.js';
 
@@ -89,8 +89,13 @@ export class StorySim extends OfflineSim {
       const id = this._addStoryUnit('nest', n.at.x, n.at.y, n.room, null);
       const u = st.units.get(id); u._nest = n; u._spawnAt = 0; u._spawnIdx = 0;
     }
+    const mine = st.champions.get(this.localId)?.champ;
+    this._who = {};   // NPC lines are written for the floor's champion; a stand-in speaks them instead
     for (const n of f.npcs) {
-      const c = this._addChamp(n.id, 'blue', CHAMPIONS[n.champ] ? n.champ : 'ops', n.name || CHAMPIONS[n.champ]?.name || 'Coworker', true, CHAMPIONS[n.champ]?.lane);
+      const champ = this._npcChamp(n, mine);
+      if (champ !== n.champ) this._who[n.champ] = champ;
+      const name = champ === n.champ ? (n.name || CHAMPIONS[champ].name) : CHAMPIONS[champ].name;
+      const c = this._addChamp(n.id, 'blue', champ, name || 'Coworker', true, CHAMPIONS[champ].lane);
       c.x = n.at.x; c.y = n.at.y; c._npc = true; c.invulnerable = true; c.level = st.champions.get(this.localId).level;
       c.xp = R.XP_TABLE[c.level - 1]; this._recalc(c, true);
     }
@@ -455,6 +460,20 @@ export class StorySim extends OfflineSim {
 
   /** ttl (ms): a line still queued that long after it was said is skipped (room-entry lines). */
   _say(lines, ttl = 0) {
-    for (const l of lines || []) this.emit('story', { k: 'say', who: l.who, line: l.line, ttl });
+    for (const l of lines || []) this.emit('story', { k: 'say', who: this._who?.[l.who] || l.who, line: l.line, ttl });
   }
+
+  /** The NPC's champion. When you play that champion yourself, the floor's `alt` (else another champion
+   *  of the same lane) stands in, so you never meet yourself. */
+  _npcChamp(n, mine) {
+    const want = CHAMPIONS[n.champ] ? n.champ : 'ops';
+    if (want !== mine) return want;
+    if (CHAMPIONS[n.alt] && n.alt !== mine) return n.alt;
+    const lane = CHAMPIONS[want].lane;
+    return CHAMPION_IDS.find((id) => id !== mine && CHAMPIONS[id].lane === lane) || CHAMPION_IDS.find((id) => id !== mine);
+  }
+
+  /** Story rule: skills that only hit champions in 5v5 (Zero-Day, Merge Conflict, On My Way, Regression
+   *  Barrage) also hit bugs and nests, so every champion's whole kit works on a story floor. */
+  _champTargetOk(e) { return !!e.champ || !!e._story; }
 }

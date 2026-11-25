@@ -915,13 +915,14 @@ export function projectileKey(champId, slot) {
 
 // ── portraits ──
 const PORTRAIT = 96;   // display px of the generated texture (drawn at 2×)
-/** 'portrait-<id>' texture (circular costume bust). null until 'stick-idle' is loaded. */
-export function portraitKey(scene, champId) {
+/** 'portrait-<id>' texture (circular costume bust). null until the stickman (`stick`, default
+ *  'stick-idle') is loaded. The main menu passes its own copy of the same SVG ('menu-stick'). */
+export function portraitKey(scene, champId, stick = 'stick-idle') {
   const def = CHAMPIONS[champId];
   if (!def || !scene?.textures) return null;
   const key = `portrait-${champId}`;
   if (scene.textures.exists(key)) return key;
-  if (!scene.textures.exists('stick-idle')) return null;
+  if (!scene.textures.exists(stick)) return null;
   ensureMobaLooks(scene);
   const res = 2, S = PORTRAIT;
   const tex = scene.textures.createCanvas(key, S * res, S * res);
@@ -949,7 +950,7 @@ export function portraitKey(scene, champId) {
     };
     const parts = costumeLayout(champId, 'idle');
     for (const p of parts) if (p.layer === 'mid') { const m = META[p.key]; if (m) draw(p.key, p.x, p.y, p.rot, m.w, m.h, m.ox, m.oy); }
-    draw('stick-idle', 0, 0, 0, STICK.w, STICK.h, STICK.ox, STICK.oy);
+    draw(stick, 0, 0, 0, STICK.w, STICK.h, STICK.ox, STICK.oy);
     for (const p of parts) if (p.layer === 'front') { const m = META[p.key]; if (m) draw(p.key, p.x, p.y, p.rot, m.w, m.h, m.ox, m.oy); }
     ctx.restore();
   } catch (e) { console.warn('[looks] portrait failed', champId, e); }
@@ -958,11 +959,11 @@ export function portraitKey(scene, champId) {
 }
 
 /** Circular costume portrait (falls back to the emoji until the stickman SVGs are loaded). */
-export function drawChampionPortrait(scene, champId, x, y, size) {
+export function drawChampionPortrait(scene, champId, x, y, size, stick = 'stick-idle') {
   const def = CHAMPIONS[champId];
   const c = scene.add.container(x, y);
   const col = def?.color ?? 0x888888;
-  const key = def ? portraitKey(scene, champId) : null;
+  const key = def ? portraitKey(scene, champId, stick) : null;
   if (key) {
     c.add(scene.add.image(0, 0, key).setDisplaySize(size, size));
   } else {

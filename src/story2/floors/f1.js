@@ -97,7 +97,7 @@ export default {
   ],
 
   npcs: [
-    { id: 'npc_ops', champ: 'ops', name: 'Ops', at: { x: 5900, y: 3900 }, joins: true, script: [
+    { id: 'npc_ops', champ: 'ops', alt: 'barista', name: 'Ops', at: { x: 5900, y: 3900 }, joins: true, script: [   // alt: if you play Ops
       { who: 'ops', line: 'Intern?! You are still here? The Null Crew cut the elevators on their way to the roof.' },
       { who: 'ops', line: 'The stairwell up is in the Records Archive, behind the blue keycard door.' },
       { who: 'ops', line: 'The keycard was in the Server Room... which is a bug nest now. I am coming with you.' },

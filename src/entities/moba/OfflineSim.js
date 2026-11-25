@@ -726,7 +726,7 @@ export class OfflineSim {
           const an = base + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0), ux = Math.cos(an), uy = Math.sin(an);
           fx({ k: 'proj', sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), dx: ux, dy: uy, speed: sk.speed, range: sk.range, width: sk.width, color: sk.color });
           const x1 = c.x + ux * sk.range, y1 = c.y + uy * sk.range;
-          const hits = enemies((e) => !hitSet.has(e.id) && (!sk.champOnly || e.champ) && distToSeg(e.x, e.y, c.x, c.y, x1, y1) <= sk.width / 2 + this._radius(e))
+          const hits = enemies((e) => !hitSet.has(e.id) && (!sk.champOnly || this._champTargetOk(e)) && distToSeg(e.x, e.y, c.x, c.y, x1, y1) <= sk.width / 2 + this._radius(e))
             .map((e) => ({ e, d: (e.x - c.x) * ux + (e.y - c.y) * uy })).filter((h) => h.d > 0).sort((a, b) => a.d - b.d);
           for (const h of sk.pierce ? hits : hits.slice(0, 1)) {
             hitSet.add(h.e.id); // one cast = one shared hit set (a fan hits each target once)
@@ -757,7 +757,7 @@ export class OfflineSim {
       }
       case 'target': {
         const e = this._ent(m.id);
-        if (e && e.kind !== 'pet' && this._alive(e) && e.team !== c.team && (sk.targets !== 'enemyChamp' || e.champ) && dist(c, e) <= sk.range + 80) {
+        if (e && e.kind !== 'pet' && this._alive(e) && e.team !== c.team && (sk.targets !== 'enemyChamp' || this._champTargetOk(e)) && dist(c, e) <= sk.range + 80) {
           hit(e, sk.execute ? sk.execute.missingHpPct * (e.maxHp - e.hp) : 0, { x: c.x, y: c.y });
         }
         break;
@@ -765,7 +765,7 @@ export class OfflineSim {
       case 'dash': {
         const x0 = c.x, y0 = c.y, tgt = sk.toTarget ? this._ent(m.id) : null;
         const okT = !!tgt && tgt.kind !== 'pet' && this._alive(tgt) && tgt.team !== c.team && !isStruct(tgt)
-          && (sk.targets !== 'enemyChamp' || tgt.champ) && dist(c, tgt) <= sk.range + 100;
+          && (sk.targets !== 'enemyChamp' || this._champTargetOk(tgt)) && dist(c, tgt) <= sk.range + 100;
         let want;
         if (okT) {   // like the server: stop at contact, and only the target is hit
           const d = dist(c, tgt) || 1, reach = Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
@@ -813,6 +813,9 @@ export class OfflineSim {
   }
 
   // ───────────────────────── v3: summoner spells (rough mirror of the server) ─────────────────────────
+  /** May a `targets: 'enemyChamp'` skill hit `e`? (Story Mode 2.0 lets it hit bugs and nests.) */
+  _champTargetOk(e) { return !!e.champ; }
+
   /** Healing multiplier (Escalate / ignite cuts all healing). */
   _healMul(c) { return c._ignite && c._ignite.until > this.t ? 1 - (SPELLS.ignite.healCut || 0) : 1; }
 

@@ -16,6 +16,9 @@ import { LevelSelectPanel } from '../ui/LevelSelectPanel.js';
 import { WelcomePanel } from '../ui/WelcomePanel.js';
 import { DonatePanel, MONEY } from '../ui/DonatePanel.js';
 import { loadMatch, clearMatch, fetchMe } from '../core/Identity.js';
+import { CHAMPIONS, isChampionId } from '../../shared/moba/champions.js';
+import { drawChampionPortrait } from '../entities/moba/looks.js';
+import { STORY_FLOORS, STORY_DEFAULT_CHAMP, nextStoryFloor, fmtRunTime } from '../story2/catalog.js';
 
 // Stats API on the game server — same host rules as MultiPlayScene's SERVER_URL /
 // Team Mode's teamServerUrl(): `?server=ws(s)://…` override, the :8000 python static
@@ -41,6 +44,11 @@ export default class MenuScene extends Phaser.Scene {
 
   preload() {
     this.load.image('menu-bg', 'assets/menu_scene/background.png');
+    // STORY card portrait. Its own key: a deep link stops this scene mid-load while Team Mode loads
+    // 'stick-idle', and two loaders adding one key log "Texture key already in use".
+    if (!this.textures.exists('stick-idle') && !this.textures.exists('menu-stick')) {
+      this.load.svg('menu-stick', 'assets/characters/stickman/idle.svg', { width: 144, height: 144 });
+    }
   }
 
   create() {
@@ -59,6 +67,7 @@ export default class MenuScene extends Phaser.Scene {
     // Floating right-side panels
     this._drawDailyMission(W, H);
     this._drawDevTip(W, H);
+    this._drawStoryCard(W, H);   // left side, mirrors DAILY MISSIONS
 
     // Buttons — center stacked
     this._drawButtons(W, H);
@@ -70,6 +79,7 @@ export default class MenuScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ENTER', () => { if (!this._modalOpen()) this._startGame(); });
     this.input.keyboard.on('keydown-M', () => { if (!this._modalOpen()) this._toggleMute(); });
     this.input.keyboard.on('keydown-L', () => { if (!this._modalOpen()) this._openLevels(); });
+    this.input.keyboard.on('keydown-S', () => { if (!this._modalOpen()) this._startStory(); });
 
     this.cameras.main.fadeIn(300, 0, 0, 0);
 
@@ -632,6 +642,111 @@ export default class MenuScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * STORY MODE card (left side, mirrors DAILY MISSIONS; Story Mode 2.0, 2026-11-25): your story
+   * champion, the next floor and the 5-floor progress. Tap it, PLAY STORY or [S] → the champion pick
+   * (src/story2 is only downloaded then).
+   */
+  _drawStoryCard(W, H) {
+    const STORY = 0xff9f43;
+    const save = SaveManager.getStory2();
+    const floor = nextStoryFloor(save.floors);
+    const teamChamp = SaveManager.getTeamChamp();
+    const champ = isChampionId(save.champ) ? save.champ : (isChampionId(teamChamp) ? teamChamp : STORY_DEFAULT_CHAMP);
+    const def = CHAMPIONS[champ];
+    const panelW = 252, panelH = 228;
+    const x = panelW / 2 + 14, y = H * 0.42 + 4;
+    const c = this.add.container(x, y).setDepth(8);
+    this._storyCard = c;
+
+    c.add(this.add.rectangle(4, 6, panelW, panelH, 0x000000, 0.55));
+    const halo = this.add.rectangle(0, 0, panelW + 16, panelH + 16, STORY, 0.2);
+    c.add(halo);
+    c.add(this.add.rectangle(0, 0, panelW, panelH, 0x140c05, 0.93).setStrokeStyle(2, STORY));
+    c.add(this.add.rectangle(0, 0, panelW - 8, panelH - 8, 0, 0).setStrokeStyle(1, STORY, 0.4));
+    c.add(this.add.rectangle(0, -panelH / 2 + 14, panelW - 16, 18, STORY, 0.2));
+    const title = this.add.text(0, -panelH / 2 + 14, '📖 STORY MODE', {
+      fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 13, color: '#ffd23f', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    title.setShadow(0, 0, '#ffd23f', 6, true, true);
+    c.add(title);
+
+    // Portrait: the costume bust is drawn a moment after the menu shows (it builds the costume
+    // textures once); the champion's emoji holds the spot until then.
+    const px = -panelW / 2 + 46, py = -panelH / 2 + 68;
+    c.add(this.add.circle(px, py, 33, STORY, 0.16));
+    const ph = this.add.text(px, py, def?.emoji || '🧑‍💻', { fontSize: 30, padding: { y: 4 } }).setOrigin(0.5);
+    c.add(ph);
+    this.time.delayedCall(200, () => {
+      if (!c.scene || !ph.scene) return;
+      const p = drawChampionPortrait(this, champ, px, py, 58, this.textures.exists('stick-idle') ? 'stick-idle' : 'menu-stick');
+      c.addAt(p, c.getIndex(ph));
+      ph.destroy();
+    });
+    const cn = this.add.text(px, py + 42, def?.name || '', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 11, color: '#ffffff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    c.add(cn);
+
+    const tx = -panelW / 2 + 90;   // text column: 150 px to the card's inner edge
+    c.add(this.add.text(tx, py - 26, `FLOOR ${floor.n}`, {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffffff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0, 0.5));
+    c.add(this.add.text(tx, py - 7, `${floor.name} · ${floor.clock}`, {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 11, color: '#ffb35c', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0, 0.5));
+    c.add(this.add.text(tx, py + 9, floor.sub, { fontFamily: 'Consolas, monospace', fontSize: 11, color: '#e6dccb' }).setOrigin(0, 0.5));
+    // 5 floor pips: green = cleared, orange = next, dim = coming
+    STORY_FLOORS.forEach((f, i) => {
+      const done = save.floors[f.id]?.clears > 0, cur = f.id === floor.id;
+      const pip = this.add.rectangle(tx + i * 19, py + 29, 13, 10, done ? 0x7ed957 : (cur ? STORY : 0x3a3326), 1)
+        .setStrokeStyle(1, done ? 0x7ed957 : (cur ? 0xffd23f : 0x6a5a40), 1).setOrigin(0, 0.5);
+      c.add(pip);
+    });
+    const cleared = STORY_FLOORS.filter((f) => save.floors[f.id]?.clears > 0).length;
+    c.add(this.add.text(tx + 98, py + 29, `${cleared}/${STORY_FLOORS.length} floors`, { fontFamily: 'Consolas, monospace', fontSize: 10, color: '#ffcf8a' }).setOrigin(0, 0.5));
+
+    const rec = save.floors[floor.id];
+    const blurb = rec?.clears > 0
+      ? `Best ${fmtRunTime(rec.bestMs)} on this floor. Floors 2–5 are on the way.`
+      : 'Climb the office tower by midnight. Smash bug nests, recruit coworkers.';
+    c.add(this.add.text(0, py + 74, blurb, {
+      fontFamily: 'Consolas, monospace', fontSize: 11, color: '#e6dccb', align: 'center',
+      wordWrap: { width: panelW - 28, useAdvancedWrap: true },
+    }).setOrigin(0.5, 0.5));
+
+    // PLAY STORY strip
+    const by = panelH / 2 - 30, bw = panelW - 28, bh = 38;
+    const btn = this.add.graphics();
+    const paintBtn = (lit) => {
+      btn.clear();
+      btn.fillStyle(lit ? 0x3a2410 : 0x24160a, 1); btn.fillRoundedRect(-bw / 2, by - bh / 2, bw, bh, 10);
+      btn.lineStyle(2, STORY, 1); btn.strokeRoundedRect(-bw / 2, by - bh / 2, bw, bh, 10);
+    };
+    paintBtn(false);
+    c.add(btn);
+    const bt = this.add.text(0, by, '▶  PLAY STORY', {
+      fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 16, color: '#ffffff', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    bt.setShadow(0, 0, this._hex(STORY), 8, true, true);
+    c.add(bt);
+
+    // NEW sticker (top-right corner), like the TEAM 5v5 button's
+    const tag = this.add.container(panelW / 2 - 8, -panelH / 2 - 4).setAngle(8);
+    const tg = this.add.graphics();
+    tg.fillStyle(NEON_PINK, 1); tg.fillRoundedRect(-19, -8, 38, 16, 8);
+    tag.add([tg, this.add.text(0, 0, 'NEW', { fontFamily: 'Arial Black, sans-serif', fontSize: 10, color: '#ffffff' }).setOrigin(0.5)]);
+    c.add(tag);
+    this.tweens.add({ targets: tag, scale: { from: 1, to: 1.12 }, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: halo, alpha: { from: 0.2, to: 0.42 }, duration: 1300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+
+    const hit = this.add.rectangle(0, 0, panelW, panelH, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => { paintBtn(true); c.setScale(1.03); AudioManager.uiHover(); });
+    hit.on('pointerout', () => { paintBtn(false); c.setScale(1); });
+    hit.on('pointerup', () => this._startStory());
+    c.add(hit);
+  }
+
   // ============================================================ AMBIENT
   _spawnNeonParticles() {
     const { width: W, height: H } = this.scale;
@@ -660,7 +775,7 @@ export default class MenuScene extends Phaser.Scene {
     const c = SaveManager.getCareer();
     const stars = c.campaignStars;
     const txt = this.add.text(28, H - 24,
-      `levels ${Math.min(c.campaignLevels, TOTAL_LEVELS)}/${TOTAL_LEVELS} ★${stars}   [L] levels  [M] mute  [ENTER] play`, {
+      `levels ${Math.min(c.campaignLevels, TOTAL_LEVELS)}/${TOTAL_LEVELS} ★${stars}   [S] story  [L] levels  [M] mute  [ENTER] play`, {
       fontFamily: 'Consolas, monospace', fontSize: 11, color: '#ffffff',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0, 0.5).setDepth(46);
@@ -714,6 +829,30 @@ export default class MenuScene extends Phaser.Scene {
     let idx = SaveManager.getUnlockedIndex();
     if (idx >= TOTAL_LEVELS) idx = 0;
     this._startLevel(idx);
+  }
+
+  /** STORY card / [S]: the Story Mode 2.0 champion pick. src/story2 is downloaded only now. */
+  _startStory() {
+    if (this._starting || this._modalOpen()) return;
+    this._starting = true;
+    AudioManager.uiClick();
+    const load = import('../story2/launch.js');
+    let went = false;
+    const go = () => {
+      if (went) return;
+      went = true;
+      load.then((m) => { if (this.sys.isActive()) m.openStoryPick(this.game, {}, this); }).catch((e) => {
+        console.error('[story] could not load Story Mode', e);
+        this._starting = false;
+        if (!this.sys.isActive()) return;
+        this.cameras.main.resetFX();
+        this.cameras.main.fadeIn(200, 0, 0, 0);
+        this._toast('Story Mode could not load. Check the connection and try again.');
+      });
+    };
+    this.cameras.main.once('camerafadeoutcomplete', go);
+    this.cameras.main.fadeOut(300, 0, 0, 0);
+    setTimeout(go, 800);   // never wait on the camera longer than this (slow devices)
   }
 
   _startLevel(idx) {
