@@ -32,10 +32,11 @@ const TILE_W = 166, TILE_H = 49, COL_GAP = 8, ROW_GAP = 5, COLS = 5;
 const GRID_W = COLS * TILE_W + (COLS - 1) * COL_GAP;
 const RX = GRID_X + GRID_W + 16, RW = 264;   // right column: detail, inventory, recommended
 const PW = RX + RW + 16, PH = 682;           // 39 items (1 + 10 + 28 → 9 rows of 5) → 1174 × 682
-const DETAIL_H = 252;
-const TREE_Y = GRID_Y + DETAIL_H + 158;
-const TREE_H = PH - 28 - TREE_Y;
+const DETAIL_H = 414;
+const INV_Y = GRID_Y + DETAIL_H + 14;
+const REC_Y = INV_Y + 70;
 const MAX_RECIPE_COMPONENTS = Math.max(3, ...Object.values(ITEMS).map((it) => it.recipe?.length || 0));
+const MAX_BUILDS_INTO = 5;
 const DOUBLE_CLICK_MS = 380;
 const TIERS = [
   { id: 'consumable', label: 'CONSUMABLES · used instantly', color: 0x7ed957 },
@@ -87,7 +88,6 @@ export class ShopPanel {
     this._buildDetail();
     this._buildInventory();
     this._buildRecommended();
-    this._buildInlineRecipeTree();
     pin(this.root);
 
     this._onEsc = () => { if (this._open) scene.time.delayedCall(0, () => this.close()); };
@@ -271,91 +271,87 @@ export class ShopPanel {
   _buildDetail() {
     const s = this.scene, B = this._body;
     const x = RX, y = GRID_Y;
-    this._detailG = s.add.graphics();
-    this._dEmoji = s.add.text(x + 40, y + 42, '', { fontSize: 40, padding: { y: 6 } }).setOrigin(0.5);
-    this._dName = s.add.text(x + 80, y + 14, '', {
-      fontFamily: FONT_TITLE, fontSize: 15, color: '#ffffff', stroke: '#000000', strokeThickness: 3,
-      wordWrap: { width: RW - 90, useAdvancedWrap: true },
-    });
-    this._dMeta = s.add.text(x + 80, y + 52, '', {
-      fontFamily: FONT_MONO, fontSize: 12, fontStyle: 'bold', color: '#ffd23f', padding: { y: 2 },
-    });
-    this._dStats = s.add.text(x + 14, y + 86, '', {
-      fontFamily: FONT_UI, fontSize: 13, fontStyle: 'bold', color: '#8fd0ff',
-      wordWrap: { width: RW - 28, useAdvancedWrap: true },
-    });
-    this._dDesc = s.add.text(x + 14, y + 110, '', {
-      fontFamily: FONT_MONO, fontSize: 12, color: '#cfe3f5', lineSpacing: 1,
-      wordWrap: { width: RW - 28, useAdvancedWrap: true },
-    });
-    this._dReason = s.add.text(x + RW / 2, y + 196, '', {
-      fontFamily: FONT_MONO, fontSize: 12, fontStyle: 'bold', color: '#ff8a8a', padding: { y: 2 },
-    }).setOrigin(0.5);
-    B.add([this._detailG, this._dEmoji, this._dName, this._dMeta, this._dStats, this._dDesc, this._dReason]);
-    this._buyBtn = makeButton(s, {
-      x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'BUY', color: NEON.green, fontSize: 16,
-      onClick: () => { if (this._open) this._tryBuy(this._sel); },
-    });
-    this._sellBtn = makeButton(s, {
-      x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'SELL', color: NEON.orange, fontSize: 16,
-      onClick: () => { if (this._open && this._selSlot != null) this._trySell(this._selSlot); },
-    });
-    this._sellBtn.root.setVisible(false);
-    B.add([this._buyBtn.root, this._sellBtn.root]);
-  }
-
-  /** Inline Build Path / Recipe Tree embedded directly in the bottom-right column (click components to buy). */
-  _buildInlineRecipeTree() {
-    const s = this.scene, B = this._body;
     this._treeHover = -1;
-    this._treeBg = s.add.graphics();
+    this._intoHover = -1;
+    this._detailG = s.add.graphics();
     this._treeLines = s.add.graphics();
-    this._treeTitle = s.add.text(RX + 10, TREE_Y + 12, 'BUILD PATH', {
+
+    // 1. Top strip: BUILDS INTO (LoL-style horizontal icon row)
+    this._intoLabel = s.add.text(x + 12, y + 14, 'BUILDS INTO', {
       fontFamily: FONT_TITLE, fontSize: 10, color: '#7ec8ff',
     }).setOrigin(0, 0.5);
-    this._treeSub = s.add.text(RX + RW - 10, TREE_Y + 12, '', {
-      fontFamily: FONT_MONO, fontSize: 9, color: '#8ea4c0',
-    }).setOrigin(1, 0.5);
-    this._treeEmpty = s.add.text(RX + RW / 2, TREE_Y + TREE_H / 2 + 6, '', {
-      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c', align: 'center',
-      wordWrap: { width: RW - 24 },
-    }).setOrigin(0.5);
-    B.add([this._treeBg, this._treeLines, this._treeTitle, this._treeSub, this._treeEmpty]);
-
-    // Top root node (selected core item) — clickable to buy/upgrade
-    const rW = 196, rH = 30;
-    const rc = s.add.container(RX + RW / 2, TREE_Y + 41);
-    const rBg = s.add.graphics();
-    const rIcon = s.add.text(-rW / 2 + 16, 0, '', { fontSize: 16, padding: { y: 2 } }).setOrigin(0.5);
-    const rName = s.add.text(-rW / 2 + 30, 0, '', {
-      fontFamily: FONT_UI, fontSize: 11, fontStyle: 'bold', color: '#ffffff',
+    this._intoEmpty = s.add.text(x + 12, y + 44, 'Final tier item', {
+      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c',
     }).setOrigin(0, 0.5);
-    const rCost = s.add.text(rW / 2 - 8, 0, '', {
-      fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#ffd23f',
+    B.add([this._detailG, this._treeLines, this._intoLabel, this._intoEmpty]);
+
+    this._intoNodes = [];
+    const iSz = 38, iGap = 10;
+    for (let i = 0; i < MAX_BUILDS_INTO; i++) {
+      const ix = x + 12 + i * (iSz + iGap) + iSz / 2;
+      const iy = y + 44;
+      const c = s.add.container(ix, iy);
+      const bg = s.add.graphics();
+      const icon = s.add.text(0, 0, '', { fontSize: 20, padding: { y: 2 } }).setOrigin(0.5);
+      const hit = s.add.rectangle(0, 0, iSz, iSz, 0xffffff, 0).setInteractive({ useHandCursor: true });
+      const idx = i;
+      hit.on('pointerover', () => { this._intoHover = idx; this._renderInlineRecipeTree(); });
+      hit.on('pointerout', () => { if (this._intoHover === idx) { this._intoHover = -1; this._renderInlineRecipeTree(); } });
+      hit.on('pointerdown', swallow);
+      hit.on('pointerup', (p, lx, ly, ev) => {
+        ev?.stopPropagation?.();
+        const nd = this._intoNodes[idx];
+        if (this._open && nd?.itemId) this._clickItem(nd.itemId, p);
+      });
+      c.add([bg, icon, hit]);
+      B.add(c);
+      this._intoNodes.push({ c, bg, icon, w: iSz, h: iSz, itemId: null });
+    }
+
+    // 2. Middle: REQUIRES / Recipe Tree (LoL-style icon nodes + gold cost + tree connectors)
+    this._reqLabel = s.add.text(x + 12, y + 84, 'REQUIRES', {
+      fontFamily: FONT_TITLE, fontSize: 10, color: '#7ec8ff',
+    }).setOrigin(0, 0.5);
+    this._reqHint = s.add.text(x + RW - 12, y + 84, 'L-click: view · R-click: buy', {
+      fontFamily: FONT_MONO, fontSize: 8.5, color: '#6f85a3',
     }).setOrigin(1, 0.5);
-    const rHit = s.add.rectangle(0, 0, rW, rH, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    this._treeEmpty = s.add.text(x + RW / 2, y + 186, '', {
+      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c', align: 'center',
+    }).setOrigin(0.5);
+    B.add([this._reqLabel, this._reqHint, this._treeEmpty]);
+
+    // Root icon tile (selected item)
+    const rSz = 44;
+    const rc = s.add.container(x + RW / 2, y + 118);
+    const rBg = s.add.graphics();
+    const rIcon = s.add.text(0, -1, '', { fontSize: 22, padding: { y: 2 } }).setOrigin(0.5);
+    const rCost = s.add.text(0, rSz / 2 + 9, '', {
+      fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#ffd23f',
+    }).setOrigin(0.5);
+    const rHit = s.add.rectangle(0, 0, rSz, rSz, 0xffffff, 0).setInteractive({ useHandCursor: true });
     rHit.on('pointerdown', swallow);
     rHit.on('pointerup', (p, lx, ly, ev) => {
       ev?.stopPropagation?.();
-      if (this._open && this._treeRoot?.itemId) this._tryBuy(this._treeRoot.itemId);
+      if (this._open && this._treeRoot?.itemId) this._clickItem(this._treeRoot.itemId, p);
     });
-    rc.add([rBg, rIcon, rName, rCost, rHit]);
+    rc.add([rBg, rIcon, rCost, rHit]);
     B.add(rc);
-    this._treeRoot = { c: rc, bg: rBg, icon: rIcon, name: rName, cost: rCost, w: rW, h: rH, itemId: null };
+    this._treeRoot = { c: rc, bg: rBg, icon: rIcon, cost: rCost, w: rSz, h: rSz, itemId: null };
 
-    // Bottom component / "builds into" nodes (up to MAX_RECIPE_COMPONENTS)
+    // Component icon tiles (below root)
     this._treeNodes = [];
+    const cSz = 44;
     for (let i = 0; i < MAX_RECIPE_COMPONENTS; i++) {
-      const c = s.add.container(RX + RW / 2, TREE_Y + TREE_H - 42);
+      const c = s.add.container(x + RW / 2, y + 194);
       const bg = s.add.graphics();
-      const icon = s.add.text(0, -18, '', { fontSize: 18, padding: { y: 2 } }).setOrigin(0.5);
-      const name = s.add.text(0, 3, '', {
-        fontFamily: FONT_UI, fontSize: 10, fontStyle: 'bold', color: '#ffffff', align: 'center',
+      const icon = s.add.text(0, -1, '', { fontSize: 22, padding: { y: 2 } }).setOrigin(0.5);
+      const check = s.add.text(cSz / 2 - 2, -cSz / 2 + 1, '', {
+        fontFamily: FONT_TITLE, fontSize: 10, color: '#7ed957', stroke: '#000000', strokeThickness: 3,
+      }).setOrigin(1, 0);
+      const cost = s.add.text(0, cSz / 2 + 9, '', {
+        fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#ffd23f',
       }).setOrigin(0.5);
-      const badge = s.add.text(0, 21, '', {
-        fontFamily: FONT_MONO, fontSize: 9, fontStyle: 'bold', color: '#ffd23f', align: 'center',
-      }).setOrigin(0.5);
-      const hit = s.add.rectangle(0, 0, 110, 66, 0xffffff, 0).setInteractive({ useHandCursor: true });
+      const hit = s.add.rectangle(0, 0, cSz + 10, cSz + 16, 0xffffff, 0).setInteractive({ useHandCursor: true });
       const idx = i;
       hit.on('pointerover', () => { this._treeHover = idx; this._renderInlineRecipeTree(); });
       hit.on('pointerout', () => { if (this._treeHover === idx) { this._treeHover = -1; this._renderInlineRecipeTree(); } });
@@ -363,179 +359,158 @@ export class ShopPanel {
       hit.on('pointerup', (p, lx, ly, ev) => {
         ev?.stopPropagation?.();
         const nd = this._treeNodes[idx];
-        if (!this._open || !nd?.itemId) return;
-        if (nd.mode === 'into') {
-          this._selSlot = null;
-          this._select(nd.itemId);
-          AudioManager.uiClick();
-          return;
-        }
-        // Component node: click directly buys unowned component (or selects if already owned)
-        if (!nd.owned) this._tryBuy(nd.itemId);
-        else { this._selSlot = null; this._select(nd.itemId); AudioManager.uiClick(); }
+        if (this._open && nd?.itemId) this._clickItem(nd.itemId, p);
       });
-      c.add([bg, icon, name, badge, hit]);
+      c.add([bg, icon, check, cost, hit]);
       B.add(c);
-      this._treeNodes.push({ c, bg, icon, name, badge, hit, w: 110, h: 66, itemId: null, owned: false, mode: 'comp' });
+      this._treeNodes.push({ c, bg, icon, check, cost, w: cSz, h: cSz, itemId: null, owned: false });
     }
+
+    // 3. Bottom: Selected Item Info + BUY / SELL button (unified inside the same LoL panel)
+    const dy = y + 244;
+    this._dEmoji = s.add.text(x + 32, dy + 24, '', { fontSize: 32, padding: { y: 4 } }).setOrigin(0.5);
+    this._dName = s.add.text(x + 60, dy + 6, '', {
+      fontFamily: FONT_TITLE, fontSize: 14, color: '#ffffff', stroke: '#000000', strokeThickness: 3,
+      wordWrap: { width: RW - 70, useAdvancedWrap: true },
+    });
+    this._dMeta = s.add.text(x + 60, dy + 26, '', {
+      fontFamily: FONT_MONO, fontSize: 11, fontStyle: 'bold', color: '#ffd23f', padding: { y: 1 },
+    });
+    this._dStats = s.add.text(x + 12, dy + 50, '', {
+      fontFamily: FONT_UI, fontSize: 12, fontStyle: 'bold', color: '#8fd0ff',
+      wordWrap: { width: RW - 24, useAdvancedWrap: true },
+    });
+    this._dDesc = s.add.text(x + 12, dy + 70, '', {
+      fontFamily: FONT_MONO, fontSize: 10.5, color: '#cfe3f5', lineSpacing: 1,
+      wordWrap: { width: RW - 24, useAdvancedWrap: true },
+    });
+    this._dReason = s.add.text(x + RW / 2, y + DETAIL_H - 54, '', {
+      fontFamily: FONT_MONO, fontSize: 11, fontStyle: 'bold', color: '#ff8a8a', padding: { y: 1 },
+    }).setOrigin(0.5);
+    B.add([this._dEmoji, this._dName, this._dMeta, this._dStats, this._dDesc, this._dReason]);
+
+    this._buyBtn = makeButton(s, {
+      x: x + RW / 2, y: y + DETAIL_H - 24, w: RW - 24, h: 36, label: 'BUY', color: NEON.green, fontSize: 15,
+      onClick: () => { if (this._open) this._tryBuy(this._sel); },
+    });
+    this._sellBtn = makeButton(s, {
+      x: x + RW / 2, y: y + DETAIL_H - 24, w: RW - 24, h: 36, label: 'SELL', color: NEON.orange, fontSize: 15,
+      onClick: () => { if (this._open && this._selSlot != null) this._trySell(this._selSlot); },
+    });
+    this._sellBtn.root.setVisible(false);
+    B.add([this._buyBtn.root, this._sellBtn.root]);
   }
 
   _renderInlineRecipeTree() {
-    const id = this._hover || this._sel;
+    const id = this._sel;
     const it = id ? ITEMS[id] : null;
-    const bg = this._treeBg, lines = this._treeLines;
-    bg.clear();
+    const lines = this._treeLines;
     lines.clear();
-    bg.fillStyle(0x0b1322, 0.94);
-    fillRR(bg, RX, TREE_Y, RW, TREE_H, 10);
-    bg.lineStyle(1.2, 0x2a3d5c, 0.85);
-    strokeRR(bg, RX, TREE_Y, RW, TREE_H, 10);
 
-    const hideAll = (msg = '') => {
-      this._treeRoot.c.setVisible(false);
-      this._treeRoot.itemId = null;
-      for (const nd of this._treeNodes) { nd.c.setVisible(false); nd.itemId = null; }
-      this._treeEmpty.setText(msg).setVisible(!!msg);
-    };
+    // 1. BUILDS INTO strip
+    const upgrades = it ? SHOP_ORDER.filter((oid) => ITEMS[oid]?.recipe?.includes(id)).slice(0, MAX_BUILDS_INTO) : [];
+    this._intoEmpty.setVisible(!upgrades.length).setText(it ? 'Final tier item' : '—');
+    for (let i = 0; i < this._intoNodes.length; i++) {
+      const nd = this._intoNodes[i];
+      const oid = upgrades[i] || null;
+      const target = oid ? ITEMS[oid] : null;
+      nd.c.setVisible(!!target);
+      nd.itemId = oid;
+      if (!target) continue;
+      const hov = this._intoHover === i;
+      nd.bg.clear();
+      nd.bg.fillStyle(hov ? 0x1a2c4b : 0x0f192c, 0.98);
+      fillRR(nd.bg, -nd.w / 2, -nd.h / 2, nd.w, nd.h, 6);
+      nd.bg.lineStyle(hov ? 2 : 1.4, hov ? 0xffffff : NEON.yellow, hov ? 0.95 : 0.72);
+      strokeRR(nd.bg, -nd.w / 2, -nd.h / 2, nd.w, nd.h, 6);
+      nd.icon.setText(target.emoji);
+    }
 
+    // 2. REQUIRES tree
+    const root = this._treeRoot;
     if (!it) {
-      this._treeTitle.setText('BUILD PATH');
-      this._treeSub.setText('');
-      hideAll('Select an item to view its recipe');
+      root.c.setVisible(false); root.itemId = null;
+      for (const nd of this._treeNodes) { nd.c.setVisible(false); nd.itemId = null; }
+      this._treeEmpty.setText('Left-click an item to inspect').setVisible(true);
       return;
     }
 
     const plan = recipePlan(this._slots, id);
-    if (plan.components.length > 0) {
-      // Forward Recipe Tree: Core item → clickable components
-      this._treeEmpty.setVisible(false);
-      this._treeTitle.setText('BUILD PATH');
-      this._treeSub.setText('click part to buy').setColor('#7ed957');
+    const payCost = it.consumable ? it.cost : plan.cost;
+    const hasComps = plan.components.length > 0;
+    const rootY = hasComps ? (GRID_Y + 118) : (GRID_Y + 148);
+    root.itemId = id;
+    root.c.setPosition(RX + RW / 2, rootY).setVisible(true);
+    const rCol = TIER_COLOR[it.tier] ?? NEON.yellow;
+    root.bg.clear();
+    root.bg.fillStyle(0x132038, 0.98);
+    fillRR(root.bg, -root.w / 2, -root.h / 2, root.w, root.h, 7);
+    root.bg.lineStyle(2, rCol, 0.95);
+    strokeRR(root.bg, -root.w / 2, -root.h / 2, root.w, root.h, 7);
+    root.icon.setText(it.emoji);
+    root.cost.setText(fmtGold(payCost)).setColor(this._gold >= payCost ? (plan.discount > 0 ? '#7ed957' : '#ffd23f') : '#ff6b6b');
 
-      const root = this._treeRoot;
-      root.itemId = id;
-      root.c.setVisible(true);
-      const rCol = this._gold >= plan.cost && this._canShop ? NEON.green : NEON.yellow;
-      root.bg.clear();
-      root.bg.fillStyle(0x121d33, 0.98);
-      fillRR(root.bg, -root.w / 2, -root.h / 2, root.w, root.h, 7);
-      root.bg.lineStyle(1.5, rCol, 0.92);
-      strokeRR(root.bg, -root.w / 2, -root.h / 2, root.w, root.h, 7);
-      root.icon.setText(it.emoji);
-      const rLabel = it.name.length > 15 ? `${it.name.slice(0, 14)}…` : it.name;
-      root.name.setText(rLabel);
-      root.cost.setText(`${fmtGold(plan.cost)}g`).setColor(this._gold >= plan.cost ? '#7ed957' : '#ff8a8a');
-
-      const counts = {};
-      for (const owned of this._slots) if (owned) counts[owned] = (counts[owned] || 0) + 1;
-      const n = Math.min(plan.components.length, this._treeNodes.length);
-      const pad = 10, gap = 8;
-      const nodeW = Math.floor((RW - pad * 2 - gap * Math.max(0, n - 1)) / Math.max(1, n));
-      const nodeH = 66;
-      const nodeY = TREE_Y + TREE_H - nodeH / 2 - 10;
-      const startX = RX + pad + nodeW / 2;
-      const centers = [];
-
-      for (let i = 0; i < this._treeNodes.length; i++) {
-        const nd = this._treeNodes[i];
-        const cid = i < n ? plan.components[i] : null;
-        const comp = cid ? ITEMS[cid] : null;
-        nd.c.setVisible(!!comp);
-        if (!comp) { nd.itemId = null; continue; }
-        const cx = startX + i * (nodeW + gap);
-        nd.c.setPosition(cx, nodeY);
-        nd.w = nodeW; nd.h = nodeH;
-        nd.hit.setSize(nodeW, nodeH);
-        nd.itemId = cid;
-        nd.mode = 'comp';
-        centers.push(cx);
-
-        const owned = (counts[cid] || 0) > 0;
-        if (owned) counts[cid]--;
-        nd.owned = owned;
-        const canBuy = !owned && this._canShop && !buyBlocker(this._slots, cid) && this._gold >= comp.cost;
-        const hov = this._treeHover === i;
-        const col = owned ? NEON.green : (canBuy ? NEON.yellow : 0x3b5275);
-
-        nd.bg.clear();
-        nd.bg.fillStyle(owned ? 0x0c2416 : (hov ? 0x182844 : 0x0f192c), 0.98);
-        fillRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
-        nd.bg.lineStyle(hov ? 2.2 : 1.5, hov ? 0xffffff : col, owned || canBuy || hov ? 0.95 : 0.7);
-        strokeRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
-
-        nd.icon.setText(comp.emoji).setAlpha(owned ? 0.7 : 1);
-        const maxCh = Math.max(8, Math.floor((nodeW - 10) / 6));
-        const shortName = comp.name.length > maxCh ? `${comp.name.slice(0, maxCh - 1)}…` : comp.name;
-        nd.name.setText(shortName);
-        if (owned) nd.badge.setText('✓ OWNED').setColor('#7ed957');
-        else if (canBuy) nd.badge.setText(`BUY ${fmtGold(comp.cost)}g`).setColor('#ffd23f');
-        else nd.badge.setText(`${fmtGold(comp.cost)}g`).setColor(this._gold >= comp.cost ? '#9fb3c8' : '#ff6b6b');
-      }
-
-      if (centers.length) {
-        const rootBot = TREE_Y + 41 + root.h / 2;
-        const childTop = nodeY - nodeH / 2;
-        const midY = Math.round((rootBot + childTop) / 2);
-        lines.lineStyle(1.8, NEON.cyan, 0.75);
-        lines.lineBetween(RX + RW / 2, rootBot, RX + RW / 2, midY);
-        if (centers.length > 1) lines.lineBetween(centers[0], midY, centers[centers.length - 1], midY);
-        for (const cx of centers) lines.lineBetween(cx, midY, cx, childTop);
-      }
+    if (!hasComps) {
+      for (const nd of this._treeNodes) { nd.c.setVisible(false); nd.itemId = null; }
+      this._treeEmpty.setPosition(RX + RW / 2, GRID_Y + 206)
+        .setText(it.consumable ? 'Consumable · used instantly' : 'Base component · no recipe')
+        .setVisible(true);
       return;
     }
 
-    // Reverse tree: for Basic items, show Core items that build from this item
-    const upgrades = SHOP_ORDER.filter((oid) => ITEMS[oid]?.recipe?.includes(id)).slice(0, this._treeNodes.length);
-    if (upgrades.length > 0) {
-      this._treeEmpty.setVisible(false);
-      this._treeRoot.c.setVisible(false);
-      this._treeRoot.itemId = null;
-      this._treeTitle.setText('BUILDS INTO');
-      this._treeSub.setText('click to inspect').setColor('#8fd0ff');
+    this._treeEmpty.setVisible(false);
+    const counts = {};
+    for (const owned of this._slots) if (owned) counts[owned] = (counts[owned] || 0) + 1;
+    const n = Math.min(plan.components.length, this._treeNodes.length);
+    const compY = GRID_Y + 194;
+    const spread = n === 1 ? 0 : (n === 2 ? 104 : 80);
+    const startX = RX + RW / 2 - ((n - 1) * spread) / 2;
+    const centers = [];
 
-      const n = upgrades.length;
-      const pad = 10, gap = 8;
-      const nodeW = Math.floor((RW - pad * 2 - gap * Math.max(0, n - 1)) / Math.max(1, n));
-      const nodeH = 74;
-      const nodeY = TREE_Y + 26 + (TREE_H - 34) / 2;
-      const startX = RX + pad + nodeW / 2;
-      for (let i = 0; i < this._treeNodes.length; i++) {
-        const nd = this._treeNodes[i];
-        const oid = i < n ? upgrades[i] : null;
-        const target = oid ? ITEMS[oid] : null;
-        nd.c.setVisible(!!target);
-        if (!target) { nd.itemId = null; continue; }
-        const cx = startX + i * (nodeW + gap);
-        nd.c.setPosition(cx, nodeY);
-        nd.w = nodeW; nd.h = nodeH;
-        nd.hit.setSize(nodeW, nodeH);
-        nd.itemId = oid;
-        nd.owned = false;
-        nd.mode = 'into';
-        const upPlan = recipePlan(this._slots, oid);
-        const hov = this._treeHover === i;
-        nd.bg.clear();
-        nd.bg.fillStyle(hov ? 0x182844 : 0x0f192c, 0.98);
-        fillRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
-        nd.bg.lineStyle(hov ? 2 : 1.4, hov ? 0xffffff : NEON.yellow, hov ? 0.95 : 0.7);
-        strokeRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
-        nd.icon.setText(target.emoji).setAlpha(1);
-        const maxCh = Math.max(8, Math.floor((nodeW - 10) / 6));
-        const shortName = target.name.length > maxCh ? `${target.name.slice(0, maxCh - 1)}…` : target.name;
-        nd.name.setText(shortName);
-        nd.badge.setText(`${fmtGold(upPlan.cost)}g`).setColor(this._gold >= upPlan.cost ? '#7ed957' : '#ffd23f');
-      }
-      return;
+    for (let i = 0; i < this._treeNodes.length; i++) {
+      const nd = this._treeNodes[i];
+      const cid = i < n ? plan.components[i] : null;
+      const comp = cid ? ITEMS[cid] : null;
+      nd.c.setVisible(!!comp);
+      nd.itemId = cid;
+      if (!comp) continue;
+      const cx = startX + i * spread;
+      nd.c.setPosition(cx, compY);
+      centers.push(cx);
+
+      const owned = (counts[cid] || 0) > 0;
+      if (owned) counts[cid]--;
+      nd.owned = owned;
+      const hov = this._treeHover === i;
+      const canBuy = !owned && this._canShop && !buyBlocker(this._slots, cid) && this._gold >= comp.cost;
+      const col = owned ? NEON.green : (canBuy ? NEON.yellow : 0x3b5275);
+
+      nd.bg.clear();
+      nd.bg.fillStyle(owned ? 0x0c2416 : (hov ? 0x1a2c4b : 0x0f192c), 0.98);
+      fillRR(nd.bg, -nd.w / 2, -nd.h / 2, nd.w, nd.h, 7);
+      nd.bg.lineStyle(hov ? 2.2 : 1.6, hov ? 0xffffff : col, owned || canBuy || hov ? 0.95 : 0.75);
+      strokeRR(nd.bg, -nd.w / 2, -nd.h / 2, nd.w, nd.h, 7);
+
+      nd.icon.setText(comp.emoji).setAlpha(owned ? 0.65 : 1);
+      nd.check.setText(owned ? '✓' : '');
+      nd.cost.setText(owned ? 'OWNED' : fmtGold(comp.cost))
+        .setColor(owned ? '#7ed957' : (this._gold >= comp.cost ? '#ffd23f' : '#ff6b6b'));
     }
 
-    this._treeTitle.setText('BUILD PATH');
-    this._treeSub.setText('');
-    hideAll(it.consumable ? 'Consumable · used instantly on purchase' : 'Standalone item · no recipe');
+    if (centers.length) {
+      const rootBot = rootY + root.h / 2 + 16;
+      const childTop = compY - 22;
+      const midY = Math.round((rootBot + childTop) / 2);
+      lines.lineStyle(1.8, 0x4b6a8e, 0.9);
+      lines.lineBetween(RX + RW / 2, rootBot, RX + RW / 2, midY);
+      if (centers.length > 1) lines.lineBetween(centers[0], midY, centers[centers.length - 1], midY);
+      for (const cx of centers) lines.lineBetween(cx, midY, cx, childTop);
+    }
   }
 
   _buildInventory() {
     const s = this.scene, B = this._body;
-    const y0 = GRID_Y + DETAIL_H + 16;
+    const y0 = INV_Y;
     this._invLabel = s.add.text(RX + 2, y0, '', {
       fontFamily: FONT_TITLE, fontSize: 11, color: '#7ec8ff',
     }).setOrigin(0, 0.5);
@@ -543,7 +518,7 @@ export class ShopPanel {
     B.add([this._invLabel, this._invG]);
     const size = 40, gap = (RW - size * INVENTORY_SLOTS) / Math.max(1, INVENTORY_SLOTS - 1);
     for (let i = 0; i < INVENTORY_SLOTS; i++) {
-      const x = RX + i * (size + gap), y = y0 + 14;
+      const x = RX + i * (size + gap), y = y0 + 12;
       const t = s.add.text(x + size / 2, y + size / 2, '', { fontSize: 22, padding: { y: 4 } }).setOrigin(0.5);
       const hit = s.add.rectangle(x, y, size, size, 0xffffff, 0).setOrigin(0).setInteractive({ useHandCursor: true });
       hit.on('pointerover', () => this._setHover(this._slots[i] || null));
@@ -566,22 +541,22 @@ export class ShopPanel {
 
   _buildRecommended() {
     const s = this.scene, B = this._body;
-    const y0 = GRID_Y + DETAIL_H + 86;
+    const y0 = REC_Y;
     this._recLabel = s.add.text(RX + 2, y0, '⭐ RECOMMENDED', {
       fontFamily: FONT_TITLE, fontSize: 11, color: '#ffd23f', padding: { y: 3 },
     }).setOrigin(0, 0.5);
     this._recG = s.add.graphics();
     this._recRing = s.add.graphics();
-    this._recNext = s.add.text(RX + RW / 2, y0 + 72, '', {
+    this._recNext = s.add.text(RX + RW / 2, y0 + 68, '', {
       fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', padding: { y: 2 },
     }).setOrigin(0.5);
-    const hint = s.add.text(RX + RW / 2, PH - 18, 'right-click: buy / sell · P / ESC close', {
-      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c',
+    const hint = s.add.text(RX + RW / 2, PH - 16, 'L-click: select · R-click: buy / sell · P / ESC close', {
+      fontFamily: FONT_MONO, fontSize: 9.5, color: '#5a6f8c',
     }).setOrigin(0.5);
     B.add([this._recLabel, this._recG, this._recRing, this._recNext, hint]);
     const size = 40, gap = (RW - size * 6) / 5;
     for (let i = 0; i < 6; i++) {
-      const x = RX + i * (size + gap), y = y0 + 14;
+      const x = RX + i * (size + gap), y = y0 + 12;
       const t = s.add.text(x + size / 2, y + size / 2, '', { fontSize: 22, padding: { y: 4 } }).setOrigin(0.5);
       const check = s.add.text(x + size - 2, y + 1, '', {
         fontFamily: FONT_TITLE, fontSize: 10, color: '#7ed957', stroke: '#000000', strokeThickness: 3,
@@ -796,7 +771,7 @@ export class ShopPanel {
   }
 
   _renderDetail() {
-    const id = this._hover || this._sel;
+    const id = this._sel;
     const it = id ? ITEMS[id] : null;
     const g = this._detailG;
     g.clear();
@@ -805,12 +780,17 @@ export class ShopPanel {
     fillRR(g, RX, GRID_Y, RW, DETAIL_H, 12);
     g.lineStyle(1.5, col, 0.75);
     strokeRR(g, RX, GRID_Y, RW, DETAIL_H, 12);
+    // Horizontal section dividers (Builds Into | Requires | Item Detail)
+    g.lineStyle(1, 0xffffff, 0.1);
+    g.lineBetween(RX + 10, GRID_Y + 72, RX + RW - 10, GRID_Y + 72);
+    g.lineBetween(RX + 10, GRID_Y + 236, RX + RW - 10, GRID_Y + 236);
+    const dy = GRID_Y + 244;
     if (!it) {
       this._dEmoji.setText('🛒');
       this._dName.setText('Pick an item');
       this._dMeta.setText('');
       this._dStats.setText('');
-      this._dDesc.setText('Hover or click any item to see what it does.').setY(GRID_Y + 110);
+      this._dDesc.setText('Left-click any item to inspect its recipe and stats.').setY(dy + 68);
       this._dReason.setText('');
       this._buyBtn.setLabel('BUY').setDimmed(true);
       this._renderInlineRecipeTree();
@@ -825,14 +805,14 @@ export class ShopPanel {
       : `${it.tier.toUpperCase()} · 💰 ${fmtGold(it.cost)}`)
       .setColor(this._gold >= payCost ? (plan.discount > 0 ? '#7ed957' : '#ffd23f') : '#ff5e5e')
       .setY(this._dName.y + this._dName.height + 2);
-    this._dStats.setText(itemStatLine(it)).setY(Math.max(GRID_Y + 84, this._dMeta.y + this._dMeta.height + 8));
-    this._dDesc.setText(it.desc || '').setY(this._dStats.y + this._dStats.height + 6);
+    this._dStats.setText(itemStatLine(it)).setY(Math.max(dy + 48, this._dMeta.y + this._dMeta.height + 5));
+    this._dDesc.setText(it.desc || '').setY(this._dStats.y + this._dStats.height + 4);
     const why = this._whyNot(id);
     this._dReason.setVisible(true);
     this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : (plan.discount > 0 ? '⚒️ combines owned components' : '✓ ready to buy')))
       .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
     // Pass 2 RP-07: an owned item picked from the inventory → SELL instead of BUY.
-    const sellSlot = this._selSlot != null && this._slots[this._selSlot] === id && (!this._hover || this._hover === id) ? this._selSlot : null;
+    const sellSlot = this._selSlot != null && this._slots[this._selSlot] === id ? this._selSlot : null;
     this._sellBtn.root.setVisible(sellSlot != null);
     this._buyBtn.root.setVisible(sellSlot == null);
     if (sellSlot != null) {
