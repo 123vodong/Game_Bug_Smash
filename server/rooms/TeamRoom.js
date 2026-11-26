@@ -3046,7 +3046,8 @@ export class TeamRoom extends Room {
     if (Number.isInteger(slot) && slot >= 0 && slot < ch.augmentOffer.choices.length) {
       const srr = ch.augmentOffer.slotRerolls || [];
       if (!(srr[slot] > 0)) return false;
-      const nextId = rollSingleAugment(ch.champ, ch.augments, ch.augmentOffer.choices);
+      const needEpic = ch.augmentOffer.level === 10 && !ch.augmentOffer.choices.some((id, idx) => idx !== slot && AUGMENTS[id]?.rarity === 'epic');
+      const nextId = rollSingleAugment(ch.champ, ch.augments, ch.augmentOffer.choices, { guaranteeEpic: needEpic });
       if (!nextId) return false;
       const choices = [...ch.augmentOffer.choices];
       const slotRerolls = [...srr];
