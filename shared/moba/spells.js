@@ -18,32 +18,33 @@
 // rules.scaledAmount(spec, level, 0, 0).
 export const SPELLS = {
   flash: {
-    id: 'flash', name: 'Alt+Tab', icon: '⚡', kind: 'blink', cd: 150, range: 420, color: 0xffe066,
+    id: 'flash', name: 'Alt+Tab', icon: '⚡', kind: 'blink', cd: 120, cdPerLevel: 2.5, cdMin: 80, range: 420, color: 0xffe066,
     desc: 'Instantly teleport a short distance — even over a wall.',
   },
   heal: {
-    id: 'heal', name: 'Coffee Break', icon: '☕', kind: 'heal', cd: 120, radius: 750, color: 0x7ed957,
+    id: 'heal', name: 'Coffee Break', icon: '☕', kind: 'heal', cd: 90, cdPerLevel: 2, cdMin: 60, radius: 750, color: 0x7ed957,
     heal: { base: 80, perLevel: 18 }, msPct: 0.3, ms: 1000,
     desc: 'Heal yourself and the most-injured nearby ally, with a short speed boost.',
   },
   ghost: {
-    id: 'ghost', name: 'Overtime', icon: '🏃', kind: 'haste', cd: 120, msPct: 0.35, ms: 6000, color: 0x39c2ff,
+    id: 'ghost', name: 'Overtime', icon: '🏃', kind: 'haste', cd: 85, cdPerLevel: 2, cdMin: 55, msPct: 0.35, ms: 6000, color: 0x39c2ff,
     desc: '+35% move speed for 6 s and walk through units.',
   },
   barrier: {
-    id: 'barrier', name: 'Ctrl+Z', icon: '🛡️', kind: 'shield', cd: 120, ms: 2500, color: 0xbfe6ff,
+    id: 'barrier', name: 'Ctrl+Z', icon: '🛡️', kind: 'shield', cd: 80, cdPerLevel: 2, cdMin: 50, ms: 2500, color: 0xbfe6ff,
     shield: { base: 100, perLevel: 22 },
     desc: 'Undo incoming damage: a big shield for 2.5 s.',
   },
   ignite: {
-    id: 'ignite', name: 'Escalate', icon: '🔥', kind: 'dot', cd: 150, range: 600, ms: 5000, healCut: 0.5, color: 0xff7a1a,
+    id: 'ignite', name: 'Escalate', icon: '🔥', kind: 'dot', cd: 95, cdPerLevel: 2, cdMin: 65, range: 600, ms: 5000, healCut: 0.5, color: 0xff7a1a,
     dmg: { base: 60, perLevel: 20 },
     desc: 'Escalate an enemy champion to management: true damage over 5 s, −50% healing.',
   },
   smite: {
-    id: 'smite', name: 'kill -9', icon: '💀', kind: 'smite', cd: 60, range: 500, color: 0xff3b8a,
+    id: 'smite', name: 'kill -9', icon: '💀', kind: 'smite', cd: 40, cdPerLevel: 1.2, cdMin: 24,
+    maxCharges: 2, castCd: 10, range: 500, color: 0xff3b8a,
     dmg: { base: 450, perLevel: 35 }, healSelf: 0.08,
-    desc: 'Terminate a monster or enemy minion: big true damage. Junglers take this.',
+    desc: '2 charges (10 s between casts). Terminate a monster or enemy minion: big true damage + heal.',
   },
 };
 export const SPELL_IDS = Object.keys(SPELLS);
@@ -56,3 +57,15 @@ export const ROLE_SPELLS = {
 export function isSpellId(id) { return typeof id === 'string' && Object.hasOwn(SPELLS, id); }
 /** Valid pair: two DIFFERENT known spells. */
 export function validSpellPair(d, f) { return isSpellId(d) && isSpellId(f) && d !== f; }
+/** Scaled summoner spell cooldown (or charge recharge time for multi-charge spells like Smite) in ms. */
+export function spellCooldownMs(sp, level = 3, mul = 1) {
+  if (!sp) return 0;
+  const lv = Math.max(0, (level || 3) - 3);
+  const sec = Math.max(sp.cdMin || 15, (sp.cd || 60) - (sp.cdPerLevel || 0) * lv);
+  return Math.round(sec * 1000 * (mul || 1));
+}
+/** Initial charge count for a spell at match start (2 for Smite, 0 for single-use spells). */
+export function spellInitialCharges(spellId) {
+  const sp = SPELLS[spellId];
+  return sp?.maxCharges > 1 ? sp.maxCharges : 0;
+}

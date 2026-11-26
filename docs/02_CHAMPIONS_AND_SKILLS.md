@@ -311,6 +311,8 @@
 - **Volt (`Servo`) Rules:** Targets the owner's current basic-attack target, else the last enemy champion hit by Volt within `3.0s` (`PET_OWNER_HIT_MEMORY_MS`). Follows `110 px` behind at `1.15x` owner MS (`PET_LEASH = 900 px` teleport snap), is untargetable/invulnerable, scales attack cadence with `Overclock` (`+100%`) and `Servo Overdrive` Epic Augment (`+45%` AS / `+35%` Magic Damage), **does not** trigger on-hit items/crit/lifesteal (`byPet = true`), ignores walls via `nearestFree`, and despawns immediately when Volt dies.
 - **Pager (`On My Way` R):** Point-and-click long-range dash (`820 px`, `toTarget`) — requires target visibility (`!_hiddenFrom`, blocked by Fog of War/stealth), clips at walls (`clipMove`), can be interrupted by displacement/stun, and recalculates hit on arrival if target Blinks mid-dash (`hitRadius = 60`).
 - **Brick (`Escort Out` / `Building Lockdown`):** `knockback` resolves along `clipMove` + `nav.pushOut` so displaced champions slide/stop cleanly along wall boundaries without escaping the `6000x6000` arena or trapping inside wall geometry.
+- **Starting Ranks & Upgrade Controls:** Every champion spawns at **Level 3** with `Q/W/E = Rank 1` and `R = Rank 0` (`ULT_UNLOCK_LEVEL = 6`). Subsequent ranks are upgraded via `Shift + Q/W/E/R` or clicking the gold `+` badge above the skill slot.
+- **Hover Silhouette Feedback:** Hovering any visible target (champions, minions, jungle monsters, bosses, towers, cores) draws a pixel-hugging team/relation silhouette using `4` shared tintFill outline sprites in `TeamModeScene` (zero WebGL `postFX`/FBO overhead and zero leaked outlines on prior targets).
 
 ---
 

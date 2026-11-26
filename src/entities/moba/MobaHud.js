@@ -26,7 +26,7 @@ import {
   TEAM_INFO, TEAM_SIZE, XP_TABLE, MAX_LEVEL, ULT_UNLOCK_LEVEL, RECALL_MS, EPICS,
 } from '../../../shared/moba/rules.js';
 import { MAP_W, MAP_H } from '../../../shared/moba/map.js';
-import { SPELLS } from '../../../shared/moba/spells.js';
+import { SPELLS, spellCooldownMs } from '../../../shared/moba/spells.js';
 import { FONT, MONO, ME_COLOR, LOOKS, teamColor, teamCss, css, fmtTime, toArr } from './mobaGfx.js';
 
 const sec = (ms) => `${+(Math.max(0, ms || 0) / 1000).toFixed(1)}s`;
@@ -249,14 +249,17 @@ export class MobaHud {
       const key = s.add.text(-22, -23, slot.toUpperCase(), {
         fontFamily: FONT, fontSize: 10, color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 3, y: 0 },
       }).setOrigin(0, 0);
+      const charges = s.add.text(22, 23, '', {
+        fontFamily: FONT, fontSize: 11, color: '#ffd23f', backgroundColor: '#000000cc', padding: { x: 3, y: 0 },
+      }).setOrigin(1, 1).setVisible(false);
       const flash = s.add.rectangle(0, 0, 48, 48, 0xffffff, 0).setStrokeStyle(3, 0xffffff, 0);
       if (this.touch) {
         frame.setInteractive({ useHandCursor: true });
         frame.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); this.o.onSpell?.(slot, true); });
       }
-      c.add([frame, icon, dim, pie, cd, key, flash]);
+      c.add([frame, icon, dim, pie, cd, key, charges, flash]);
       root.add(c);
-      this.spellSlots[slot] = { c, frame, icon, dim, pie, cd, flash, x, y, id: null };
+      this.spellSlots[slot] = { c, frame, icon, dim, pie, cd, charges, flash, x, y, id: null };
     });
 
     // Small - / + HUD scale controls (stacked cleanly on the right edge of bottom HUD)
@@ -1179,9 +1182,22 @@ export class MobaHud {
       }
       const readyAt = me['cd' + K] || 0;
       const left = readyAt > srvNow ? readyAt - srvNow : 0;
+      const hasCharges = !!(sp && sp.maxCharges > 1);
+      const chg = hasCharges ? (me['charges' + K] ?? sp.maxCharges) : 0;
+      if (sl.charges) {
+        sl.charges.setVisible(hasCharges);
+        if (hasCharges) {
+          this._set(`chg_${slot}`, sl.charges, String(chg));
+          const cc = chg > 0 ? '#ffd23f' : '#ff6b6b';
+          if (this._cache[`chgc_${slot}`] !== cc) { this._cache[`chgc_${slot}`] = cc; sl.charges.setColor(cc); }
+        }
+      }
       if (readyAt !== this._cdPrev[slot]) {
         this._cdPrev[slot] = readyAt;
-        if (left > 0) this.cdTotal[slot] = Math.max(left, sp ? sp.cd * 1000 : 300);
+        if (left > 0) {
+          const baseTotal = sp ? (hasCharges && chg > 0 ? (sp.castCd || 10) * 1000 : spellCooldownMs(sp, lv)) : 300;
+          this.cdTotal[slot] = Math.max(left, baseTotal);
+        }
       }
       sl.dim.setVisible(left > 0 || !!me.dead || !sp);
       if (sl._pie) { sl.pie.clear(); sl._pie = false; }

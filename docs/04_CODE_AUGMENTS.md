@@ -299,7 +299,10 @@ Recommendations below assume standard 5v5 pacing (milestones at Lv 5, 10, 15) an
 ## 11. Augment UI Modal, Sync & Telemetry Integration
 
 ### 11.1. Client Modal Flow (`AugmentPanel.js` & `TeamModeScene.js`)
-- **Non-Blocking Trigger:** When `c.augmentOffer` becomes non-null at Level `5`, `10` (guaranteed Epic if unowned), or `15`, the scene opens `AugmentPanel` displaying `3` cards with rarity border colors (`RARITY_COLOR`: Common `#39c2ff`, Rare `#c44dff`, Epic `#ffd23f`), group label, synergy highlight, and a single shared `REROLL (1 FREE)` button.
+- **Non-Blocking Trigger:** When `c.augmentOffer` becomes non-null at Level `5`, `10` (guaranteed Epic if unowned), or `15`, the scene opens `AugmentPanel` displaying `3` cards with rarity border colors (`RARITY_COLOR`: Common `#39c2ff`, Rare `#c44dff`, Epic `#ffd23f`), group label, synergy highlight, and reroll button(s) parented via `makeButton(...).root`.
+- **Network Sync & Client Caching (`schema.js`, `TeamRoom.js`, `TeamModeScene.js`, `Scoreboard.js`):**
+  - Owned augments sync over Colyseus as a primitive comma-separated string `augmentsCsv` on `TeamChamp` and `TeamScore` (instead of a child `ArraySchema`), avoiding the `@colyseus/schema 3.0.76` `StateView` `refId not found` corruption at Level 5 and during page-reload rejoin.
+  - `TeamModeScene.js` caches parsed `augmentOfferJson` and `augmentsCsv` by string equality so zero `JSON.parse()` or `split()` allocations occur on unchanged frames.
 - **Actions:**
   - Clicking a card sends `augmentPick { id }`, appends `id` to `c.augments`, recalculates stats (`_recalc`), and checks `_checkAugmentOffer` for multi-level jumps.
   - Clicking `REROLL (1 FREE)` sends `augmentReroll {}` (replacing all 3 cards via `rollAugmentChoices(c.champ, c.augments, 3, { guaranteeEpic: c.augmentOffer.level === 10 })` and setting `rerolls = 0`).

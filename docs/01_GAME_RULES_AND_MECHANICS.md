@@ -100,7 +100,7 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 ## 2. Leveling, Skill Upgrades & Death System
 
 - **Max Level:** `18` · **Ultimate (R) Unlock:** Level `6` (`ULT_UNLOCK_LEVEL = 6`).
-- **Skill Points:** Champions spawn at Level 1 with **0 learned skills** (`Q:0, W:0, E:0, R:0`) and `1` unspent skill point; `+1` skill point is awarded per level-up (`18` total points across Lv 1–18 = `5 + 5 + 5 + 3`).
+- **Default Match Start (Lv 3):** Champions spawn at **Level 3** (`xp = 660`) with `Q:1, W:1, E:1, R:0` pre-learned and `0` unspent skill points so lane skirmishes and jungle clears start active from `0:00`; `+1` skill point is awarded per level-up (`18` total points across Lv 1–18 = `5 + 5 + 5 + 3`). Skill upgrades bind to `Shift + Q/W/E/R` (or clicking the gold `+` badge above a skill slot) with a `beforeunload` browser guard during active matches.
 - **Auto-Aim Fallback (`OfflineSim` / `TeamRoom`):** Point-and-click skills search within `range + 30 px`; skillshots search within `range + 150 px` (`AUTO_AIM_SLACK`); directional dashes/blinks never auto-aim at enemies.
 
 ### Complete XP & Respawn Table (Levels 1–18)
@@ -136,7 +136,8 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 - **Shop & Sell Rules:** `SHOP_ONLY_IN_FOUNTAIN = true` (`FOUNTAIN_RADIUS = 520 px`, or while dead). Sell refunds `70%` (`SELL_UNDO_MS = 10s` grants `100%` undo refund). Fountain heals `12% max HP/s` and `15% max Mana/s`.
 
 ### 3.1. Minion Waves, AI & Anti-Pileup Caps
-- **Spawn Cadence:** First wave at `0:20` (`WAVE_FIRST_MS = 20000`), subsequent waves every `30s` (`WAVE_EVERY_MS = 30000`), growing `+2.5%` HP/DMG per wave (`MINION_GROWTH_PER_WAVE = 0.025`).
+- **Spawn Cadence:** First wave at `0:20` (`WAVE_FIRST_MS = 20000`), subsequent waves every `30s` (`WAVE_EVERY_MS = 30000`), growing **linearly** `+2.5%` HP/DMG per wave (`1 + 0.025 * (wave - 1)`, **capped at `MINION_GROWTH_MAX = 1.85x`** around wave 35 / `17:30` so late-game waves remain clearable).
+- **Support Ambient Lane Gold (`NEARBY_MINION_GOLD_PCT = 0.25`):** When a champion last-hits a lane minion, the single lowest-gold nearby ally within `XP_SHARE_RADIUS = 1300 px` (excluding the killer) receives `25%` ambient gold (`~32g/wave = +64g/min`) without reducing the killer's `100%` gold, allowing Supports to stay on item pace without stealing CS.
 - **Composition:** `3 Melee + 3 Ranged` per wave; `+1 Siege` every `3` waves. Super Minions (`1.85x HP`, `1.55x DMG`) replace the lead unit in a lane once the enemy Tier-2 or Core Firewall falls.
 - **Wave Caps & Spacing (`tuning.js`):** `MINION_SPACING = 48 px`, `MINION_LANE_CAP = 16` per team per lane, `MINION_TOTAL_CAP = 60` server-wide, `MINION_CORE_STOP = 160 px`, `UNIT_REMOVE_MS = 600 ms` death linger.
 - **Minion Aggro:** `MINION_AGGRO_RANGE = 520 px`, `MINION_RETARGET_MS = 250 ms`, `MINION_CHAMP_AGGRO_MS = 2500 ms` (switches onto enemy champions attacking allied champions), `MINION_CHASE_RANGE = 700 px`.
@@ -149,6 +150,9 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 
 ### 3.2. Jungle Camps (12 Camps Total: 4 Quadrants x 3 Camps Each)
 - **Spawn & Leash:** Initial spawn at `0:15` (`CAMP_SPAWN_MS = 15000`); `CAMP_LEASH_RADIUS = 620 px` (`MONSTER_SPEED = 300`, `MONSTER_RETURN_SPEED = 600`, `MONSTER_REACH = 70 px`; leashed monsters regenerate `50% max HP/s` on return).
+- **Time-Based Camp & Epic Scaling (`campScaleAt(matchMs, epic)` in `shared/moba/rules.js`):**
+  - **Jungle Camps (`epic = false`):** Start gentler at `0:00` (`0.68x HP`, `0.58x DMG`) so Lv 3 junglers clear their opening route cleanly, then scale linearly per match minute: `hpMul = min(2.1, 0.68 + mins * 0.08)`, `dmgMul = min(1.85, 0.58 + mins * 0.075)`, and `rewardMul = min(1.5, 1 + mins * 0.03)` applied to both Gold and XP.
+  - **River Epics (`epic = true`):** Spawn at `1.0x` on first appearance (`3:00`), then scale after minute 3: `hpMul = min(1.8, 1 + max(0, mins - 3) * 0.06)` and `dmgMul = min(1.5, 1 + max(0, mins - 3) * 0.04)`.
 - **Symmetry:** Blue Top-Jungle (`tj_*`, Robot variants) and Blue Bot-Jungle (`bj_*`, Bug variants) mirror identically to Red side (`6` Blue + `6` Red = `12` camps).
 - **Buff Camps:** Each quadrant's `big` camp (`tj_big` top-side = Blue Buff; `bj_big` bot-side = Red Buff) spawns `1` Legacy Mainframe.
 
@@ -180,7 +184,7 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 ## 4. Structures, Tower AI, Ward Trinket & Heal Relics
 
 - **Structure HP & Armor:** Tier-1 Tower `2100 HP` / `40 Armor`; Tier-2 Tower `2500 HP` / `40 Armor`; Tier-3 Core Firewall `2900 HP` / `40 Armor`; Production Server Core `5000 HP` / `30 Armor`.
-- **Tower Combat & Aggro:** `range = 600 px`, `atkMs = 1000 ms`, `dmgChamp = 150` (`+25%` per consecutive hit on the same champion, capped at `TOWER_MAX_RAMP_HITS = 6` -> `+150%` max on both server & `OfflineSim`), `dmgMinionPctMaxHp = 28%` max HP. Switches immediately to any enemy champion damaging an ally within `TOWER_AGGRO_VICTIM_PAD = 200 px` over the last `TOWER_AGGRO_MS = 2000 ms` with a red Warning Laser.
+- **Tower Combat & Aggro:** `range = 600 px`, `atkMs = 1000 ms`, `dmgChampByTier = { T1: 155, T2: 195, T3 Core Firewall: 260 }` (`+25%` per consecutive hit on the same champion, capped at `TOWER_MAX_RAMP_HITS = 6` -> `+150%` max, up to `650/shot` on Tier-3 Core Firewall on both server & `OfflineSim`), `dmgMinionPctMaxHp = 28%` max HP. Switches immediately to any enemy champion damaging an ally within `TOWER_AGGRO_VICTIM_PAD = 200 px` over the last `TOWER_AGGRO_MS = 2000 ms` with a red Warning Laser.
 - **Backdoor Protection & Crunch Time:** Structures take `0.40x` damage (`BACKDOOR_DAMAGE_MUL = 0.4`) without allied minions within `BACKDOOR_RADIUS = 700 px`. After `30:00` (`CRUNCH_MS`), backdoor guard disables and structures take `2.0x` damage (`CRUNCH_STRUCT_MUL = 2`) in both `TeamRoom` and `OfflineSim`.
 - **Tower Heal Relics:** `6` orbs behind Tier-1 towers restore `18% max HP + 15% max Mana` (`60s` respawn).
 - **Jungle Buffs (75s):** Top-side big camp -> **Blue Buff** (`+3%` max mana/s regen, `+15%` Haste in the capped `40%` Haste pool); Bot-side big camp -> **Red Buff** (`+18` burn dmg, `20%` slow for `1.5s`).
@@ -428,12 +432,12 @@ Team Mode uses a dual-rating system separating hidden skill matchmaking (`mmr`) 
 
 ### 13.2. Fountain Safe Zone & Anti-Spawn-Camp Rules
 - **Radius & Healing (`FOUNTAIN_RADIUS = 520 px`):** Allied champions inside their fountain regenerate `12% max HP/s` and `15% max Mana/s` continuously and have full shop/sell access (`SHOP_ONLY_IN_FOUNTAIN = true`).
-- **Enemy Fountain Laser (`FOUNTAIN_LASER_DPS = 600`):** Any enemy champion entering the opposing team's fountain takes `600` True Damage per second (`FOUNTAIN_FX_MS = 400 ms` hit FX cadence), bypassing Armor, MR, and shields to prevent spawn camping.
+- **Enemy Fountain Laser (`FOUNTAIN_LASER_DPS = 1200`):** Any enemy champion entering the opposing team's fountain takes `1200` True Damage per second (`FOUNTAIN_FX_MS = 400 ms` hit FX cadence) in both `TeamRoom` and `OfflineSim`, bypassing Armor, MR, and shields to prevent spawn camping.
 - **Respawn Reset:** Upon respawn, champion teleports to fountain spawn, resets HP/Mana to `100%`, clears `_nav`, and re-spawns any companion pet (`Servo`).
 
 ### 13.3. Complete Combat & Economy Flow Summary
 1. **Early Game (`0:00 – 4:00`):** Start `500g`, buy 1 Basic Gear + Coffee, clear first camp (`0:15`) or lane wave (`0:20`), contest `3:00` Golden Bug (`+200g` team-wide), reach Lv 5 Augment #1 (~`2:45`) and Lv 6 Ult (~`4:00`).
-2. **Mid Game (`4:00 – 12:00`):** Contest `6:00` The Deadline (`+20%` dmg + empowered waves — separated by `3 min` from Golden Bug), complete Core Boots + 2 Core items via Basic -> Core combine discounts, reach Lv 10 Augment #2 (~`8:30` with guaranteed Epic Skill Evolution), transition to `10:00` team pushes.
+2. **Mid Game (`4:00 – 12:00`):** Contest `6:00` The Deadline (`+20%` structure dmg + `+40%` empowered waves, `0%` PvP amp — separated by `3 min` from Golden Bug), complete Core Boots + 2 Core items via Basic -> Core combine discounts, reach Lv 10 Augment #2 (~`8:30` with guaranteed Epic Skill Evolution), transition to `10:00` team pushes.
 3. **Late Game (`12:00 – 22:00+`):** `ROLLBACK` surrender opens at `12:00`; reach Lv 15 Augment #3 (~`14:00`), complete 5–6 Core items incl. Active `[1]` (`Stasis` / `Cleanse` / `Veil`), break Core Firewall (`tier 3`) -> Production Server Core, or trigger `30:00` Crunch Time (`2.0x` structure dmg).
 
 
@@ -491,7 +495,7 @@ rawDamage
         5. BaseAfterResist = rawDamage * 100 / (100 + effResist)
         6. Struct Backdoor: * 0.40 if no allied minions within 700px (or * 2.0 at 30:00 Crunch Time)
         7. Crit (non-pet AA): * 1.60 once if (crit3 || crit20)
-        8. Multipliers: Deadline (+20%), Champion Passives, Item Passives, Augments
+        8. Multipliers: Deadline (+20% vs structures only), Champion Passives, Item Passives, Augments
         9. Amp Ceiling: min(dmg, (didCrit ? BaseAfterResist * 1.60 : BaseAfterResist) * 2.0 + 40)
        10. Defensive Mitigation: Fortress (0.90x), Last Stand (0.85x), Pair Shield (0.92x), Buff DR
        11. Shield Soak (CORS Bypass 1.50x vs shield) -> Subtract HP -> Lifesteal -> Kill Check

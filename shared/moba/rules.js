@@ -68,7 +68,7 @@ export const RECALL_MS = 4000;              // channel; interrupted by damage or
 export const FOUNTAIN_RADIUS = 520;         // shop + heal zone
 export const FOUNTAIN_HEAL_PER_SEC = 0.12;  // × max HP / s
 export const FOUNTAIN_MANA_PER_SEC = 0.15;  // × max mana / s
-export const FOUNTAIN_LASER_DPS = 600;      // to ENEMY champions inside the enemy fountain
+export const FOUNTAIN_LASER_DPS = 1200;     // lethal true damage/s to ENEMY champions inside the enemy fountain
 export const SHOP_ONLY_IN_FOUNTAIN = true;  // or while dead
 export const INVENTORY_SLOTS = 6;
 // Pass 2 RP-07: selling (same place rules as buying — in your fountain or while dead).
@@ -129,7 +129,9 @@ export const WAVE_FIRST_MS = 20000;         // first wave at 0:20
 export const WAVE_EVERY_MS = 30000;
 export const SIEGE_EVERY_N_WAVES = 3;
 export const WAVE_COMPOSITION = ['melee', 'melee', 'melee', 'ranged', 'ranged', 'ranged'];
-export const MINION_GROWTH_PER_WAVE = 0.025; // +2.5 % hp/dmg per wave
+export const MINION_GROWTH_PER_WAVE = 0.025; // +2.5% linear hp/dmg per wave
+export const MINION_GROWTH_MAX = 1.85;       // hard cap (~wave 35 / 17:30) so late waves remain clearable
+export const NEARBY_MINION_GOLD_PCT = 0.25;  // ambient gold to lowest-gold nearby ally when a teammate last-hits a lane minion
 export const MINIONS = {
   melee:  { sprite: 'bot-vacuum', fallback: 'bug-ladybug', name: 'Robo-Vacuum', hp: 460, dmg: 14, range: 70,  atkMs: 1250, speed: 170, gold: 21, xp: 60, size: 46 },
   ranged: { sprite: 'bot-project', fallback: 'bug-null', name: 'Project Bot', hp: 300, dmg: 24, range: 330, atkMs: 1550, speed: 170, gold: 15, xp: 30, size: 42 },
@@ -146,7 +148,7 @@ export const ATK_PROJ_SPEED = 1500;
 // a tower = its range + tower radius (70) + slack — so range must exceed the
 // longest champion range (500) + ~40 or ranged champions siege for free.
 export const TOWER = {
-  range: 600, atkMs: 1000, dmgChamp: 150, dmgChampRampPct: 0.25, // +25 % per consecutive hit on the same champ
+  range: 600, atkMs: 1000, dmgChamp: 155, dmgChampByTier: { 1: 155, 2: 195, 3: 260 }, dmgChampRampPct: 0.25, // +25 % per consecutive hit on the same champ
   dmgMinionPctMaxHp: 0.28, armor: 40,
   hp: { 1: 2100, 2: 2500, 3: 2900 },  // lowered 2026-11-07: first tower fell ~8:50 live  // tier 1 outer, 2 inner, 3 core firewall
 };
