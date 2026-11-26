@@ -24,6 +24,7 @@ import { getPid, takeover, joinError, fetchMe, loadMatch, clearMatch, DUP_TAB_TE
 import { LeaderboardPanel } from '../ui/LeaderboardPanel.js';
 import { TIERS } from '../../shared/moba/ranks.js';
 import { AudioManager } from '../core/AudioManager.js';
+import { tText } from '../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
   fillRR, strokeRR, fillCircleLP, strokeCircleLP, fadeToScene, teamServerUrl, startClockSync,
@@ -702,7 +703,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
     lab.setPadding(4, 2, 4, 2);
     ['q', 'w', 'e', 'r'].forEach((slot, k) => {
       const s = c.skills && c.skills[slot];
-      if (s) this._skillRow(dyn, slot, s, SKILLS.x, SKILLS.y + k * SKILLS.step, SKILLS.w, SKILLS.rowH);
+      if (s) this._skillRow(dyn, c.id, slot, s, SKILLS.x, SKILLS.y + k * SKILLS.step, SKILLS.w, SKILLS.rowH);
     });
 
     // ── stat bars ──
@@ -724,7 +725,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
     }
   }
 
-  _skillRow(dyn, slot, s, x, y, w, h) {
+  _skillRow(dyn, champId, slot, s, x, y, w, h) {
     const col = s.color ?? 0x7ec8ff;
     const isUlt = slot === 'r';
     const g = this.add.graphics();
@@ -759,7 +760,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
       }));
     }
     // description + facts line
-    dyn.add(this.add.text(x + 52, y + 33, s.desc || '', {
+    dyn.add(this.add.text(x + 52, y + 33, tText(`skill.${champId}.${slot}`, s.desc || ''), {
       fontFamily: FONT_MONO, fontSize: 12, color: '#cfe3f5',
       wordWrap: { width: w - 62, useAdvancedWrap: true },
     }));

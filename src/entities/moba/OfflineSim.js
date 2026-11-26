@@ -133,8 +133,18 @@ export class OfflineSim {
       let i = 0;
       st.champions.forEach((c) => { if (c.team === 'red' && i < 3) { c.x = me.x + 260 + i * 70; c.y = me.y - 120 + i * 90; c.dead = false; i++; } });
     }
-    else if (cmd === 'ready') { me.cdQ = me.cdR = me.cdW = me.cdE = me.cdD = me.cdF = 0; me.mana = me.maxMana; }
-    else if (cmd === 'spell') { const K = a?.slot === 'f' ? 'F' : 'D'; me['cd' + K] = 0; this._spell(me, { slot: K.toLowerCase(), x: a?.x, y: a?.y, id: a?.id }); }
+    else if (cmd === 'ready') {
+      me.cdQ = me.cdR = me.cdW = me.cdE = me.cdD = me.cdF = 0;
+      me.chargesD = spellInitialCharges(me.spellD); me.chargesF = spellInitialCharges(me.spellF);
+      me._spellRechD = me._spellRechF = me._spellCastCdD = me._spellCastCdF = 0;
+      me.mana = me.maxMana;
+    }
+    else if (cmd === 'spell') {
+      const K = a?.slot === 'f' ? 'F' : 'D';
+      me['cd' + K] = 0; me['_spellCastCd' + K] = 0;
+      if (SPELLS[me['spell' + K]]?.maxCharges > 1 && !(me['charges' + K] > 0)) me['charges' + K] = 1;
+      this._spell(me, { slot: K.toLowerCase(), x: a?.x, y: a?.y, id: a?.id });
+    }
     else if (cmd === 'cast') { const sl = String(a?.slot || 'q'); me['cd' + sl.toUpperCase()] = 0; me.mana = me.maxMana; this._cast(me, { slot: sl, x: a?.x, y: a?.y, id: a?.id }); }
     else if (cmd === 'brawl') { // all 10 champions into one fight at (a, b), level 8
       const x = Number.isFinite(a) ? a : 2100, y = Number.isFinite(b) ? b : 2500;
@@ -574,24 +584,7 @@ export class OfflineSim {
     this._attack(s, t, dmg, true, true);
   }
 
-  _champTick(c, dt) {
-    const t = this.t;
-    if (c.dead) { if (t >= c.respawnAt) this._respawn(c); return; }
-    // Tower Heal Relics pickup (own team only, restores 18% HP + 15% Mana, 60s respawn)
-    if (this.state.relics && (c.hp < c.maxHp - 5 || c.mana < c.maxMana - 5)) {
-      for (const rl of this.state.relics) {
-        if (rl.team !== c.team || rl.upAt > t) continue;
-        const dx = c.x - rl.x, dy = c.y - rl.y;
-        if (dx * dx + dy * dy <= 68 * 68) {
-          rl.upAt = t + 60000;
-          c.hp = Math.min(c.maxHp, c.hp + c.maxHp * 0.18);
-          c.mana = Math.min(c.maxMana, c.mana + c.maxMana * 0.15);
-          this.emit('fx', { k: 'heal', x: Math.round(c.x), y: Math.round(c.y), r: 75 });
-          break;
-        }
-      }
-    }
-    // Recharge multi-charge summoner spells (e.g. 2-charge Smite)
+  _tickSpellCharges(c, t = this.t) {
     for (const K of ['D', 'F']) {
       const sp = SPELLS[c['spell' + K]];
       if (!sp || !(sp.maxCharges > 1)) continue;
@@ -609,6 +602,26 @@ export class OfflineSim {
       }
       const castCd = c['_spellCastCd' + K] || 0;
       c['cd' + K] = charges > 0 ? (castCd > t ? castCd : 0) : Math.max(castCd, nextAt);
+    }
+  }
+
+  _champTick(c, dt) {
+    const t = this.t;
+    this._tickSpellCharges(c, t);
+    if (c.dead) { if (t >= c.respawnAt) this._respawn(c); return; }
+    // Tower Heal Relics pickup (own team only, restores 18% HP + 15% Mana, 60s respawn)
+    if (this.state.relics && (c.hp < c.maxHp - 5 || c.mana < c.maxMana - 5)) {
+      for (const rl of this.state.relics) {
+        if (rl.team !== c.team || rl.upAt > t) continue;
+        const dx = c.x - rl.x, dy = c.y - rl.y;
+        if (dx * dx + dy * dy <= 68 * 68) {
+          rl.upAt = t + 60000;
+          c.hp = Math.min(c.maxHp, c.hp + c.maxHp * 0.18);
+          c.mana = Math.min(c.maxMana, c.mana + c.maxMana * 0.15);
+          this.emit('fx', { k: 'heal', x: Math.round(c.x), y: Math.round(c.y), r: 75 });
+          break;
+        }
+      }
     }
     // buffs + shield + coffee + Blue/Red jungle buffs + regen
     let tags = Object.entries(c._buffs).filter(([, until]) => until > t).map(([k]) => k);
@@ -1411,7 +1424,9 @@ export class OfflineSim {
     const slot = m?.slot === 'f' ? 'F' : m?.slot === 'd' ? 'D' : null;
     if (!slot || this.state.phase !== 'playing') return false;
     const t = this.t, sp = SPELLS[c['spell' + slot]];
+    this._tickSpellCharges(c, t);
     if (!sp || c.dead || c.stunnedUntil > t || c[`cd${slot}`] > t) return false;
+    if (sp.maxCharges > 1 && (c[`charges${slot}`] || 0) <= 0) return false;
     if (m.id && this._hiddenFrom(this._ent(m.id), c.team)) return false;
     if (sp.kind !== 'blink' && sp.kind !== 'heal') this._reveal(c);
     const lvAmt = (spec) => R.scaledAmount(spec, c.level, 0, 0);

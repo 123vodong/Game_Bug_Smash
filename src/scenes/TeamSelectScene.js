@@ -28,6 +28,7 @@ import { hatEmoji } from '../entities/moba/mobaGfx.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { AudioManager } from '../core/AudioManager.js';
+import { tText } from '../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
   fillRR, strokeRR, fillCircleLP, strokeCircleLP, loadSpellPrefs, saveSpellPrefs, startClockSync,
@@ -702,7 +703,7 @@ export default class TeamSelectScene extends Phaser.Scene {
       add(this.add.text(sx + sw - 8, y + 13, meta, {
         fontFamily: FONT_MONO, fontSize: 9, color: hex(sc), padding: { y: 2 },
       }).setOrigin(1, 0.5));
-      add(this.add.text(sx + 44, y + 24, s.desc || '', {
+      add(this.add.text(sx + 44, y + 24, tText(`skill.${c.id}.${slot}`, s.desc || ''), {
         fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', lineSpacing: 0,
         wordWrap: { width: sw - 54, useAdvancedWrap: true }, fixedHeight: 30,
       }));
@@ -763,7 +764,7 @@ export default class TeamSelectScene extends Phaser.Scene {
     const sp = SPELLS[id];
     if (sp) {
       this._spellName.setText(`${sp.icon} ${sp.name}  ·  ${sp.cd}s`);
-      this._spellInfo.setText(`${sp.desc}\nclick a slot (or D / F) to change`);
+      this._spellInfo.setText(`${tText(`spell.${id}`, sp.desc)}\nclick a slot (or D / F) to change`);
     }
   }
 

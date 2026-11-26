@@ -976,9 +976,14 @@ export default class TeamModeScene extends Phaser.Scene {
     if (phase === 'down') { this._camX = x; this._camY = y; } // jump there (LoL), then follow the drag
   }
 
+  /** Single source of truth for any blocking overlay (prevents world hover/edge-pan/click bleed). */
+  _hasBlockingOverlay() {
+    return !!(this.hud.modalOpen || this.shop?.isOpen || this.info?.isOpen || this._sbOpen || this.augmentPanel?.isOpen || this._chatActive);
+  }
+
   /** Free camera: the mouse at a screen edge pans (desktop only, never over the HUD's modal / shop). */
   _edgePan(dt) {
-    if (this._isTouch || this._pointerOut || this._midDrag || this.hud.modalOpen || this.shop?.isOpen || this._sbOpen || this._chatActive) return;
+    if (this._isTouch || this._pointerOut || this._midDrag || this._hasBlockingOverlay()) return;
     if (this._camPeek) return;
     const p = this.input.activePointer;
     if (!p || (p.x === 0 && p.y === 0)) return;
@@ -992,7 +997,7 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _onEscape() {
-    if (this._chatActive) return;
+    if (this._chatActive || this.augmentPanel?.isOpen) return;
     if (this.hud.modalOpen) { this.hud.closeModal(); return; }
     if (this.info?.isOpen) { this.info.close(); return; }
     if (this.shop?.isOpen) { this.shop.close(); return; }
@@ -1714,7 +1719,11 @@ export default class TeamModeScene extends Phaser.Scene {
     });
     this.fx.update(dt);
     const canShop = this._canShop(me);
-    this.hud.update({ st, me, myId: this.localId, srvNow, now, mePos: this._pred, view, canShop, phase: this._phase, hidden: this._meHidden });
+    // Throttle HUD refresh to 20 Hz (matches server 50ms tick rate; cuts 60-FPS HUD polling overhead 3x)
+    if (now >= (this._hudAt || 0)) {
+      this._hudAt = now + 50;
+      this.hud.update({ st, me, myId: this.localId, srvNow, now, mePos: this._pred, view, canShop, phase: this._phase, hidden: this._meHidden });
+    }
     if (me && this.shop) this.shop.update({ gold: me.gold | 0, items: toArr(me.items), canShop });
     if (this.augmentPanel) {
       let offer = me?.augmentOffer || null;
@@ -2149,8 +2158,7 @@ export default class TeamModeScene extends Phaser.Scene {
         else if (this._targetMark.visible) this._targetMark.setVisible(false);
         if (!this._isTouch && this._mouseWorld && now >= this._hoverPickAt) {
           this._hoverPickAt = now + 50;
-          const uiBlocking = this.hud.modalOpen || this.shop?.isOpen || this._sbOpen || this._chatActive || this._pointerOut;
-          const canPick = this._phase === 'playing' && !uiBlocking;
+          const canPick = this._phase === 'playing' && !this._pointerOut && !this._hasBlockingOverlay();
           this._hoverEntity = canPick ? this._pickEntityAt(this._mouseWorld.x, this._mouseWorld.y) : null;
           this._hoverEnemy = this._hoverEntity && this._hoverEntity.team !== this.myTeam ? this._hoverEntity : null;
         }
