@@ -272,16 +272,24 @@ export class OfflineSim {
 
   _spawnCamp(camp) {
     const sp = R.CAMPS[camp.type];
+    const sc = R.campScaleAt(this.t - (this._startT || 0), false);
+    const hp = Math.round(sp.hp * sc.hpMul);
+    const dmg = Math.round(sp.dmg * sc.dmgMul);
+    const gold = Math.round(sp.gold * sc.rewardMul);
+    const xp = Math.round(sp.xp * sc.rewardMul);
     for (let i = 0; i < sp.count; i++) {
       const a = (i / sp.count) * Math.PI * 2, r = sp.count > 1 ? 60 : 0;
       const x = camp.x + Math.cos(a) * r, y = camp.y + Math.sin(a) * r;
-      this._addUnit({ x, y, team: 'neutral', kind: camp.type, hp: sp.hp, spec: { ...sp, range: 110, speed: 260 }, campId: camp.id, home: { x, y } });
+      this._addUnit({ x, y, team: 'neutral', kind: camp.type, hp, spec: { ...sp, hp, dmg, gold, xp, range: 110, speed: 260 }, campId: camp.id, home: { x, y } });
     }
   }
 
   _spawnEpic(kind) {
     const sp = R.EPICS[kind], p = EPIC_SPOTS[kind];
-    this._addUnit({ x: p.x, y: p.y, team: 'neutral', kind, hp: sp.hp, spec: { ...sp, range: 160, speed: 220 }, home: { ...p } });
+    const sc = R.campScaleAt(this.t - (this._startT || 0), true);
+    const hp = Math.round(sp.hp * sc.hpMul);
+    const dmg = Math.round(sp.dmg * sc.dmgMul);
+    this._addUnit({ x: p.x, y: p.y, team: 'neutral', kind, hp, spec: { ...sp, hp, dmg, range: 160, speed: 220 }, home: { ...p } });
     if (kind === 'golden') this.state.epicGoldenAt = 0; else this.state.epicDeadlineAt = 0;
   }
 
