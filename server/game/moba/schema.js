@@ -18,8 +18,8 @@ export class TeamChamp extends Schema {
     this.champ = '';           // champions.js id
     this.name = '';
     this.isBot = false;
-    this.level = 1;
-    this.xp = 0;
+    this.level = 3;
+    this.xp = 660;
     this.gold = 0;
     this.hp = 1;
     this.maxHp = 1;
@@ -70,10 +70,10 @@ export class TeamChamp extends Schema {
     this.ready = false;
     this.augments = new ArraySchema();
     this.augmentOfferJson = '';
-    this.skillPoints = 1;
-    this.rankQ = 0;
-    this.rankW = 0;
-    this.rankE = 0;
+    this.skillPoints = 0;
+    this.rankQ = 1;
+    this.rankW = 1;
+    this.rankE = 1;
     this.rankR = 0;
   }
 }

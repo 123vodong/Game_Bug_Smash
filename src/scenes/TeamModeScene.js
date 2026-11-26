@@ -257,6 +257,13 @@ export default class TeamModeScene extends Phaser.Scene {
     // Review fix 3: a phone resuming from sleep must not look like a dead link to the watchdog.
     this._onVis = () => { if (document.visibilityState === 'visible') { this._lastRxAt = Date.now(); this._stallAt = 0; } };
     document.addEventListener('visibilitychange', this._onVis);
+    this._onBeforeUnload = (e) => {
+      if (this._phase === 'playing' && !this._ended && !this._shuttingDown) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', this._onBeforeUnload);
     this.cameras.main.centerOn(this.world.fountain.blue.x, this.world.fountain.blue.y);
 
     // Only data decides (main.js reads the deep link once) — a later PLAY AGAIN in
@@ -891,8 +898,11 @@ export default class TeamModeScene extends Phaser.Scene {
     switch (code) {
       case 'KeyQ': case 'KeyW': case 'KeyE': case 'KeyR': {
         const sl = code[3].toLowerCase();
-        if (ev.ctrlKey) this._upgradeSkill(sl);
-        else this._tryCast(sl, false);
+        if (ev.shiftKey || ev.ctrlKey) {
+          ev.preventDefault?.();
+          ev.stopPropagation?.();
+          this._upgradeSkill(sl);
+        } else this._tryCast(sl, false);
         break;
       }
       case 'KeyD': case 'KeyF': this._trySpell(code[3].toLowerCase(), false); break;
@@ -2449,6 +2459,7 @@ export default class TeamModeScene extends Phaser.Scene {
     this._applyHoverCursor('');
     try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
     this._reconn = null; this._vote = null;
+    if (this._onBeforeUnload) { window.removeEventListener('beforeunload', this._onBeforeUnload); this._onBeforeUnload = null; }
     document.removeEventListener('visibilitychange', this._onVis);
     this.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, this._onAdded);
     this.events.off(Phaser.Scenes.Events.PRE_RENDER, this._classifyCams, this);

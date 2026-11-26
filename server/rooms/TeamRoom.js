@@ -785,7 +785,7 @@ export class TeamRoom extends Room {
 
   // ───────────────────────── match flow ─────────────────────────
   _resetChampForMatch(ch, now) {
-    ch.level = 1; ch.xp = 0; ch.gold = START_GOLD;
+    ch.level = 3; ch.xp = XP_TABLE[2]; ch.gold = START_GOLD;
     ch.kills = 0; ch.deaths = 0; ch.assists = 0; ch.cs = 0; ch.streak = 0;
     ch.items.fill('');
     if (ch.boughtAt) ch.boughtAt.fill(0);
@@ -798,7 +798,7 @@ export class TeamRoom extends Room {
     ch._atkCount = 0; ch._lastTargetId = ''; ch._cacheStacks = 0; ch._swipeReady = false; ch._lastCombatAt = 0;
     ch._grievousUntil = 0; ch._auditUntil = 0; ch._tankStacks = 0; ch._tankUntil = 0; ch._lifelineCd = 0;
     ch.augments = []; ch.augmentOffer = null; ch._augNextIdx = 0; ch._augVer = (ch._augVer || 0) + 1;
-    ch.skillPoints = 1; ch.ranks = { q: 0, w: 0, e: 0, r: 0 };
+    ch.skillPoints = 0; ch.ranks = { q: 1, w: 1, e: 1, r: 0 };
     ch._activeCd = 0; ch._stasisUntil = 0; ch._stealthUntil = 0; ch._wardCd = 0;
     if (ch.isBot) this._autoSpendSkills(ch);
     ch.shields.length = 0; ch.buffs.length = 0; ch.regens.length = 0;
