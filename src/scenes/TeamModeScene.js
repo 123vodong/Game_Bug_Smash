@@ -221,6 +221,12 @@ export default class TeamModeScene extends Phaser.Scene {
     this._aimG = this.add.graphics().setDepth(D.ground + 0.8);
     this._targetMark = this.add.ellipse(0, 0, 96, 34).setStrokeStyle(3, 0xff4a4a, 0.95).setDepth(D.ground + 0.9).setVisible(false);
     this._hoverMark = this.add.ellipse(0, 0, 88, 30).setStrokeStyle(2, 0xff8a8a, 0.85).setDepth(D.ground + 0.9).setVisible(false);
+    // 4 shared silhouette outline sprites (zero postFX/FBOs, impossible to leak on old targets)
+    this._hoverOutlines = [[-3.5, 0], [3.5, 0], [0, -3.5], [0, 3.5]].map(([dx, dy]) => {
+      const im = this.add.image(0, 0, 'moba-ring').setVisible(false);
+      im._odx = dx; im._ody = dy;
+      return im;
+    });
     this._aimTxt = this.add.text(0, 0, '', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffd23f', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5, 1).setDepth(D.numbers).setVisible(false);
@@ -1437,34 +1443,47 @@ export default class TeamModeScene extends Phaser.Scene {
     canvas.style.cursor = `url("${svg}") 14 14, crosshair`;
   }
 
-  /** Apply a pixel-hugging silhouette outline (Phaser 3.70 postFX glow) around the sprite itself, not a hitbox rect. */
-  /** Highlight hovered champion's built-in silhouette outlines (zero WebGL postFX pipeline overhead). */
+  /** Render a pixel-hugging silhouette outline around ANY hovered entity using 4 shared sprites (zero postFX, zero leaks). */
   _setHoverOutline(hv, rel) {
     const prev = this._hoverGlow;
-    const same = prev && prev.v === hv && prev.rel === rel;
-    if (same) return;
-    // Remove previous outline cleanly
-    if (prev) {
+    if (prev && prev.v !== hv && prev.v instanceof ChampionView && prev.v.outlines) {
       try {
-        if (prev.fx && prev.obj?.postFX) prev.obj.postFX.remove(prev.fx);
-        if (prev.v instanceof ChampionView && prev.v.outlines) {
-          for (const o of prev.v.outlines) if (o?.scene) o.setTintFill(prev.v.outlineColor);
-        }
+        for (const o of prev.v.outlines) if (o?.scene) o.setTintFill(prev.v.outlineColor);
       } catch (_) { /* destroyed */ }
-      this._hoverGlow = null;
     }
-    if (!hv || hv.dead || hv.alive === false || hv.removed) return;
+    const imgs = this._hoverOutlines;
+    if (!hv || !rel || hv.dead || hv.alive === false || hv.removed || hv._culled || hv.destroyed) {
+      if (imgs) for (let i = 0; i < imgs.length; i++) if (imgs[i].visible) imgs[i].setVisible(false);
+      this._hoverGlow = null;
+      return;
+    }
     const col = rel === 'enemy' ? 0xff4a4a : (rel === 'neutral' ? 0xffd23f : 0x39c2ff);
     const obj = hv instanceof ChampionView ? hv.sprite : hv.body;
-    let fx = null;
-    try {
-      // Skip postFX.addGlow on touch/mobile or lowFx mode to preserve 60 FPS on weak GPUs
-      if (!this._isTouch && !this._lowFx && obj?.postFX) fx = obj.postFX.addGlow(col, 4.5, 0, false, 0.25, 16);
-      if (hv instanceof ChampionView && hv.outlines) {
+    if (hv instanceof ChampionView && hv.outlines && (!prev || prev.v !== hv || prev.rel !== rel)) {
+      try {
         for (const o of hv.outlines) if (o?.scene) o.setTintFill(col);
+      } catch (_) { /* destroyed */ }
+    }
+    if (imgs && obj && obj.texture && obj.type === 'Image' && hv.c) {
+      const key = obj.texture.key, frame = obj.frame?.name;
+      const wx = hv.c.x + obj.x, wy = hv.c.y + obj.y;
+      const depth = hv.c.depth - 0.02;
+      for (let i = 0; i < imgs.length; i++) {
+        const im = imgs[i];
+        if (im.texture.key !== key || im.frame?.name !== frame) im.setTexture(key, frame);
+        im.setOrigin(obj.originX, obj.originY)
+          .setScale(obj.scaleX, obj.scaleY)
+          .setFlipX(!!obj.flipX)
+          .setAngle(obj.angle || 0)
+          .setPosition(wx + im._odx, wy + im._ody)
+          .setDepth(depth)
+          .setTintFill(col)
+          .setAlpha(0.92)
+          .setVisible(true);
       }
-    } catch (_) { /* canvas fallback */ }
-    this._hoverGlow = { v: hv, obj, fx, rel };
+    } else if (imgs) {
+      for (let i = 0; i < imgs.length; i++) if (imgs[i].visible) imgs[i].setVisible(false);
+    }
     this._hoverGlow = { v: hv, rel };
   }
 

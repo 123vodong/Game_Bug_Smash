@@ -200,6 +200,24 @@ export function campVariant(campId, type) {
   return list[(base.startsWith('bj_') ? 1 : 0) % list.length];
 }
 
+/** Time-based jungle & epic scaling: gentler early clear (0:00) for Lv 3 junglers, scales up over match time. */
+export function campScaleAt(matchMs, epic = false) {
+  const mins = Math.max(0, (matchMs || 0) / 60000);
+  if (epic) {
+    const over = Math.max(0, mins - 3);
+    return {
+      hpMul: Math.min(1.8, 1 + over * 0.06),
+      dmgMul: Math.min(1.5, 1 + over * 0.04),
+      rewardMul: 1,
+    };
+  }
+  return {
+    hpMul: Math.min(2.1, 0.68 + mins * 0.08),
+    dmgMul: Math.min(1.85, 0.58 + mins * 0.075),
+    rewardMul: Math.min(1.5, 1 + mins * 0.03),
+  };
+}
+
 // ── v2: walls, knockbacks, pets ──
 export const KNOCKBACK_MS = 200;             // displacement travel time
 export const PET_SPEED_MUL = 1.15;           // pets move at owner ms × this (catch up)

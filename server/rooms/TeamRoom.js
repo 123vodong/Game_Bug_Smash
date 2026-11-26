@@ -41,7 +41,7 @@ import {
   START_GOLD, PASSIVE_GOLD_PER_SEC, PASSIVE_GOLD_DELAY_MS, KILL_GOLD, ASSIST_GOLD, FIRST_BLOOD_BONUS, bountyBonus,
   TOWER_GOLD_TEAM, ASSIST_WINDOW_MS, XP_SHARE_RADIUS, KILL_XP_BASE, KILL_XP_PER_VICTIM_LEVEL,
   respawnMs, RECALL_MS, FOUNTAIN_RADIUS, FOUNTAIN_HEAL_PER_SEC, FOUNTAIN_MANA_PER_SEC, FOUNTAIN_LASER_DPS,
-  SHOP_ONLY_IN_FOUNTAIN, INVENTORY_SLOTS, damageAfterArmor, damageAfterResist, applyHardCcDuration, OUT_OF_COMBAT_MS, HP_REGEN_PCT_PER_SEC,
+  SHOP_ONLY_IN_FOUNTAIN, INVENTORY_SLOTS, damageAfterArmor, damageAfterResist, applyHardCcDuration, campScaleAt, OUT_OF_COMBAT_MS, HP_REGEN_PCT_PER_SEC,
   MANA_REGEN_PCT_PER_SEC, MOVE_ORDER_RATE_MS, CAST_RATE_MS,
   WAVE_FIRST_MS, WAVE_EVERY_MS, SIEGE_EVERY_N_WAVES, WAVE_COMPOSITION, MINION_GROWTH_PER_WAVE, MINIONS,
   MINION_AGGRO_RANGE, TOWER, CORE, BACKDOOR_RADIUS, BACKDOOR_DAMAGE_MUL, CRUNCH_MS, CRUNCH_STRUCT_MUL,
@@ -2194,12 +2194,17 @@ export class TeamRoom extends Room {
     const id = 'u' + (this._nextUnitId++);
     const s = new TeamUnit();
     const p = freeSpot(x, y, def.size / 2);
+    const sc = campScaleAt(this.matchMs(), epic);
+    const maxHp = Math.round(def.hp * sc.hpMul);
+    const dmg = Math.round(def.dmg * sc.dmgMul);
+    const gold = Math.round((def.gold || 0) * sc.rewardMul);
+    const xp = Math.round((def.xp || 0) * sc.rewardMul);
     const u = {
       id, etype: 'unit', utype: 'monster', team: 'neutral', kind, campId, s, epic,
       x: p.x, y: p.y, homeX: p.x, homeY: p.y, radius: def.size / 2,
-      maxHp: def.hp, hp: def.hp, alive: true, armor: 0,
-      dmg: def.dmg, atkMs: def.atkMs, range: MONSTER_REACH, speed: epic ? MONSTER_SPEED * 0.8 : MONSTER_SPEED,
-      gold: def.gold || 0, xp: def.xp || 0, leash,
+      maxHp, hp: maxHp, alive: true, armor: 0,
+      dmg, atkMs: def.atkMs, range: MONSTER_REACH, speed: epic ? MONSTER_SPEED * 0.8 : MONSTER_SPEED,
+      gold, xp, leash,
       target: '', atkReadyAt: 0, resetting: false, lastHitBy: '',
       stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, hitSeq: 0, removeAt: 0,
       nav: null, knock: null,
