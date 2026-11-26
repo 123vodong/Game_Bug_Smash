@@ -57,7 +57,7 @@ import {
 } from '../../shared/moba/map.js';
 import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, ROLE_PICKS, isChampionId, autoAimsAtEnemy, autoAimReach, championPassive } from '../../shared/moba/champions.js';
 import { ITEMS, isItemId, itemStats, itemPassives, ownedActiveItem, buyBlocker, recipePlan, applyBuy } from '../../shared/moba/items.js';
-import { AUGMENTS, AUGMENT_LEVELS, rollAugmentChoices } from '../../shared/moba/augments.js';
+import { AUGMENTS, AUGMENT_LEVELS, rollAugmentChoices, rollSingleAugment } from '../../shared/moba/augments.js';
 import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, isSpellId, validSpellPair, spellCooldownMs, spellInitialCharges } from '../../shared/moba/spells.js';
 import { TeamState, TeamChamp, TeamUnit, TeamStructure, TeamScore } from '../game/moba/schema.js';
 import { SkillEngine, MIN_AIM_DIST } from '../game/moba/SkillEngine.js';
@@ -227,7 +227,7 @@ export class TeamRoom extends Room {
     this.onMessage('spell', (client, msg) => this._doSpell(client.sessionId, msg));
     this.onMessage('vote', (client, msg) => this._doVote(client.sessionId, msg)); // EP-04 rollback vote
     this.onMessage('augmentPick', (client, msg) => this._doAugmentPick(client.sessionId, msg));
-    this.onMessage('augmentReroll', (client) => this._doAugmentReroll(client.sessionId));
+    this.onMessage('augmentReroll', (client, msg) => this._doAugmentReroll(client.sessionId, msg?.slot));
     this.onMessage('upgrade', (client, msg) => this._doUpgrade(client.sessionId, msg));
     this.onMessage('active', (client) => this._doUseActive(client.sessionId));
     this.onMessage('ward', (client, msg) => this._doWard(client.sessionId, msg));
@@ -3022,8 +3022,8 @@ export class TeamRoom extends Room {
       ch._augVer = (ch._augVer || 0) + 1;
       return;
     }
-    ch.augmentOffer = { level: nextLv, choices, rerolls: 1 };
-    this._sendTo(ch.id, 'announce', { title: `⚡ CODE AUGMENT (Lv ${nextLv})`, sub: 'Pick 1 of 3 permanent upgrades', color: '#ffd23f' });
+    ch.augmentOffer = { level: nextLv, choices, slotRerolls: choices.map(() => 1) };
+    this._sendTo(ch.id, 'announce', { title: `⚡ CODE AUGMENT (Lv ${nextLv})`, sub: 'Ready — opens on your next death', color: '#ffd23f' });
   }
 
   _doAugmentPick(sid, msg) {
@@ -3039,10 +3039,23 @@ export class TeamRoom extends Room {
     return true;
   }
 
-  _doAugmentReroll(sid) {
+  _doAugmentReroll(sid, slot) {
     if (this.state.phase !== 'playing') return false;
     const ch = this.champs.get(sid);
-    if (!ch || !ch.augmentOffer || !(ch.augmentOffer.rerolls > 0)) return false;
+    if (!ch || !ch.augmentOffer) return false;
+    if (Number.isInteger(slot) && slot >= 0 && slot < ch.augmentOffer.choices.length) {
+      const srr = ch.augmentOffer.slotRerolls || [];
+      if (!(srr[slot] > 0)) return false;
+      const nextId = rollSingleAugment(ch.champ, ch.augments, ch.augmentOffer.choices);
+      if (!nextId) return false;
+      const choices = [...ch.augmentOffer.choices];
+      const slotRerolls = [...srr];
+      choices[slot] = nextId;
+      slotRerolls[slot] = 0;
+      ch.augmentOffer = { ...ch.augmentOffer, choices, slotRerolls };
+      return true;
+    }
+    if (!(ch.augmentOffer.rerolls > 0)) return false;
     const choices = rollAugmentChoices(ch.champ, ch.augments, 3, { guaranteeEpic: ch.augmentOffer.level === 10 });
     if (!choices.length) return false;
     ch.augmentOffer = { ...ch.augmentOffer, choices, rerolls: ch.augmentOffer.rerolls - 1 };
