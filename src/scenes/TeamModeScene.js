@@ -1699,29 +1699,26 @@ export default class TeamModeScene extends Phaser.Scene {
     if (me && this.shop) this.shop.update({ gold: me.gold | 0, items: toArr(me.items), canShop });
     if (this.augmentPanel) {
       let offer = me?.augmentOffer || null;
-      if (!offer && me?.augmentOfferJson) {
-        try { offer = JSON.parse(me.augmentOfferJson); } catch { }
-        if (!offer) {
-          const rawOffer = me?.augmentOfferJson || '';
-          if (rawOffer !== this._lastOfferJson) {
-            this._lastOfferJson = rawOffer;
-            this._cachedOffer = null;
-            if (rawOffer) { try { this._cachedOffer = JSON.parse(rawOffer); } catch { } }
-          }
-          offer = this._cachedOffer;
+      if (!offer) {
+        const rawOffer = me?.augmentOfferJson || '';
+        if (rawOffer !== this._lastOfferJson) {
+          this._lastOfferJson = rawOffer;
+          this._cachedOffer = null;
+          if (rawOffer) { try { this._cachedOffer = JSON.parse(rawOffer); } catch {} }
         }
-        this.augmentPanel.update(offer, me?.augments || []);
-        let ownedAugs = me?.augments;
-        if (!Array.isArray(ownedAugs)) {
-          const csv = me?.augmentsCsv || '';
-          if (csv !== this._lastAugCsv) {
-            this._lastAugCsv = csv;
-            this._cachedAugs = csv ? csv.split(',') : [];
-          }
-          ownedAugs = this._cachedAugs;
-        }
-        this.augmentPanel.update(offer, ownedAugs);
+        offer = this._cachedOffer;
       }
+      let ownedAugs = me?.augments;
+      if (!Array.isArray(ownedAugs)) {
+        const csv = me?.augmentsCsv || '';
+        if (csv !== this._lastAugCsv) {
+          this._lastAugCsv = csv;
+          this._cachedAugs = csv ? csv.split(',') : [];
+        }
+        ownedAugs = this._cachedAugs;
+      }
+      this.augmentPanel.update(offer, ownedAugs);
+    }
       this._tickReconnect();
       if (st) this._tickVote(st, srvNow);
       if (now >= (this._slowTickAt || 0)) {
@@ -1795,7 +1792,6 @@ export default class TeamModeScene extends Phaser.Scene {
 
       // AoV Tower Heal Relics (behind Tier-1 towers)
       let relics = Array.isArray(st.relics) ? st.relics : null;
-      if (!relics && st.relicsJson) { try { relics = JSON.parse(st.relicsJson); } catch { } }
       if (!relics) {
         const rawRelics = st.relicsJson || '';
         if (rawRelics !== this._lastRelicsJson) {
@@ -1825,18 +1821,15 @@ export default class TeamModeScene extends Phaser.Scene {
         }
       }
 
-      // Update lightweight 10Hz Fog of War layer (team vision circles)
-      if (this.map?.updateFog) {
-        const watchers = [];
-        // Update throttled Fog of War layer only on due frames (zero per-frame allocations)
-        if (this.map?.shouldUpdateFog?.(now)) {
-          const watchers = this._fogWatchers;
-          watchers.length = 0;
-          st.champions?.forEach((c) => { if (c.team === this.myTeam && !c.dead) watchers.push({ x: c.x, y: c.y, r: 1100 }); });
-          st.structures?.forEach((s) => { if (s.team === this.myTeam && s.alive) watchers.push({ x: s.x, y: s.y, r: 1050 }); });
-          st.units?.forEach((u) => { if (u.team === this.myTeam && u.alive && u.kind !== 'pet') watchers.push({ x: u.x, y: u.y, r: u.kind === 'ward' ? 750 : 680 }); });
-          this.map.updateFog(watchers, now);
-        }
+      // Update throttled Fog of War layer only on due frames (zero per-frame allocations)
+      if (this.map?.shouldUpdateFog?.(now)) {
+        const watchers = this._fogWatchers;
+        watchers.length = 0;
+        st.champions?.forEach((c) => { if (c.team === this.myTeam && !c.dead) watchers.push({ x: c.x, y: c.y, r: 1100 }); });
+        st.structures?.forEach((s) => { if (s.team === this.myTeam && s.alive) watchers.push({ x: s.x, y: s.y, r: 1050 }); });
+        st.units?.forEach((u) => { if (u.team === this.myTeam && u.alive && u.kind !== 'pet') watchers.push({ x: u.x, y: u.y, r: u.kind === 'ward' ? 750 : 680 }); });
+        this.map.updateFog(watchers, now);
+      }
 
         const camps = this._liveCamps;
         camps.clear();
