@@ -111,58 +111,16 @@ export class MobaMap {
     this._collectStatics();
   }
 
-  /** Lightweight 120x120 Fog of War canvas stretched over 6000x6000 with pre-baked radial vision stamp. */
+  /** Disabled full-screen Fog canvas overlay (vision/bush hiding is enforced by server StateView & OfflineSim; avoids full-viewport overdraw + gl.texImage2D stalls). */
   _buildFog() {
-    const s = this.scene;
-    const key = 'moba-fog';
-    const W = 120, H = 120;
-    if (s.textures.exists(key)) s.textures.remove(key);
-    const tex = s.textures.createCanvas(key, W, H);
-    if (!tex) return;
-    this._fogTex = tex;
-    this._fogCtx = tex.getContext();
-    this._fogW = W; this._fogH = H;
-    this._fogAt = 0;
-    // Pre-bake a single 64x64 radial alpha stamp once so updateFog avoids per-watcher gradient allocations.
-    const st = document.createElement('canvas');
-    st.width = 64; st.height = 64;
-    const sc = st.getContext('2d');
-    const g = sc.createRadialGradient(32, 32, 18, 32, 32, 32);
-    g.addColorStop(0, 'rgba(0,0,0,1)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    sc.fillStyle = g;
-    sc.fillRect(0, 0, 64, 64);
-    this._fogStamp = st;
-    this._fogImg = s.add.image(0, 0, key).setOrigin(0, 0).setDisplaySize(MAP_W, MAP_H).setDepth(D.fxTop + 1);
+    this._fogTex = null;
+    this._fogCtx = null;
+    this._fogImg = null;
   }
 
-  /** True when the Fog of War canvas is due for its next throttled redraw. */
-  shouldUpdateFog(now) {
-    return !!(this._fogCtx && this._fogTex) && now >= (this._fogAt || 0);
-  }
+  shouldUpdateFog() { return false; }
 
-  /** Update Fog of War vision holes at ~6.7 Hz (4 Hz in lowFx mode). watchers: [{x, y, r}] */
-  updateFog(watchers, now) {
-    if (!this._fogCtx || !this._fogTex) return;
-    const step = this.lowFx ? 250 : 150;
-    if (now < this._fogAt) return;
-    this._fogAt = now + step;
-    const ctx = this._fogCtx, W = this._fogW, H = this._fogH;
-    const sx = W / MAP_W, sy = H / MAP_H;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(4, 9, 20, 0.56)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.globalCompositeOperation = 'destination-out';
-      const stamp = this._fogStamp;
-      for (let i = 0; i < watchers.length; i++) {
-        const w = watchers[i];
-        const fx = w.x * sx, fy = w.y * sy, fr = w.r * sx;
-        ctx.drawImage(stamp, fx - fr, fy - fr, fr * 2, fr * 2);
-      }
-      ctx.globalCompositeOperation = 'source-over';
-      this._fogTex.refresh();
-    }
+  updateFog() {}
 
     /** v4 perf: static world images / decor texts with precomputed bounds, culled vs the camera. */
     _collectStatics() {
@@ -411,125 +369,40 @@ export class MobaMap {
       this._cullAt = 0; // re-evaluate decor visibility next frame
     }
 
-    /** Seamless continuous 2.5D cyber-office walls packed into a single canvas atlas + round planters + base/river props. */
+    /** All furniture/partitions → one tight piece-sliced canvas atlas (minimal overdraw, 1 WebGL texture). */
     _buildWalls() {
       const s = this.scene;
-      const THEME = {
-        partition: { h: 42, sideTop: '#263147', sideBot: '#141b29', capTop: '#47597a', capBot: '#2f3d57', edge: '#0d121d', accent: '#39c2ff', glow: 'rgba(57,194,255,0.45)', glass: false },
-        cubicles: { h: 38, sideTop: '#2a3650', sideBot: '#161e2e', capTop: '#52668a', capBot: '#364663', edge: '#0f1420', accent: '#7ec8ff', glow: 'rgba(126,200,255,0.35)', glass: false },
-        glass: { h: 46, sideTop: 'rgba(58,185,245,0.38)', sideBot: 'rgba(22,88,138,0.52)', capTop: '#8ecae6', capBot: '#548ca8', edge: '#152a3d', accent: '#00f0ff', glow: 'rgba(0,240,255,0.65)', glass: true },
-        shelf: { h: 48, sideTop: '#282638', sideBot: '#14131f', capTop: '#4e4866', capBot: '#332f47', edge: '#0c0b14', accent: '#ffd23f', glow: 'rgba(255,210,63,0.45)', glass: false },
-      };
-      this.walls = [];
-      // Pack all segment walls into one shared 2048-wide canvas atlas (1 WebGL texture instead of ~44 separate textures).
-      const k = s.sys.game.device.os.desktop ? 0.65 : 0.45;
-      const atlasKey = 'moba-walls-v2';
-      const segFrames = [];
-      WALLS.forEach((w, idx) => {
-                if (w.kind !== 'seg') return;
-                const th = THEME[w.look] || THEME.partition;
-                const H = th.h;
-                const r = (w.w || 60) * 0.5;
-                const pad = Math.ceil(r + 22);
-                const minX = Math.min(w.x1, w.x2) - pad;
-                const maxX = Math.max(w.x1, w.x2) + pad;
-                const minY = Math.min(w.y1, w.y2) - pad - H;
-                const maxY = Math.max(w.y1, w.y2) + pad + 12;
-                const fw = Math.max(8, Math.ceil((maxX - minX) * k));
-                const fh = Math.max(8, Math.ceil((maxY - minY) * k));
-                segFrames.push({ name: `w_${w.id || idx}`, w, th, H, r, minX, minY, fw, fh });
-              });
-      const ATLAS_W = 2048;
-      let ax = 0, ay = 0, rowH = 0;
-      for (const f of [...segFrames].sort((a, b) => b.fh - a.fh)) {
-        if (ax + f.fw > ATLAS_W) { ax = 0; ay += rowH + 2; rowH = 0; }
-        f.fx = ax; f.fy = ay; ax += f.fw + 2; rowH = Math.max(rowH, f.fh);
-      }
-      const ATLAS_H = Math.max(2, ay + rowH);
-      if (!s.textures.exists(atlasKey) && ATLAS_H <= 4096) {
-        const tex = s.textures.createCanvas(atlasKey, ATLAS_W, ATLAS_H);
+      const layout = wallLayout(s.sys.game.device.os.desktop ? 0.85 : 0.6);
+      const key = 'moba-walls';
+      if (!s.textures.exists(key)) {
+        const tex = s.textures.createCanvas(key, layout.W, layout.H);
         if (tex) {
           const ctx = tex.getContext();
-          const ribbon = (x1, y1, x2, y2, width, style) => {
-            ctx.beginPath();
-            ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-            ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-            ctx.strokeStyle = style; ctx.stroke();
-          };
-          for (const f of segFrames) {
-            const { w, th, H, r, minX, minY } = f;
+          for (const f of layout.frames) {
             ctx.save();
             ctx.beginPath(); ctx.rect(f.fx, f.fy, f.fw, f.fh); ctx.clip();
-            ctx.setTransform(k, 0, 0, k, f.fx - minX * k, f.fy - minY * k);
-            const x1 = w.x1, y1 = w.y1, x2 = w.x2, y2 = w.y2;
-            const dx = x2 - x1, dy = y2 - y1;
-            const len = Math.hypot(dx, dy) || 1;
-            const ux = dx / len;
-            ribbon(x1 + 6, y1 + 10, x2 + 6, y2 + 10, r * 2 + 10, 'rgba(0,0,0,0.42)');
-            const steps = Math.max(8, Math.ceil(H / 3));
-            for (let i = 0; i <= steps; i++) {
-              const t = i / steps, lift = t * H, outer = i === 0 || i === steps;
-              if (th.glass) {
-                if (i === 0) ribbon(x1, y1, x2, y2, r * 2 + 2, th.edge);
-                ribbon(x1, y1 - lift, x2, y2 - lift, r * 2 - 2, i < steps * 0.5 ? th.sideBot : th.sideTop);
-              } else {
-                ribbon(x1, y1 - lift, x2, y2 - lift, r * 2 + (outer ? 2 : 0), outer ? th.edge : (t < 0.45 ? th.sideBot : th.sideTop));
-              }
+            ctx.setTransform(layout.k, 0, 0, layout.k, f.fx - f.b.x0 * layout.k, f.fy - f.b.y0 * layout.k);
+            if (f.clip) {
+              ctx.beginPath();
+              for (const poly of f.clip) { ctx.moveTo(poly[0][0], poly[0][1]); for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]); ctx.closePath(); }
+              ctx.clip();
             }
-            const midLift = H * 0.42;
-            ctx.save();
-            ctx.shadowColor = th.glow; ctx.shadowBlur = th.glass ? 8 : 5;
-            ribbon(x1, y1 - midLift, x2, y2 - midLift, r * 2 - 4, th.accent);
-            ctx.restore();
-            if (!th.glass) {
-              for (let i = Math.ceil(steps * 0.52); i < steps; i++) {
-                ribbon(x1, y1 - (i / steps) * H, x2, y2 - (i / steps) * H, r * 2, th.sideTop);
-              }
-            } else {
-              ctx.save();
-              ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 3;
-              const n = Math.max(2, Math.floor(len / 95));
-              for (let i = 1; i < n; i++) {
-                const px = x1 + dx * (i / n), py = y1 + dy * (i / n);
-                ctx.beginPath(); ctx.moveTo(px - ux * 10, py - H * 0.2); ctx.lineTo(px + ux * 10, py - H * 0.85); ctx.stroke();
-              }
-              ctx.restore();
-            }
-            ribbon(x1, y1 - H, x2, y2 - H, r * 2 + 2, th.edge);
-            const g = ctx.createLinearGradient(x1, y1 - H - r, x1, y1 - H + r);
-            g.addColorStop(0, th.capTop); g.addColorStop(1, th.capBot);
-            ribbon(x1, y1 - H, x2, y2 - H, r * 2 - 3, g);
-            ribbon(x1, y1 - H, x2, y2 - H, Math.max(6, r * 0.45), 'rgba(10,16,28,0.42)');
-            ribbon(x1, y1 - H, x2, y2 - H, 2.5, th.accent);
+            try { drawWall(ctx, f.w, f.b.H); } catch (e) { console.warn('[MobaMap] wall draw failed', f.w.id, e?.message); }
             ctx.restore();
             tex.add(f.name, 0, f.fx, f.fy, f.fw, f.fh);
           }
           tex.refresh();
         }
       }
-      if (s.textures.exists(atlasKey)) {
-        const tex = s.textures.get(atlasKey);
-        for (const f of segFrames) {
+      this.walls = [];
+      if (s.textures.exists(key)) {
+        const tex = s.textures.get(key);
+        for (const f of layout.frames) {
           if (!tex.has(f.name)) continue;
-          const img = s.add.image(f.minX, f.minY, atlasKey, f.name).setOrigin(0, 0).setScale(1 / k).setDepth(depthAt((f.w.y1 + f.w.y2) * 0.5));
+          const img = s.add.image(f.b.x0, f.b.y0, key, f.name).setOrigin(0, 0).setScale(1 / layout.k).setDepth(depthAt(f.depthY));
           this.walls.push(img);
         }
       }
-      WALLS.forEach((w) => {
-        if (w.kind === 'circle') {
-          const c = s.add.container(w.x, w.y).setDepth(depthAt(w.y));
-          const r = w.r || 70;
-          c.add([
-            s.add.ellipse(6, 10, r * 2.1, r * 1.9, 0x000000, 0.4),
-            s.add.circle(0, 0, r, 0x2a3650).setStrokeStyle(4, 0x0f1420),
-            s.add.circle(0, -6, r * 0.84, 0x1c2838).setStrokeStyle(2, 0x39c2ff, 0.65),
-          ]);
-          if (s.textures.exists('moba-prop-plant')) {
-            c.add(s.add.image(0, -14, 'moba-prop-plant').setDisplaySize(r * 1.9, r * 1.9));
-          }
-          this.walls.push(c);
-        }
-      });
       // Subtle river & base environment accents (assets/moba/*)
       const props = [
         { x: 2680, y: 2680, k: 'moba-prop-crystal', s: 54 },

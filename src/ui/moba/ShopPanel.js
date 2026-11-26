@@ -33,8 +33,9 @@ const GRID_W = COLS * TILE_W + (COLS - 1) * COL_GAP;
 const RX = GRID_X + GRID_W + 16, RW = 264;   // right column: detail, inventory, recommended
 const PW = RX + RW + 16, PH = 682;           // 39 items (1 + 10 + 28 → 9 rows of 5) → 1174 × 682
 const DETAIL_H = 252;
-const RECIPE_W = 650, RECIPE_H = 350;
-const MAX_RECIPE_COMPONENTS = Math.max(0, ...Object.values(ITEMS).map((it) => it.recipe?.length || 0));
+const TREE_Y = GRID_Y + DETAIL_H + 158;
+const TREE_H = PH - 28 - TREE_Y;
+const MAX_RECIPE_COMPONENTS = Math.max(3, ...Object.values(ITEMS).map((it) => it.recipe?.length || 0));
 const DOUBLE_CLICK_MS = 380;
 const TIERS = [
   { id: 'consumable', label: 'CONSUMABLES · used instantly', color: 0x7ed957 },
@@ -86,7 +87,7 @@ export class ShopPanel {
     this._buildDetail();
     this._buildInventory();
     this._buildRecommended();
-    this._buildRecipeOverlay();
+    this._buildInlineRecipeTree();
     pin(this.root);
 
     this._onEsc = () => { if (this._open) scene.time.delayedCall(0, () => this.close()); };
@@ -112,9 +113,8 @@ export class ShopPanel {
   close() {
     if (!this._open) return;
     this._open = false;
-    this._recipeOpen = false;
-    this._recipeOverlay.setVisible(false);
     this._hover = null;
+    this._treeHover = -1;
     const r = this.root;
     if (!r.scene) return;
     this.scene.tweens.killTweensOf(r);
@@ -288,15 +288,10 @@ export class ShopPanel {
       fontFamily: FONT_MONO, fontSize: 12, color: '#cfe3f5', lineSpacing: 1,
       wordWrap: { width: RW - 28, useAdvancedWrap: true },
     });
-    this._dReason = s.add.text(x + RW / 2, y + 198, '', {
+    this._dReason = s.add.text(x + RW / 2, y + 196, '', {
       fontFamily: FONT_MONO, fontSize: 12, fontStyle: 'bold', color: '#ff8a8a', padding: { y: 2 },
     }).setOrigin(0.5);
-    this._recipeReason = s.add.text(x + 14, y + 198, '', {
-      fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#7ed957',
-      wordWrap: { width: 140, useAdvancedWrap: true }, align: 'left',
-    }).setOrigin(0, 0.5).setVisible(false);
     B.add([this._detailG, this._dEmoji, this._dName, this._dMeta, this._dStats, this._dDesc, this._dReason]);
-    B.add(this._recipeReason);
     this._buyBtn = makeButton(s, {
       x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'BUY', color: NEON.green, fontSize: 16,
       onClick: () => { if (this._open) this._tryBuy(this._sel); },
@@ -305,137 +300,237 @@ export class ShopPanel {
       x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'SELL', color: NEON.orange, fontSize: 16,
       onClick: () => { if (this._open && this._selSlot != null) this._trySell(this._selSlot); },
     });
-    this._recipeBtn = makeButton(s, {
-      x: x + RW - 54, y: y + 198, w: 100, h: 36, label: '🧩 RECIPE TREE',
-      color: NEON.cyan, fontSize: 9,
-      onClick: () => this._openRecipeTree(),
-    });
     this._sellBtn.root.setVisible(false);
-    this._recipeBtn.root.setVisible(false);
-    B.add([this._buyBtn.root, this._sellBtn.root, this._recipeBtn.root]);
+    B.add([this._buyBtn.root, this._sellBtn.root]);
   }
 
-  _buildRecipeOverlay() {
-    const s = this.scene;
-    const overlay = this._recipeOverlay = s.add.container(0, 0).setVisible(false);
-    const dim = s.add.rectangle(0, 0, PW, PH, 0x02050a, 0.78).setInteractive();
-    dim.on('pointerdown', swallow);
-    dim.on('pointerup', (p, x, y, ev) => { ev?.stopPropagation?.(); this._closeRecipeTree(); });
-    const panelHit = s.add.rectangle(0, 0, RECIPE_W, RECIPE_H, 0xffffff, 0).setInteractive();
-    panelHit.on('pointerdown', swallow);
-    panelHit.on('pointerup', swallow);
-    const panel = s.add.graphics();
-    drawPanel(panel, -RECIPE_W / 2, -RECIPE_H / 2, RECIPE_W, RECIPE_H, {
-      color: NEON.cyan, radius: 18, halo: 0.16, fill: 0x070b16, fillAlpha: 1,
-    });
-    const title = s.add.text(-RECIPE_W / 2 + 22, -RECIPE_H / 2 + 25, '🧩 RECIPE TREE', {
-      fontFamily: FONT_TITLE, fontSize: 18, color: '#ffffff', stroke: '#000000', strokeThickness: 4,
+  /** Inline Build Path / Recipe Tree embedded directly in the bottom-right column (click components to buy). */
+  _buildInlineRecipeTree() {
+    const s = this.scene, B = this._body;
+    this._treeHover = -1;
+    this._treeBg = s.add.graphics();
+    this._treeLines = s.add.graphics();
+    this._treeTitle = s.add.text(RX + 10, TREE_Y + 12, 'BUILD PATH', {
+      fontFamily: FONT_TITLE, fontSize: 10, color: '#7ec8ff',
     }).setOrigin(0, 0.5);
-    this._recipeItemTitle = s.add.text(0, -RECIPE_H / 2 + 25, '', {
-      fontFamily: FONT_MONO, fontSize: 11, color: '#8fd0ff',
+    this._treeSub = s.add.text(RX + RW - 10, TREE_Y + 12, '', {
+      fontFamily: FONT_MONO, fontSize: 9, color: '#8ea4c0',
+    }).setOrigin(1, 0.5);
+    this._treeEmpty = s.add.text(RX + RW / 2, TREE_Y + TREE_H / 2 + 6, '', {
+      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c', align: 'center',
+      wordWrap: { width: RW - 24 },
     }).setOrigin(0.5);
-    const hint = s.add.text(0, RECIPE_H / 2 - 20, 'Owned components are marked ✓ · BUY auto-combines them', {
-      fontFamily: FONT_MONO, fontSize: 10, color: '#9fb3c8',
-    }).setOrigin(0.5);
-    const closeBtn = makeButton(s, {
-      x: RECIPE_W / 2 - 44, y: -RECIPE_H / 2 + 25, w: 72, h: 32, label: 'CLOSE',
-      color: NEON.red, fontSize: 10, onClick: () => this._closeRecipeTree(),
+    B.add([this._treeBg, this._treeLines, this._treeTitle, this._treeSub, this._treeEmpty]);
+
+    // Top root node (selected core item) — clickable to buy/upgrade
+    const rW = 196, rH = 30;
+    const rc = s.add.container(RX + RW / 2, TREE_Y + 41);
+    const rBg = s.add.graphics();
+    const rIcon = s.add.text(-rW / 2 + 16, 0, '', { fontSize: 16, padding: { y: 2 } }).setOrigin(0.5);
+    const rName = s.add.text(-rW / 2 + 30, 0, '', {
+      fontFamily: FONT_UI, fontSize: 11, fontStyle: 'bold', color: '#ffffff',
+    }).setOrigin(0, 0.5);
+    const rCost = s.add.text(rW / 2 - 8, 0, '', {
+      fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#ffd23f',
+    }).setOrigin(1, 0.5);
+    const rHit = s.add.rectangle(0, 0, rW, rH, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    rHit.on('pointerdown', swallow);
+    rHit.on('pointerup', (p, lx, ly, ev) => {
+      ev?.stopPropagation?.();
+      if (this._open && this._treeRoot?.itemId) this._tryBuy(this._treeRoot.itemId);
     });
-    this._recipeTreeG = s.add.graphics();
-    this._recipeRootNode = this._makeRecipeNode(0, -53, 300, 66, true);
-    this._recipeNodes = [];
-    for (let i = 0; i < MAX_RECIPE_COMPONENTS; i++) this._recipeNodes.push(this._makeRecipeNode(0, 52, 190, 72, false));
-    overlay.add([dim, panelHit, panel, this._recipeTreeG, this._recipeItemTitle, title, hint,
-      this._recipeRootNode.container, ...this._recipeNodes.map((n) => n.container), closeBtn.root]);
-    this.root.add(overlay);
+    rc.add([rBg, rIcon, rName, rCost, rHit]);
+    B.add(rc);
+    this._treeRoot = { c: rc, bg: rBg, icon: rIcon, name: rName, cost: rCost, w: rW, h: rH, itemId: null };
+
+    // Bottom component / "builds into" nodes (up to MAX_RECIPE_COMPONENTS)
+    this._treeNodes = [];
+    for (let i = 0; i < MAX_RECIPE_COMPONENTS; i++) {
+      const c = s.add.container(RX + RW / 2, TREE_Y + TREE_H - 42);
+      const bg = s.add.graphics();
+      const icon = s.add.text(0, -18, '', { fontSize: 18, padding: { y: 2 } }).setOrigin(0.5);
+      const name = s.add.text(0, 3, '', {
+        fontFamily: FONT_UI, fontSize: 10, fontStyle: 'bold', color: '#ffffff', align: 'center',
+      }).setOrigin(0.5);
+      const badge = s.add.text(0, 21, '', {
+        fontFamily: FONT_MONO, fontSize: 9, fontStyle: 'bold', color: '#ffd23f', align: 'center',
+      }).setOrigin(0.5);
+      const hit = s.add.rectangle(0, 0, 110, 66, 0xffffff, 0).setInteractive({ useHandCursor: true });
+      const idx = i;
+      hit.on('pointerover', () => { this._treeHover = idx; this._renderInlineRecipeTree(); });
+      hit.on('pointerout', () => { if (this._treeHover === idx) { this._treeHover = -1; this._renderInlineRecipeTree(); } });
+      hit.on('pointerdown', swallow);
+      hit.on('pointerup', (p, lx, ly, ev) => {
+        ev?.stopPropagation?.();
+        const nd = this._treeNodes[idx];
+        if (!this._open || !nd?.itemId) return;
+        if (nd.mode === 'into') {
+          this._selSlot = null;
+          this._select(nd.itemId);
+          AudioManager.uiClick();
+          return;
+        }
+        // Component node: click directly buys unowned component (or selects if already owned)
+        if (!nd.owned) this._tryBuy(nd.itemId);
+        else { this._selSlot = null; this._select(nd.itemId); AudioManager.uiClick(); }
+      });
+      c.add([bg, icon, name, badge, hit]);
+      B.add(c);
+      this._treeNodes.push({ c, bg, icon, name, badge, hit, w: 110, h: 66, itemId: null, owned: false, mode: 'comp' });
+    }
   }
 
-  _makeRecipeNode(x, y, w, h, root) {
-    const s = this.scene;
-    const container = s.add.container(x, y);
-    const bg = s.add.graphics();
-    const icon = s.add.text(-w / 2 + 19, 0, '', { fontSize: root ? 26 : 20, padding: { y: 3 } }).setOrigin(0.5);
-    const textX = -w / 2 + 38;
-    const name = s.add.text(textX, root ? -12 : -13, '', {
-      fontFamily: FONT_UI, fontSize: root ? 12 : 10, fontStyle: 'bold', color: '#ffffff',
-      wordWrap: { width: w - 48, useAdvancedWrap: true },
-    }).setOrigin(0, 0.5);
-    const detail = s.add.text(textX, root ? 16 : 17, '', {
-      fontFamily: FONT_MONO, fontSize: root ? 10 : 9, color: '#9fb3c8',
-    }).setOrigin(0, 0.5);
-    container.add([bg, icon, name, detail]);
-    return { container, bg, icon, name, detail, w, h };
-  }
-
-  _openRecipeTree() {
-    const id = this._hover || this._sel;
-    if (!this._open || !ITEMS[id]?.recipe?.length) return;
-    this._recipeOpen = true;
-    this._renderRecipeTree();
-    this._recipeOverlay.setVisible(true);
-    AudioManager.uiClick();
-  }
-
-  _closeRecipeTree() {
-    if (!this._recipeOpen) return;
-    this._recipeOpen = false;
-    this._recipeOverlay.setVisible(false);
-    AudioManager.uiClick();
-  }
-
-  _renderRecipeTree() {
+  _renderInlineRecipeTree() {
     const id = this._hover || this._sel;
     const it = id ? ITEMS[id] : null;
-    if (!it?.recipe?.length) return;
-    const plan = recipePlan(this._slots, id);
-    const root = this._recipeRootNode;
-    this._paintRecipeNode(root, it, `${fmtGold(plan.cost)}g to combine · ${fmtGold(plan.baseCost)}g total`, NEON.yellow);
-    this._recipeItemTitle.setText(it.name);
-    this._recipeTreeG.clear();
-
-    const counts = {};
-    for (const owned of this._slots) if (owned) counts[owned] = (counts[owned] || 0) + 1;
-    const n = plan.components.length;
-    const gap = 20;
-    const nodeW = Math.min(190, (RECIPE_W - 60 - gap * Math.max(0, n - 1)) / Math.max(1, n));
-    const startX = -((n - 1) * (nodeW + gap)) / 2;
-    const centers = [];
-    for (let i = 0; i < this._recipeNodes.length; i++) {
-      const node = this._recipeNodes[i];
-      const componentId = plan.components[i];
-      const component = componentId ? ITEMS[componentId] : null;
-      node.container.setVisible(!!component);
-      if (!component) continue;
-      const x = startX + i * (nodeW + gap);
-      node.container.setPosition(x, 52);
-      node.w = nodeW;
-      centers.push(x);
-      const owned = (counts[componentId] || 0) > 0;
-      if (owned) counts[componentId]--;
-      this._paintRecipeNode(node, component, `${fmtGold(component.cost)}g · ${owned ? '✓ OWNED' : 'NEED'}`,
-        owned ? NEON.green : NEON.blue);
-    }
-
-    if (centers.length) {
-      const branchY = -8;
-      this._recipeTreeG.lineStyle(2, NEON.cyan, 0.8);
-      this._recipeTreeG.lineBetween(0, -20, 0, branchY);
-      this._recipeTreeG.lineBetween(centers[0], branchY, centers[centers.length - 1], branchY);
-      for (const x of centers) this._recipeTreeG.lineBetween(x, branchY, x, 16);
-    }
-  }
-
-  _paintRecipeNode(node, it, detail, color) {
-    const { w, h, bg, icon, name, container } = node;
+    const bg = this._treeBg, lines = this._treeLines;
     bg.clear();
-    bg.fillStyle(0x0d1728, 0.98);
-    fillRR(bg, -w / 2, -h / 2, w, h, 9);
-    bg.lineStyle(2, color, 0.95);
-    strokeRR(bg, -w / 2, -h / 2, w, h, 9);
-    icon.setText(it.emoji);
-    name.setText(it.name);
-    node.detail.setText(detail).setColor(hex(color));
-    container.setVisible(true);
+    lines.clear();
+    bg.fillStyle(0x0b1322, 0.94);
+    fillRR(bg, RX, TREE_Y, RW, TREE_H, 10);
+    bg.lineStyle(1.2, 0x2a3d5c, 0.85);
+    strokeRR(bg, RX, TREE_Y, RW, TREE_H, 10);
+
+    const hideAll = (msg = '') => {
+      this._treeRoot.c.setVisible(false);
+      this._treeRoot.itemId = null;
+      for (const nd of this._treeNodes) { nd.c.setVisible(false); nd.itemId = null; }
+      this._treeEmpty.setText(msg).setVisible(!!msg);
+    };
+
+    if (!it) {
+      this._treeTitle.setText('BUILD PATH');
+      this._treeSub.setText('');
+      hideAll('Select an item to view its recipe');
+      return;
+    }
+
+    const plan = recipePlan(this._slots, id);
+    if (plan.components.length > 0) {
+      // Forward Recipe Tree: Core item → clickable components
+      this._treeEmpty.setVisible(false);
+      this._treeTitle.setText('BUILD PATH');
+      this._treeSub.setText('click part to buy').setColor('#7ed957');
+
+      const root = this._treeRoot;
+      root.itemId = id;
+      root.c.setVisible(true);
+      const rCol = this._gold >= plan.cost && this._canShop ? NEON.green : NEON.yellow;
+      root.bg.clear();
+      root.bg.fillStyle(0x121d33, 0.98);
+      fillRR(root.bg, -root.w / 2, -root.h / 2, root.w, root.h, 7);
+      root.bg.lineStyle(1.5, rCol, 0.92);
+      strokeRR(root.bg, -root.w / 2, -root.h / 2, root.w, root.h, 7);
+      root.icon.setText(it.emoji);
+      const rLabel = it.name.length > 15 ? `${it.name.slice(0, 14)}…` : it.name;
+      root.name.setText(rLabel);
+      root.cost.setText(`${fmtGold(plan.cost)}g`).setColor(this._gold >= plan.cost ? '#7ed957' : '#ff8a8a');
+
+      const counts = {};
+      for (const owned of this._slots) if (owned) counts[owned] = (counts[owned] || 0) + 1;
+      const n = Math.min(plan.components.length, this._treeNodes.length);
+      const pad = 10, gap = 8;
+      const nodeW = Math.floor((RW - pad * 2 - gap * Math.max(0, n - 1)) / Math.max(1, n));
+      const nodeH = 66;
+      const nodeY = TREE_Y + TREE_H - nodeH / 2 - 10;
+      const startX = RX + pad + nodeW / 2;
+      const centers = [];
+
+      for (let i = 0; i < this._treeNodes.length; i++) {
+        const nd = this._treeNodes[i];
+        const cid = i < n ? plan.components[i] : null;
+        const comp = cid ? ITEMS[cid] : null;
+        nd.c.setVisible(!!comp);
+        if (!comp) { nd.itemId = null; continue; }
+        const cx = startX + i * (nodeW + gap);
+        nd.c.setPosition(cx, nodeY);
+        nd.w = nodeW; nd.h = nodeH;
+        nd.hit.setSize(nodeW, nodeH);
+        nd.itemId = cid;
+        nd.mode = 'comp';
+        centers.push(cx);
+
+        const owned = (counts[cid] || 0) > 0;
+        if (owned) counts[cid]--;
+        nd.owned = owned;
+        const canBuy = !owned && this._canShop && !buyBlocker(this._slots, cid) && this._gold >= comp.cost;
+        const hov = this._treeHover === i;
+        const col = owned ? NEON.green : (canBuy ? NEON.yellow : 0x3b5275);
+
+        nd.bg.clear();
+        nd.bg.fillStyle(owned ? 0x0c2416 : (hov ? 0x182844 : 0x0f192c), 0.98);
+        fillRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
+        nd.bg.lineStyle(hov ? 2.2 : 1.5, hov ? 0xffffff : col, owned || canBuy || hov ? 0.95 : 0.7);
+        strokeRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
+
+        nd.icon.setText(comp.emoji).setAlpha(owned ? 0.7 : 1);
+        const maxCh = Math.max(8, Math.floor((nodeW - 10) / 6));
+        const shortName = comp.name.length > maxCh ? `${comp.name.slice(0, maxCh - 1)}…` : comp.name;
+        nd.name.setText(shortName);
+        if (owned) nd.badge.setText('✓ OWNED').setColor('#7ed957');
+        else if (canBuy) nd.badge.setText(`BUY ${fmtGold(comp.cost)}g`).setColor('#ffd23f');
+        else nd.badge.setText(`${fmtGold(comp.cost)}g`).setColor(this._gold >= comp.cost ? '#9fb3c8' : '#ff6b6b');
+      }
+
+      if (centers.length) {
+        const rootBot = TREE_Y + 41 + root.h / 2;
+        const childTop = nodeY - nodeH / 2;
+        const midY = Math.round((rootBot + childTop) / 2);
+        lines.lineStyle(1.8, NEON.cyan, 0.75);
+        lines.lineBetween(RX + RW / 2, rootBot, RX + RW / 2, midY);
+        if (centers.length > 1) lines.lineBetween(centers[0], midY, centers[centers.length - 1], midY);
+        for (const cx of centers) lines.lineBetween(cx, midY, cx, childTop);
+      }
+      return;
+    }
+
+    // Reverse tree: for Basic items, show Core items that build from this item
+    const upgrades = SHOP_ORDER.filter((oid) => ITEMS[oid]?.recipe?.includes(id)).slice(0, this._treeNodes.length);
+    if (upgrades.length > 0) {
+      this._treeEmpty.setVisible(false);
+      this._treeRoot.c.setVisible(false);
+      this._treeRoot.itemId = null;
+      this._treeTitle.setText('BUILDS INTO');
+      this._treeSub.setText('click to inspect').setColor('#8fd0ff');
+
+      const n = upgrades.length;
+      const pad = 10, gap = 8;
+      const nodeW = Math.floor((RW - pad * 2 - gap * Math.max(0, n - 1)) / Math.max(1, n));
+      const nodeH = 74;
+      const nodeY = TREE_Y + 26 + (TREE_H - 34) / 2;
+      const startX = RX + pad + nodeW / 2;
+      for (let i = 0; i < this._treeNodes.length; i++) {
+        const nd = this._treeNodes[i];
+        const oid = i < n ? upgrades[i] : null;
+        const target = oid ? ITEMS[oid] : null;
+        nd.c.setVisible(!!target);
+        if (!target) { nd.itemId = null; continue; }
+        const cx = startX + i * (nodeW + gap);
+        nd.c.setPosition(cx, nodeY);
+        nd.w = nodeW; nd.h = nodeH;
+        nd.hit.setSize(nodeW, nodeH);
+        nd.itemId = oid;
+        nd.owned = false;
+        nd.mode = 'into';
+        const upPlan = recipePlan(this._slots, oid);
+        const hov = this._treeHover === i;
+        nd.bg.clear();
+        nd.bg.fillStyle(hov ? 0x182844 : 0x0f192c, 0.98);
+        fillRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
+        nd.bg.lineStyle(hov ? 2 : 1.4, hov ? 0xffffff : NEON.yellow, hov ? 0.95 : 0.7);
+        strokeRR(nd.bg, -nodeW / 2, -nodeH / 2, nodeW, nodeH, 7);
+        nd.icon.setText(target.emoji).setAlpha(1);
+        const maxCh = Math.max(8, Math.floor((nodeW - 10) / 6));
+        const shortName = target.name.length > maxCh ? `${target.name.slice(0, maxCh - 1)}…` : target.name;
+        nd.name.setText(shortName);
+        nd.badge.setText(`${fmtGold(upPlan.cost)}g`).setColor(this._gold >= upPlan.cost ? '#7ed957' : '#ffd23f');
+      }
+      return;
+    }
+
+    this._treeTitle.setText('BUILD PATH');
+    this._treeSub.setText('');
+    hideAll(it.consumable ? 'Consumable · used instantly on purchase' : 'Standalone item · no recipe');
   }
 
   _buildInventory() {
@@ -711,8 +806,6 @@ export class ShopPanel {
     g.lineStyle(1.5, col, 0.75);
     strokeRR(g, RX, GRID_Y, RW, DETAIL_H, 12);
     if (!it) {
-      this._recipeBtn.root.setVisible(false);
-      this._recipeReason.setVisible(false);
       this._dEmoji.setText('🛒');
       this._dName.setText('Pick an item');
       this._dMeta.setText('');
@@ -720,6 +813,7 @@ export class ShopPanel {
       this._dDesc.setText('Hover or click any item to see what it does.').setY(GRID_Y + 110);
       this._dReason.setText('');
       this._buyBtn.setLabel('BUY').setDimmed(true);
+      this._renderInlineRecipeTree();
       return;
     }
     const plan = recipePlan(this._slots, id);
@@ -732,27 +826,10 @@ export class ShopPanel {
       .setColor(this._gold >= payCost ? (plan.discount > 0 ? '#7ed957' : '#ffd23f') : '#ff5e5e')
       .setY(this._dName.y + this._dName.height + 2);
     this._dStats.setText(itemStatLine(it)).setY(Math.max(GRID_Y + 84, this._dMeta.y + this._dMeta.height + 8));
-    let descText = it.desc || '';
-    if (plan.components.length) {
-      const counts = {};
-      for (const s of this._slots) if (s) counts[s] = (counts[s] || 0) + 1;
-      const parts = plan.components.map((cid) => {
-        const comp = ITEMS[cid];
-        const ok = (counts[cid] || 0) > 0;
-        if (ok) counts[cid]--;
-        return `${comp?.emoji || ''}${comp?.name || cid}${ok ? '✓' : ''}`;
-      });
-      descText = `${descText}\nBuilds from: ${parts.join(' + ')}`;
-    }
-    this._dDesc.setText(descText).setY(this._dStats.y + this._dStats.height + 6);
+    this._dDesc.setText(it.desc || '').setY(this._dStats.y + this._dStats.height + 6);
     const why = this._whyNot(id);
-    const recipeVisible = plan.components.length > 0;
-    this._recipeBtn.root.setVisible(recipeVisible && this._selSlot == null);
-    this._recipeReason.setVisible(recipeVisible && this._selSlot == null);
-    this._dReason.setVisible(!recipeVisible || this._selSlot != null);
-    this._recipeReason.setText(why || `✓ ${plan.components.length} component${plan.components.length === 1 ? '' : 's'} · ${fmtGold(payCost)}g to combine`)
-      .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
-    this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : (plan.discount > 0 ? `⚒️ combines owned components` : '✓ ready to buy')))
+    this._dReason.setVisible(true);
+    this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : (plan.discount > 0 ? '⚒️ combines owned components' : '✓ ready to buy')))
       .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
     // Pass 2 RP-07: an owned item picked from the inventory → SELL instead of BUY.
     const sellSlot = this._selSlot != null && this._slots[this._selSlot] === id && (!this._hover || this._hover === id) ? this._selSlot : null;
@@ -763,9 +840,10 @@ export class ShopPanel {
       this._sellBtn.setLabel(`${undo ? 'UNDO' : 'SELL'} · +${fmtGold(v)}g`).setDimmed(!this._canShop);
       this._dReason.setText(!this._canShop ? '🏠 Return to base to sell' : (undo ? '↩ just bought — full refund' : '💸 sells for 70% · right-click to sell'))
         .setColor(!this._canShop ? '#ffcf8a' : '#ffb347');
+      this._renderInlineRecipeTree();
       return;
     }
     this._buyBtn.setLabel(`${plan.discount > 0 ? 'UPGRADE' : 'BUY'} · ${fmtGold(payCost)}g`).setDimmed(!!why);
-    if (this._recipeOpen) this._renderRecipeTree();
+    this._renderInlineRecipeTree();
   }
 }

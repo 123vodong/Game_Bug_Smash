@@ -105,7 +105,7 @@ export class AugmentPanel {
           label: '↻ REROLL', color: 0x39c2ff, fontSize: 13,
           onClick: () => this.onReroll?.(i),
         });
-        this.root.add(srr);
+        this.root.add(srr.root);
       }
     });
 
@@ -115,7 +115,7 @@ export class AugmentPanel {
         label: `REROLL (${offer.rerolls} FREE)`, color: 0x39c2ff,
         onClick: () => this.onReroll?.(),
       });
-      this.root.add(rr);
+      this.root.add(rr.root);
     }
     pin(this.root);
   }

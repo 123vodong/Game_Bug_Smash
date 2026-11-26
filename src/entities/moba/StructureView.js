@@ -132,8 +132,8 @@ export class StructureView {
       this.crystalGlow.setAlpha(g);
     }
     if (this.laserG) {
-      this.laserG.clear();
       if (this.targetPos && this.alive) {
+        this.laserG.clear();
         const m = this.muzzle();
         const col = this.targetIsMe ? 0xff2a2a : teamColor(this.team);
         const w = this.targetIsMe ? 4.5 : 2.2;
@@ -142,6 +142,10 @@ export class StructureView {
         this.laserG.lineBetween(m.x, m.y, this.targetPos.x, this.targetPos.y);
         this.laserG.lineStyle(w, col, a);
         this.laserG.lineBetween(m.x, m.y, this.targetPos.x, this.targetPos.y);
+        this._hadLaser = true;
+      } else if (this._hadLaser) {
+        this.laserG.clear();
+        this._hadLaser = false;
       }
     }
     // Tower range ring: only for enemy towers when you're close.
