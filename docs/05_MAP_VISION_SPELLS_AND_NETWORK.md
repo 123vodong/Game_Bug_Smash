@@ -20,7 +20,7 @@
 | **Mid Lane** | `(1200,4800) -> (3000,3000) -> (4800,1200)` | `320 px` | Shortest lane; fastest roam access to both river objectives |
 | **Bot Lane** | `(1350,5150) -> (2000,5350) -> (5000,5350) -> (5350,5000) -> (5350,2000) -> (5150,1350)` | `320 px` | Carry + Support duo lane; Dragon/Golden Bug contest |
 | **River ("Data Stream")** | `(700,700) -> (5300,5300)` | `420 px` | Central neutral corridor housing both Epic Pits |
-| **Bases / Fountains** | Blue `(380,5620)` / Red `(5620,380)` | `BASE_RADIUS = 1150 px`, `FOUNTAIN_RADIUS = 520 px` | Heal/Shop safe zone + `600 DPS` enemy fountain laser |
+| **Bases / Fountains** | Blue `(380,5620)` / Red `(5620,380)` | `BASE_RADIUS = 1150 px`, `FOUNTAIN_RADIUS = 520 px` | Heal/Shop safe zone + `1200 DPS` enemy fountain laser |
 
 ### 1.3. Structures (`16` Total = `8` per Team)
 - **Breakdown per Team:** `3` Tier-1 Towers + `3` Tier-2 Towers + `1` Tier-3 Core Firewall (`7` Towers total per team) + `1` Production Server Core = **`8` Structures per team** (`14` Towers + `2` Cores = `16` total).

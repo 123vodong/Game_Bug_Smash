@@ -1,6 +1,7 @@
 // src/ui/moba/AugmentPanel.js — 3-card Code Augment picker overlay (Lv 5, 10, 15).
 // Screen-pinned, depth 92, supports 1 free reroll per pick + synergy hints.
 import { AUGMENTS, RARITY_COLOR, AUGMENT_SYNERGIES } from '../../../shared/moba/augments.js';
+import { t, tText, onLangChange } from '../../core/I18n.js';
 import { FONT_TITLE, FONT_MONO, FONT_UI, hex, pin, drawPanel, makeButton } from './uiKit.js';
 
 const DEPTH = 92;
@@ -12,8 +13,22 @@ export class AugmentPanel {
     this.onReroll = onReroll;
     this.isOpen = false;
     this._sig = '';
+    this._offer = null;
     this.root = scene.add.container(0, 0).setDepth(DEPTH).setVisible(false);
     pin(this.root);
+    this._onKey = (ev) => {
+      if (!this.isOpen || !this._offer || ev?.repeat) return;
+      const choices = this._offer.choices || [];
+      if (ev.code === 'Digit1' && choices[0]) { ev.preventDefault?.(); this.onPick?.(choices[0]); }
+      else if (ev.code === 'Digit2' && choices[1]) { ev.preventDefault?.(); this.onPick?.(choices[1]); }
+      else if (ev.code === 'Digit3' && choices[2]) { ev.preventDefault?.(); this.onPick?.(choices[2]); }
+      else if (ev.code === 'KeyR' && !Array.isArray(this._offer.slotRerolls) && (this._offer.rerolls || 0) > 0) {
+        ev.preventDefault?.();
+        this.onReroll?.();
+      }
+    };
+    scene.input.keyboard?.on('keydown', this._onKey);
+    this._unsubLang = onLangChange(() => { if (this.isOpen && this._offer) this._render(this._offer, this._owned || []); });
     scene.events.once('shutdown', () => this.destroy());
   }
 
@@ -25,7 +40,9 @@ export class AugmentPanel {
     const sig = `${offer.level}:${offer.rerolls}:${(offer.slotRerolls || []).join(',')}:${offer.choices.join(',')}:${(owned || []).join(',')}`;
     if (sig === this._sig && this.isOpen) return;
     this._sig = sig;
-    this._render(offer, owned || []);
+    this._offer = offer;
+    this._owned = owned || [];
+    this._render(offer, this._owned);
     this.isOpen = true;
     this.root.setVisible(true);
   }
@@ -33,6 +50,7 @@ export class AugmentPanel {
   hide() {
     this.isOpen = false;
     this._sig = '';
+    this._offer = null;
     this.root.setVisible(false);
     this.root.removeAll(true);
   }
@@ -47,10 +65,10 @@ export class AugmentPanel {
     dim.on('pointerdown', (p, lx, ly, ev) => ev?.stopPropagation?.());
     this.root.add(dim);
 
-    const header = s.add.text(W / 2, 92, `CODE AUGMENT — LEVEL ${offer.level}`, {
+    const header = s.add.text(W / 2, 92, t('aug.title', { lv: offer.level }), {
       fontFamily: FONT_TITLE, fontSize: 28, color: '#ffd23f', stroke: '#000', strokeThickness: 5,
     }).setOrigin(0.5);
-    const sub = s.add.text(W / 2, 128, 'Choose 1 permanent upgrade for the rest of the match', {
+    const sub = s.add.text(W / 2, 128, t('aug.sub'), {
       fontFamily: FONT_MONO, fontSize: 13, color: '#bfd0ea',
     }).setOrigin(0.5);
     this.root.add([header, sub]);
@@ -83,16 +101,16 @@ export class AugmentPanel {
       const name = s.add.text(cardW / 2, 134, a.name, {
         fontFamily: FONT_TITLE, fontSize: 18, color: '#ffffff', stroke: '#000', strokeThickness: 3, align: 'center', wordWrap: { width: cardW - 24 },
       }).setOrigin(0.5);
-      const desc = s.add.text(cardW / 2, 198, a.desc, {
+      const desc = s.add.text(cardW / 2, 198, tText(`aug.${a.id}`, a.desc), {
         fontFamily: FONT_UI, fontSize: 13, color: '#d5e2f5', align: 'center', wordWrap: { width: cardW - 32 }, lineSpacing: 4,
       }).setOrigin(0.5);
 
       const syn = AUGMENT_SYNERGIES.find((sy) => sy.requires.includes(a.id) && sy.requires.some((r) => r !== a.id && ownedSet.has(r)));
-      const synTxt = s.add.text(cardW / 2, 274, syn ? `SYNERGY: ${syn.name}` : '', {
+      const synTxt = s.add.text(cardW / 2, 274, syn ? t('aug.synergy', { name: syn.name }) : '', {
         fontFamily: FONT_MONO, fontSize: 11, color: '#39ff14', align: 'center',
       }).setOrigin(0.5);
 
-      const pickHint = s.add.text(cardW / 2, cardH - 22, 'CLICK TO SELECT', {
+      const pickHint = s.add.text(cardW / 2, cardH - 22, t('aug.pickHint', { n: i + 1 }), {
         fontFamily: FONT_TITLE, fontSize: 12, color: hex(col),
       }).setOrigin(0.5);
 
@@ -102,7 +120,7 @@ export class AugmentPanel {
       if ((offer.slotRerolls?.[i] || 0) > 0) {
         const srr = makeButton(s, {
           x: cx + cardW / 2, y: cy + cardH + 28, w: 150, h: 32,
-          label: '↻ REROLL', color: 0x39c2ff, fontSize: 13,
+          label: t('aug.reroll'), color: 0x39c2ff, fontSize: 13,
           onClick: () => this.onReroll?.(i),
         });
         this.root.add(srr.root);
@@ -112,7 +130,7 @@ export class AugmentPanel {
     if (!Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0) {
       const rr = makeButton(s, {
         x: W / 2, y: cy + cardH + 46, w: 220, h: 42,
-        label: `REROLL (${offer.rerolls} FREE)`, color: 0x39c2ff,
+        label: t('aug.rerollFree', { n: offer.rerolls }), color: 0x39c2ff,
         onClick: () => this.onReroll?.(),
       });
       this.root.add(rr.root);
@@ -121,6 +139,8 @@ export class AugmentPanel {
   }
 
   destroy() {
+    if (this._onKey) { this.scene?.input?.keyboard?.off('keydown', this._onKey); this._onKey = null; }
+    if (this._unsubLang) { this._unsubLang(); this._unsubLang = null; }
     this.root?.destroy();
     this.root = null;
   }

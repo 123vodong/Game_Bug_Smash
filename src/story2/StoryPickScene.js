@@ -13,6 +13,7 @@ import { SPELLS, validSpellPair } from '../../shared/moba/spells.js';
 import { drawChampionPortrait } from '../entities/moba/looks.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { AudioManager } from '../core/AudioManager.js';
+import { tText } from '../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, fillRR, strokeRR,
   fillCircleLP, strokeCircleLP, loadSpellPrefs, LANE_LABEL, SKILL_TYPE_LABEL, mechanicHints,
@@ -309,7 +310,7 @@ export default class StoryPickScene extends Phaser.Scene {
       }).setOrigin(0, 0.5));
       const meta = `${SKILL_TYPE_LABEL[s.type] || String(s.type || '').toUpperCase()} · 💧${s.mana}${slot === 'r' ? ' · ULT' : ''}`;
       add(this.add.text(sx + sw - 8, y + 13, meta, { fontFamily: FONT_MONO, fontSize: 9, color: hex(sc), padding: { y: 2 } }).setOrigin(1, 0.5));
-      add(this.add.text(sx + 44, y + 24, s.desc || '', {
+      add(this.add.text(sx + 44, y + 24, tText(`skill.${c.id}.${slot}`, s.desc || ''), {
         fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', wordWrap: { width: sw - 54, useAdvancedWrap: true }, fixedHeight: 30,
       }));
     });
@@ -357,7 +358,8 @@ export default class StoryPickScene extends Phaser.Scene {
       s.sg.lineStyle(s.hover ? 2.5 : 1.5, col, s.hover ? 1 : 0.6); strokeRR(s.sg, s.sx, s.sy, s.sw, s.sh, 10);
       s.icon.setText(sp?.icon || '?');
       s.name.setText(sp?.name || '');
-      s.desc.setText(SPELL_SHORT[this._spells[s.i]] || sp?.desc || '');
+      const spId = this._spells[s.i];
+      s.desc.setText(tText(`spell.${spId}`, SPELL_SHORT[spId] || sp?.desc || ''));
     }
   }
 

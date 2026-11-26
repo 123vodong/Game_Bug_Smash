@@ -33,7 +33,7 @@ Raw = (Base + PerLevel * (ChampionLevel - 1) + AD * adRatio + AP * apRatio + Max
   - `Pixel` R (`Framework Rewrite`) detonating `Q` marks (`+25%` of R raw damage as True Damage).
   - `Zero` E (`Brute Force`) detonating `Q` Vulnerability (`+30%` of E raw damage as True Damage).
   - `Tester` R (`Regression Barrage`) detonating Bug Detection stacks (`+12% * stacks` up to `+48%` as True Damage).
-  - Enemy Fountain Laser (`600 DPS`).
+  - Enemy Fountain Laser (`1200 DPS`).
 
 ### 1.3. Resistance, Shred & Penetration Order (`R.damageAfterResist`)
 When `trueDmg === false`, resistance mitigation executes strictly in three deterministic steps:
@@ -348,7 +348,7 @@ Every `50 ms` (`20 Hz`), the authoritative simulation advances `dt = min(0.1, el
 | `XP_SHARE_RADIUS` / `KILL_XP_BASE` | `1,300 px` / `140 + 30*Lv` | XP proximity sharing and kill XP formula |
 | `RECALL_MS` / `FOUNTAIN_RADIUS` | `4,000 ms` / `520 px` | Base recall channel and shop/heal zone |
 | `FOUNTAIN_HEAL_PER_SEC` / `FOUNTAIN_MANA_PER_SEC` | `12%` / `15%` | Fountain regeneration rates per second |
-| `FOUNTAIN_LASER_DPS` | `600` True DPS | Anti-spawn-camp laser inside enemy fountain |
+| `FOUNTAIN_LASER_DPS` | `1200` True DPS | Anti-spawn-camp laser inside enemy fountain |
 | `INVENTORY_SLOTS` / `SELL_REFUND_PCT` / `SELL_UNDO_MS` | `6` / `70%` / `10,000 ms` | Inventory capacity and sell/undo rules |
 | `MAX_HASTE_PCT` | `0.40` (`40%`) | Hard cap on combined Item + Blue Buff Haste |
 | `CC_DR_WINDOW_MS` / `CC_DR_MUL` | `4,000 ms` / `[1, 0.5, 0.25]` | 3-stage Hard CC Diminishing Returns (`stun`, `root`, `wallStun`) |

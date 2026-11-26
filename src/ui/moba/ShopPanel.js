@@ -21,6 +21,7 @@ import { ITEMS, SHOP_ORDER, buyBlocker, recipePlan } from '../../../shared/moba/
 import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { INVENTORY_SLOTS, sellValue, SELL_UNDO_MS } from '../../../shared/moba/rules.js';
 import { AudioManager } from '../../core/AudioManager.js';
+import { t, tText, onLangChange } from '../../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, FONT_UI, NEON, hex, glow, pin, drawPanel, makeButton,
   fillRR, strokeRR, itemStatLine, slotAt, fmtGold,
@@ -92,6 +93,7 @@ export class ShopPanel {
 
     this._onEsc = () => { if (this._open) scene.time.delayedCall(0, () => this.close()); };
     scene.input.keyboard?.on('keydown-ESC', this._onEsc);
+    this._unsubLang = onLangChange(() => { this._refreshLang(); this._dirty = true; if (this._open) this._render(); });
     scene.events.once('shutdown', () => this.destroy());
   }
 
@@ -168,8 +170,17 @@ export class ShopPanel {
 
   destroy() {
     this.scene?.input?.keyboard?.off('keydown-ESC', this._onEsc);
+    if (this._unsubLang) { this._unsubLang(); this._unsubLang = null; }
     if (this.root && this.root.scene) this.root.destroy();
     this._open = false;
+  }
+
+  _refreshLang() {
+    this._titleText?.setText(`🛒 ${t('shop.title')}`);
+    this._intoLabel?.setText(t('shop.buildsInto'));
+    this._reqLabel?.setText(t('shop.requires'));
+    this._reqHint?.setText(t('shop.reqHint'));
+    this._hintText?.setText(t('shop.hint'));
   }
 
   // ───────────────────────── build ─────────────────────────
@@ -184,7 +195,7 @@ export class ShopPanel {
     fillRR(g, 8, 8, PW - 16, 38, 12);
     g.lineStyle(1, 0xffffff, 0.08);
     g.lineBetween(RX - 9, GRID_Y, RX - 9, PH - 14);
-    const title = s.add.text(20, 27, '🛒 OFFICE SUPPLY STORE', {
+    const title = this._titleText = s.add.text(20, 27, `🛒 ${t('shop.title')}`, {
       fontFamily: FONT_TITLE, fontSize: 20, color: '#ffffff', stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0, 0.5);
     title.x -= glow(title, NEON.yellow, 8);
@@ -277,11 +288,11 @@ export class ShopPanel {
     this._treeLines = s.add.graphics();
 
     // 1. Top strip: BUILDS INTO (LoL-style horizontal icon row)
-    this._intoLabel = s.add.text(x + 12, y + 14, 'BUILDS INTO', {
+    this._intoLabel = s.add.text(x + 12, y + 14, t('shop.buildsInto'), {
       fontFamily: FONT_TITLE, fontSize: 10, color: '#7ec8ff',
     }).setOrigin(0, 0.5);
-    this._intoEmpty = s.add.text(x + 12, y + 44, 'Final tier item', {
-      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c',
+    this._intoEmpty = s.add.text(x + 12, y + 44, t('shop.finalTier'), {
+      fontFamily: FONT_MONO, fontSize: 11, color: '#8fa4c4',
     }).setOrigin(0, 0.5);
     B.add([this._detailG, this._treeLines, this._intoLabel, this._intoEmpty]);
 
@@ -309,14 +320,14 @@ export class ShopPanel {
     }
 
     // 2. Middle: REQUIRES / Recipe Tree (LoL-style icon nodes + gold cost + tree connectors)
-    this._reqLabel = s.add.text(x + 12, y + 84, 'REQUIRES', {
+    this._reqLabel = s.add.text(x + 12, y + 84, t('shop.requires'), {
       fontFamily: FONT_TITLE, fontSize: 10, color: '#7ec8ff',
     }).setOrigin(0, 0.5);
-    this._reqHint = s.add.text(x + RW - 12, y + 84, 'L-click: view · R-click: buy', {
-      fontFamily: FONT_MONO, fontSize: 8.5, color: '#6f85a3',
+    this._reqHint = s.add.text(x + RW - 12, y + 84, t('shop.reqHint'), {
+      fontFamily: FONT_MONO, fontSize: 10, color: '#9ab0d0',
     }).setOrigin(1, 0.5);
     this._treeEmpty = s.add.text(x + RW / 2, y + 186, '', {
-      fontFamily: FONT_MONO, fontSize: 10, color: '#5a6f8c', align: 'center',
+      fontFamily: FONT_MONO, fontSize: 11, color: '#8fa4c4', align: 'center',
     }).setOrigin(0.5);
     B.add([this._reqLabel, this._reqHint, this._treeEmpty]);
 
@@ -381,7 +392,7 @@ export class ShopPanel {
       wordWrap: { width: RW - 24, useAdvancedWrap: true },
     });
     this._dDesc = s.add.text(x + 12, dy + 70, '', {
-      fontFamily: FONT_MONO, fontSize: 10.5, color: '#cfe3f5', lineSpacing: 1,
+      fontFamily: FONT_MONO, fontSize: 11, color: '#dce8f8', lineSpacing: 1,
       wordWrap: { width: RW - 24, useAdvancedWrap: true },
     });
     this._dReason = s.add.text(x + RW / 2, y + DETAIL_H - 54, '', {
@@ -550,8 +561,8 @@ export class ShopPanel {
     this._recNext = s.add.text(RX + RW / 2, y0 + 68, '', {
       fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', padding: { y: 2 },
     }).setOrigin(0.5);
-    const hint = s.add.text(RX + RW / 2, PH - 16, 'L-click: select · R-click: buy / sell · P / ESC close', {
-      fontFamily: FONT_MONO, fontSize: 9.5, color: '#5a6f8c',
+    const hint = this._hintText = s.add.text(RX + RW / 2, PH - 16, t('shop.hint'), {
+      fontFamily: FONT_MONO, fontSize: 10, color: '#8fa4c4',
     }).setOrigin(0.5);
     B.add([this._recLabel, this._recG, this._recRing, this._recNext, hint]);
     const size = 40, gap = (RW - size * 6) / 5;
@@ -616,11 +627,11 @@ export class ShopPanel {
   _whyNot(id) {
     const it = ITEMS[id];
     if (!it) return 'Unknown item';
-    if (!this._canShop) return '🏠 Return to base to shop';
+    if (!this._canShop) return `🏠 ${t('shop.returnShop')}`;
     const b = buyBlocker(this._slots, id);
     if (b) return `⛔ ${b.charAt(0).toUpperCase()}${b.slice(1)}`;
     const cost = it.consumable ? it.cost : recipePlan(this._slots, id).cost;
-    if (this._gold < cost) return `💰 Need ${fmtGold(cost - this._gold)} more gold`;
+    if (this._gold < cost) return `💰 ${t('shop.needGold', { gold: fmtGold(cost - this._gold) })}`;
     return null;
   }
 
@@ -687,14 +698,14 @@ export class ShopPanel {
     const g = this._statusG;
     g.clear();
     if (this._canShop) {
-      this._statusText.setText('✅ In base — click an item, then BUY (or right-click it) · click your own item to SELL')
+      this._statusText.setText(`✅ ${t('shop.inBase')}`)
         .setColor('#7ed957');
     } else {
       g.fillStyle(0x3a2006, 0.95);
       fillRR(g, 16, 55, PW - 32, 25, 8);
       g.lineStyle(1.5, NEON.orange, 1);
       strokeRR(g, 16, 55, PW - 32, 25, 8);
-      this._statusText.setText('🏠 Return to base to shop — or shop while respawning  ·  B = recall')
+      this._statusText.setText(`🏠 ${t('shop.outBase')}`)
         .setColor('#ffcf8a');
     }
   }
@@ -732,7 +743,7 @@ export class ShopPanel {
       sl.t.setText(it ? it.emoji : '');
       if (it && this._selSlot === i) { g.lineStyle(2.5, NEON.orange, 1); strokeRR(g, sl.x - 2, sl.y - 2, sl.size + 4, sl.size + 4, 8); }
     });
-    this._invLabel.setText(`INVENTORY ${n}/${INVENTORY_SLOTS}`);
+    this._invLabel.setText(`${t('shop.inventory')} ${n}/${INVENTORY_SLOTS}`);
   }
 
   _renderRecommended() {
@@ -740,7 +751,7 @@ export class ShopPanel {
     g.clear();
     ring.clear();
     const c = this._champ;
-    this._recLabel.setText(c ? `⭐ RECOMMENDED · ${c.emoji} ${c.name.toUpperCase()}` : '⭐ RECOMMENDED');
+    this._recLabel.setText(c ? `⭐ ${t('shop.recommended')} · ${c.emoji} ${c.name.toUpperCase()}` : `⭐ ${t('shop.recommended')}`);
     let next = null;
     this._rec.forEach((r, i) => {
       const it = ITEMS[this._build[i]];
@@ -806,10 +817,10 @@ export class ShopPanel {
       .setColor(this._gold >= payCost ? (plan.discount > 0 ? '#7ed957' : '#ffd23f') : '#ff5e5e')
       .setY(this._dName.y + this._dName.height + 2);
     this._dStats.setText(itemStatLine(it)).setY(Math.max(dy + 48, this._dMeta.y + this._dMeta.height + 5));
-    this._dDesc.setText(it.desc || '').setY(this._dStats.y + this._dStats.height + 4);
+    this._dDesc.setText(tText(`item.${id}`, it.desc || '')).setY(this._dStats.y + this._dStats.height + 4);
     const why = this._whyNot(id);
     this._dReason.setVisible(true);
-    this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : (plan.discount > 0 ? '⚒️ combines owned components' : '✓ ready to buy')))
+    this._dReason.setText(why || (it.consumable ? `☕ ${t('shop.instant')}` : (plan.discount > 0 ? `⚒️ ${t('shop.combines')}` : `✓ ${t('shop.ready')}`)))
       .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
     // Pass 2 RP-07: an owned item picked from the inventory → SELL instead of BUY.
     const sellSlot = this._selSlot != null && this._slots[this._selSlot] === id ? this._selSlot : null;
@@ -817,13 +828,13 @@ export class ShopPanel {
     this._buyBtn.root.setVisible(sellSlot == null);
     if (sellSlot != null) {
       const v = this._sellValue(sellSlot), undo = v >= it.cost;
-      this._sellBtn.setLabel(`${undo ? 'UNDO' : 'SELL'} · +${fmtGold(v)}g`).setDimmed(!this._canShop);
-      this._dReason.setText(!this._canShop ? '🏠 Return to base to sell' : (undo ? '↩ just bought — full refund' : '💸 sells for 70% · right-click to sell'))
+      this._sellBtn.setLabel(`${undo ? t('shop.undo') : t('shop.sell')} · +${fmtGold(v)}g`).setDimmed(!this._canShop);
+      this._dReason.setText(!this._canShop ? `🏠 ${t('shop.returnSell')}` : (undo ? `↩ ${t('shop.undoHint')}` : `💸 ${t('shop.sellHint')}`))
         .setColor(!this._canShop ? '#ffcf8a' : '#ffb347');
       this._renderInlineRecipeTree();
       return;
     }
-    this._buyBtn.setLabel(`${plan.discount > 0 ? 'UPGRADE' : 'BUY'} · ${fmtGold(payCost)}g`).setDimmed(!!why);
+    this._buyBtn.setLabel(`${plan.discount > 0 ? t('shop.upgrade') : t('shop.buy')} · ${fmtGold(payCost)}g`).setDimmed(!!why);
     this._renderInlineRecipeTree();
   }
 }

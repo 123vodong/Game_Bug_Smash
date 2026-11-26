@@ -13,7 +13,11 @@
       -webkit-user-select: none; user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
-    #game { display: flex; justify-content: center; align-items: center; height: 100vh; }
+    #game {
+      display: flex; justify-content: center; align-items: center;
+      height: 100vh; width: 100vw; box-sizing: border-box;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
 
     /* Fullscreen overlay shown when phone is in portrait */
     #rotate-msg {

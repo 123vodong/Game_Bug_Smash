@@ -16,6 +16,7 @@ import { SPELLS } from '../../../shared/moba/spells.js';
 import { portraitKey } from '../../entities/moba/looks.js';
 import { ITEMS } from '../../../shared/moba/items.js';
 import { AUGMENTS } from '../../../shared/moba/augments.js';
+import { t } from '../../core/I18n.js';
 import { TEAM_INFO, TEAM_SIZE, INVENTORY_SLOTS } from '../../../shared/moba/rules.js';
 import {
   FONT_TITLE, FONT_MONO, FONT_UI, pin, drawPanel, fillRR, strokeRR, slotAt, fmtGold, laneRank, clipName,
@@ -217,8 +218,8 @@ export class Scoreboard {
   }
 
   _fillColumn(col, list, kills, towers) {
-    col.you.setText(list.some((e) => e.key === this._sid) ? '★ YOUR TEAM' : '');
-    col.meta.setText(`${kills} kills · 🏰 ${towers} towers`);
+    col.you.setText(list.some((e) => e.key === this._sid) ? `★ ${t('sb.yourTeam')}` : '');
+    col.meta.setText(`${kills} ${t('sb.kills')} · 🏰 ${towers} ${t('sb.towers')}`);
     col.rows.forEach((r, i) => {
       const e = list[i];
       this._paintRow(r, e ? e.ch : null, !!e && e.key === this._sid);

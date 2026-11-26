@@ -10,6 +10,7 @@
 //   ip.destroy()
 import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { SPELLS } from '../../../shared/moba/spells.js';
+import { tText } from '../../core/I18n.js';
 import { itemStats, ITEMS } from '../../../shared/moba/items.js';
 import { ULT_UNLOCK_LEVEL, scaledAmount, cooldownMs, MAX_HASTE_PCT, TEAM_INFO } from '../../../shared/moba/rules.js';
 import { LOOKS } from '../../entities/moba/mobaGfx.js';
@@ -265,7 +266,7 @@ export class InfoPanel {
       if (sp.healCut) L.push(`−${pct(sp.healCut)} healing`);
       if (sp.healSelf) L.push(`+${pct(sp.healSelf)} max HP on monsters`);
       this._t(x + 8, ay + 26, L.join(' · '), { fontSize: 11, color: '#ffffff', wordWrap: { width: half - 16 } });
-      this._t(x + 8, ay + 58, sp.desc || '', { fontSize: 10, color: '#9fb0c8', wordWrap: { width: half - 16 } });
+      this._t(x + 8, ay + 58, tText(`spell.${sp.id}`, sp.desc || ''), { fontSize: 10, color: '#9fb0c8', wordWrap: { width: half - 16 } });
     });
   }
 }

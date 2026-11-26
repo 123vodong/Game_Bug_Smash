@@ -27,6 +27,7 @@ import {
 } from '../../../shared/moba/rules.js';
 import { MAP_W, MAP_H } from '../../../shared/moba/map.js';
 import { SPELLS, spellCooldownMs } from '../../../shared/moba/spells.js';
+import { t, tText, onLangChange } from '../../core/I18n.js';
 import { FONT, MONO, ME_COLOR, LOOKS, teamColor, teamCss, css, fmtTime, toArr } from './mobaGfx.js';
 
 const sec = (ms) => `${+(Math.max(0, ms || 0) / 1000).toFixed(1)}s`;
@@ -125,12 +126,12 @@ export class MobaHud {
     const L = -PANEL_W / 2, T = -PANEL_H;
     const root = s.add.container(this.px, this.H).setScrollFactor(0).setDepth(46);
     this.panelRoot = root;
-    let savedScale = 0.65;
+    let savedScale = 0.75;
     try {
       const raw = window.localStorage.getItem('bugsmash.hud.scale');
       const v = raw != null && raw !== '' ? Number(raw) : NaN;
-      if (Number.isFinite(v)) savedScale = Math.max(0.65, Math.min(1.15, v));
-    } catch (_) { /* default smallest 0.65 */ }
+      if (Number.isFinite(v)) savedScale = Math.max(0.7, Math.min(1.15, v));
+    } catch (_) { /* default compact legible 0.75 */ }
     this._hudScale = savedScale;
     const addR = (x, y, w, h, color, a = 1) => {
       const r = s.add.rectangle(x, y, w, h, color, a);
@@ -186,13 +187,14 @@ export class MobaHud {
       const key = s.add.text(-26, -27, slot.toUpperCase(), {
         fontFamily: FONT, fontSize: 11, color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 3, y: 0 },
       }).setOrigin(0, 0);
-      const mana = s.add.text(26, 27, '', { fontFamily: FONT, fontSize: 10, color: '#8fd0ff', stroke: '#000', strokeThickness: 3 }).setOrigin(1, 1);
+      const mana = s.add.text(26, 27, '', { fontFamily: FONT, fontSize: 11, color: '#9cd6ff', stroke: '#000', strokeThickness: 3 }).setOrigin(1, 1);
       const flash = s.add.rectangle(0, 0, 58, 58, 0xffffff, 0).setStrokeStyle(3, 0xffffff, 0);
-      const pips = s.add.text(-26, 27, '', { fontFamily: MONO, fontSize: 8, color: '#ffd23f', stroke: '#000', strokeThickness: 2 }).setOrigin(0, 1);
-      // Small gold '+' upgrade badge above the skill slot (left-click only, shown when skillPoints > 0)
+      const pips = s.add.text(-26, 27, '', { fontFamily: MONO, fontSize: 10, color: '#ffd23f', stroke: '#000', strokeThickness: 2 }).setOrigin(0, 1);
+      // Gold '+' upgrade badge above the skill slot (generous 44x32 hit-area for reliable clicks/taps)
       const upBg = s.add.rectangle(0, -39, 34, 18, 0x3b2c06, 0.96).setStrokeStyle(2, 0xffd23f, 1).setVisible(false);
-      const upTxt = s.add.text(0, -39, '+', { fontFamily: FONT, fontSize: 13, color: '#ffd23f' }).setOrigin(0.5).setVisible(false);
-      upBg.setInteractive({ useHandCursor: true });
+      const upTxt = s.add.text(0, -39, '+', { fontFamily: FONT, fontSize: 14, color: '#ffd23f' }).setOrigin(0.5).setVisible(false);
+      upBg.setInteractive(new Phaser.Geom.Rectangle(-5, -7, 44, 32), Phaser.Geom.Rectangle.Contains);
+      if (upBg.input) upBg.input.cursor = 'pointer';
       upBg.on('pointerdown', (p, lx, ly, ev) => {
         if (p.rightButtonDown?.()) return;
         ev?.stopPropagation?.();
@@ -216,7 +218,7 @@ export class MobaHud {
     this.hpText = addT(bx + bw / 2, T + 81, '', { fontSize: 11, stroke: '#000', strokeThickness: 3 });
     addR(bx + bw / 2, T + 99, bw + 4, 13, 0x000000, 0.9).setStrokeStyle(1, 0x39c2ff, 0.4);
     this.mpFill = addR(bx, T + 99, bw, 9, 0x2f86e8, 1).setOrigin(0, 0.5);
-    this.mpText = addT(bx + bw / 2, T + 99, '', { fontSize: 9, stroke: '#000', strokeThickness: 3 });
+    this.mpText = addT(bx + bw / 2, T + 99, '', { fontSize: 10, stroke: '#000', strokeThickness: 3 });
 
     // Items (3×2) + stat line.
     this.items = [];
@@ -232,9 +234,17 @@ export class MobaHud {
     const rx = L + SP + 620;
     this.gold = addT(rx, T + 20, '🪙 0', { fontSize: 19, color: '#ffd23f', stroke: '#000', strokeThickness: 4 });
     this.kda = addT(rx, T + 45, '', { fontFamily: MONO, fontSize: 12, color: '#cfd8e8' });
-    mkPanelBtn(rx - 50, T + 80, 46, 34, this.touch ? '🏠' : '🏠B', 0x39c2ff, () => this.o.onRecall?.(), 12);
-    this.shopBtn = mkPanelBtn(rx, T + 80, 46, 34, this.touch ? '🛒' : '🛒P', 0xffd23f, () => this.o.onShop?.(), 12);
-    this.infoBtn = mkPanelBtn(rx + 50, T + 80, 46, 34, this.touch ? 'ℹ' : 'ℹ C', 0x7ed957, () => this.o.onInfo?.(), 13);
+    this.baseBtn = mkPanelBtn(rx - 50, T + 80, 46, 34, this.touch ? t('hud.base') : 'B', 0x39c2ff, () => this.o.onRecall?.(), 12);
+    this.shopBtn = mkPanelBtn(rx, T + 80, 46, 34, this.touch ? t('hud.shop') : 'P', 0xffd23f, () => this.o.onShop?.(), 12);
+    this.infoBtn = mkPanelBtn(rx + 50, T + 80, 46, 34, this.touch ? t('hud.info') : 'C', 0x7ed957, () => this.o.onInfo?.(), 12);
+    if (this.touch) {
+      this._unsubLang = onLangChange(() => {
+        this.baseBtn?._label?.setText(t('hud.base'));
+        this.shopBtn?._label?.setText(t('hud.shop'));
+        this.infoBtn?._label?.setText(t('hud.info'));
+      });
+      s.events.once('shutdown', () => { this._unsubLang?.(); this._unsubLang = null; });
+    }
 
     // Summoner spells D / F (non-interactive on desktop — use D / F keys).
     this.spellSlots = {};
@@ -262,12 +272,13 @@ export class MobaHud {
       this.spellSlots[slot] = { c, frame, icon, dim, pie, cd, charges, flash, x, y, id: null };
     });
 
-    // Small - / + HUD scale controls (stacked cleanly on the right edge of bottom HUD)
+    // Compact +/- HUD scale controls (expanded 36x26 hit area, stacked on right edge of bottom HUD)
     const mkScaleBtn = (dy, label, delta) => {
-      const bx = PANEL_W / 2 + 16, by = T + dy;
-      const bg = s.add.rectangle(bx, by, 20, 18, 0x111a28, 0.85).setStrokeStyle(1, 0x39c2ff, 0.75);
-      const txt = s.add.text(bx, by, label, { fontFamily: FONT, fontSize: 12, color: '#9fdcff' }).setOrigin(0.5);
-      bg.setInteractive({ useHandCursor: true });
+      const bx = PANEL_W / 2 + 18, by = T + dy;
+      const bg = s.add.rectangle(bx, by, 22, 20, 0x111a28, 0.88).setStrokeStyle(1, 0x39c2ff, 0.8);
+      const txt = s.add.text(bx, by, label, { fontFamily: FONT, fontSize: 13, color: '#a8e0ff' }).setOrigin(0.5);
+      bg.setInteractive(new Phaser.Geom.Rectangle(-7, -3, 36, 26), Phaser.Geom.Rectangle.Contains);
+      if (bg.input) bg.input.cursor = 'pointer';
       bg.on('pointerdown', (p, lx, ly, ev) => {
         if (p.rightButtonDown?.()) return;
         ev?.stopPropagation?.();
@@ -276,7 +287,7 @@ export class MobaHud {
       root.add([bg, txt]);
     };
     mkScaleBtn(16, '+', 0.1);
-    mkScaleBtn(38, '-', -0.1);
+    mkScaleBtn(42, '-', -0.1);
     this._shopLocalX = rx;
     root.setScale(this._hudScale);
   }
@@ -296,7 +307,7 @@ export class MobaHud {
   }
 
   adjustHudScale(delta) {
-    this._hudScale = Math.max(0.65, Math.min(1.15, Math.round((this._hudScale + delta) * 100) / 100));
+    this._hudScale = Math.max(0.7, Math.min(1.15, Math.round((this._hudScale + delta) * 100) / 100));
     this.panelRoot?.setScale(this._hudScale);
     this._syncScaledHud();
     try { window.localStorage.setItem('bugsmash.hud.scale', String(this._hudScale)); } catch (_) { /* ignore */ }
@@ -346,16 +357,17 @@ export class MobaHud {
     const sl = this.slots[slot], sc = this._hudScale || 1;
     const range = sk.at === 'pet' ? ` · radius ${sk.radius}` : sk.range ? ` · range ${sk.range}${sk.radius ? ` · radius ${sk.radius}` : ''}` : (sk.radius ? ` · radius ${sk.radius}` : '');
     const mech = skillMechanics(sk, this.def);
+    const desc = tText(`skill.${this.def.id}.${slot}`, sk.desc);
     this._showTip(this.px + sl.x * sc, this._panelTop() - 8,
       `${sk.icon} ${sk.name}  [${slot.toUpperCase()}]${slot === 'r' ? `  (Lv ${ULT_UNLOCK_LEVEL}+)` : ''}`,
-      `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${sk.desc}${mech.length ? `\n${mech.join('\n')}` : ''}`, sk.color);
+      `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${desc}${mech.length ? `\n${mech.join('\n')}` : ''}`, sk.color);
   }
   _showSpellTip(slot) {
     const sl = this.spellSlots?.[slot], sp = sl && SPELLS[sl.id];
     if (!sp) return;
     const lv = this._lv || 1, sc = this._hudScale || 1;
     const amt = (a) => Math.round((a?.base || 0) + (a?.perLevel || 0) * (lv - 1));
-    const L = [`${sp.cd}s cooldown${sp.range ? ` · range ${sp.range}` : ''}${sp.radius ? ` · radius ${sp.radius}` : ''}`, sp.desc];
+    const L = [`${sp.cd}s cooldown${sp.range ? ` · range ${sp.range}` : ''}${sp.radius ? ` · radius ${sp.radius}` : ''}`, tText(`spell.${sp.id}`, sp.desc)];
     if (sp.heal) L.push(`💚 heal ${amt(sp.heal)} (+${sp.heal.perLevel}/lv)`);
     if (sp.shield) L.push(`🛡 shield ${amt(sp.shield)} for ${sec(sp.ms)}`);
     if (sp.dmg) L.push(`⚔ ${amt(sp.dmg)} true damage${sp.kind === 'dot' ? ` over ${sec(sp.ms)} · −${Math.round(sp.healCut * 100)}% healing` : ''}`);
@@ -376,7 +388,7 @@ export class MobaHud {
     const it = ITEMS[this.items[i].id];
     if (!it) return;
     const stats = Object.entries(it.stats || {}).map(([k, v]) => `${k} ${v < 1 && v > 0 ? `${Math.round(v * 100)}%` : `+${v}`}`).join(' · ');
-    this._showTip(x, this._panelTop() - 8, `${it.emoji} ${it.name}`, `${stats ? stats + '\n' : ''}${it.desc}`, 0xffd23f);
+    this._showTip(x, this._panelTop() - 8, `${it.emoji} ${it.name}`, `${stats ? stats + '\n' : ''}${tText(`item.${it.id}`, it.desc)}`, 0xffd23f);
   }
   _showTip(x, y, title, body, color) {
     this._hideTip();
@@ -400,7 +412,7 @@ export class MobaHud {
     this.blueK = this._t(cx - 66, 19, `${TEAM_INFO.blue.emoji} 0`, { fontSize: 16, color: TEAM_INFO.blue.css, stroke: '#000', strokeThickness: 3 }).setAlpha(0.82).setDepth(49);
     this.redK = this._t(cx + 66, 19, `0 ${TEAM_INFO.red.emoji}`, { fontSize: 16, color: TEAM_INFO.red.css, stroke: '#000', strokeThickness: 3 }).setAlpha(0.82).setDepth(49);
     this.clock = this._t(cx, 18, '0:00', { fontSize: 13, color: '#ffffff', stroke: '#000', strokeThickness: 2.5 }).setAlpha(0.82).setDepth(49);
-    this.epicT = this._t(cx, 37, '', { fontFamily: MONO, fontSize: 10, color: '#c9d3e6' }).setAlpha(0.75).setDepth(49);
+    this.epicT = this._t(cx, 37, '', { fontFamily: MONO, fontSize: 11, color: '#d5e0f2' }).setAlpha(0.82).setDepth(49);
     this.buffT = this._t(cx, 58, '', { fontSize: 11, stroke: '#000', strokeThickness: 3 }).setAlpha(0.85).setDepth(49);
   }
 
@@ -1015,7 +1027,10 @@ export class MobaHud {
       b.slot = slot;
       b.cd = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 14, color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
       b.dim = s.add.circle(0, 0, 25, 0x000000, 0.55).setVisible(false);
-      b.c.add([b.dim, b.cd]);
+      b.charges = s.add.text(17, 17, '', {
+        fontFamily: FONT, fontSize: 11, color: '#ffd23f', backgroundColor: '#000000cc', padding: { x: 3, y: 0 },
+      }).setOrigin(1, 1).setVisible(false);
+      b.c.add([b.dim, b.cd, b.charges]);
       this._touchSpells[slot] = b;
       this._touchSkillMap[slot] = b; // flashSlot() feedback
     });
@@ -1211,6 +1226,14 @@ export class MobaHud {
       if (tb) {
         tb.dim.setVisible(left > 0);
         this._set(`tcd_${slot}`, tb.cd, left > 0 ? String(Math.ceil(left / 1000)) : '');
+        if (tb.charges) {
+          tb.charges.setVisible(hasCharges);
+          if (hasCharges) {
+            this._set(`tchg_${slot}`, tb.charges, String(chg));
+            const cc = chg > 0 ? '#ffd23f' : '#ff6b6b';
+            if (this._cache[`tchgc_${slot}`] !== cc) { this._cache[`tchgc_${slot}`] = cc; tb.charges.setColor(cc); }
+          }
+        }
       }
     }
     // Items, gold, K/D/A, stats.
