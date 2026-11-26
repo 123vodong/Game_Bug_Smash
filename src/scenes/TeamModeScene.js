@@ -1808,7 +1808,7 @@ export default class TeamModeScene extends Phaser.Scene {
           }
         }
         v._seen = f;
-        if (s.kind === 'tower') {
+        if (s.kind === 'tower' || s.kind === 'core') {
           const tv = s.targetId ? this._viewOf(s.targetId) : null;
           v.targetPos = tv && (tv.alive !== false) && !tv.dead ? tv.aimPoint() : null;
           v.targetIsMe = !!s.targetId && s.targetId === this.localId;

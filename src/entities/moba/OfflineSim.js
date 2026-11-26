@@ -270,7 +270,7 @@ export class OfflineSim {
       const hasDeadline = this.state[`buff${tmKey}`] === 'deadline' && (this.state[`buff${tmKey}Until`] || 0) > this.t;
       const dlMul = hasDeadline ? (1 + (R.EPICS.deadline.buff?.minionBuffPct || 0.4)) : 1;
       for (const lane of ['top', 'mid', 'bot']) {
-        const superLane = !this.state.structures.get(`${enemy}_${lane}_2`)?.alive || !this.state.structures.get(`${enemy}_base_3`)?.alive;
+        const superLane = !this.state.structures.get(`${enemy}_${lane}_3`)?.alive;
         const kinds = superLane ? ['siege', ...baseKinds.slice(1)] : baseKinds;
         const path = laneFor(team, lane), p0 = path[0], p1 = path[1];
         const d = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1, ux = (p1.x - p0.x) / d, uy = (p1.y - p0.y) / d;
@@ -533,10 +533,12 @@ export class OfflineSim {
     }
   }
 
-  /** AoV Tower AI: aggro enemy champion who hit an ally champion in range, else minions first, else champions; ramping dmg. */
+  /** AoV Structure AI (towers & Production Server): aggro enemy champion who hit an ally champion in range, else minions first, else champions; ramping dmg. */
   _towerTick(s) {
-    if (!s.alive || s.kind !== 'tower') { s.targetId = ''; return; }
-    const rng2 = R.TOWER.range * R.TOWER.range;
+    if (!s.alive || (s.kind !== 'tower' && s.kind !== 'core')) { s.targetId = ''; return; }
+    const cfg = s.kind === 'core' ? R.CORE : R.TOWER;
+    const rng = cfg.range || R.TOWER.range;
+    const rng2 = rng * rng;
     const st = this.state;
     let t = null;
     // 1. Priority aggro: enemy champion who attacked an allied champion within 2.5s
@@ -571,17 +573,24 @@ export class OfflineSim {
     s.targetId = t ? t.id : '';
     if (!t) { s._rampId = ''; s._rampCount = 0; return; }
     if (this.t < s._atkAt) return;
-    s._atkAt = this.t + R.TOWER.atkMs;
-    const baseDmg = R.TOWER.dmgChampByTier?.[s.tier] ?? R.TOWER.dmgChamp;
-    let dmg = t.champ ? baseDmg : t.maxHp * R.TOWER.dmgMinionPctMaxHp;
+    s._atkAt = this.t + (cfg.atkMs || R.TOWER.atkMs);
+    const baseDmg = s.kind === 'core' ? (R.CORE.dmgChamp || 300) : (R.TOWER.dmgChampByTier?.[s.tier] ?? R.TOWER.dmgChamp);
+    let dmg = t.champ ? baseDmg : t.maxHp * (cfg.dmgMinionPctMaxHp ?? R.TOWER.dmgMinionPctMaxHp);
     if (t.champ) {
       if (s._rampId === t.id) s._rampCount = Math.min(6, (s._rampCount || 0) + 1);
       else { s._rampId = t.id; s._rampCount = 0; }
-      dmg *= 1 + s._rampCount * 0.25;
+      dmg *= 1 + s._rampCount * (cfg.dmgChampRampPct ?? 0.25);
     } else {
       s._rampId = ''; s._rampCount = 0;
     }
     this._attack(s, t, dmg, true, true);
+  }
+
+  _refreshInvulnerability() {
+    const st = this.state;
+    st.structures.forEach((s) => {
+      s.invulnerable = s.alive && s._req.length > 0 && !s._req.some((id) => st.structures.get(id)?.alive === false);
+    });
   }
 
   _tickSpellCharges(c, t = this.t) {
@@ -939,10 +948,28 @@ export class OfflineSim {
         this.emit('announce', { title: '💀 PRODUCTION IS DOWN', sub: `${st.winner === 'blue' ? '🚀 Startup' : '🏢 MegaCorp'} ships it!`, color: '#ffd23f', big: true });
         return;
       }
-      st.structures.forEach((s) => { if (s._req.includes(target.id)) s.invulnerable = false; });
+      this._refreshInvulnerability();
       st.champions.forEach((c) => { if (c.team !== target.team) c.gold += R.TOWER_GOLD_TEAM; });
-      this.emit('announce', { title: `🔥 ${owner}'s ${target.lane} Firewall is down!`, color: target.team === 'blue' ? '#ff8a8a' : '#7ec8ff' });
-      this.emit('feed', { text: `🔥 ${owner} lost a Firewall (${target.lane})`, color: '#ffb347' });
+      const where = target.tier === 3 ? `${target.lane} Core Firewall` : `${target.lane} Firewall`;
+      this.emit('announce', {
+        title: `🔥 ${owner}'s ${where} is down!`,
+        sub: target.tier === 3 ? `Production Server exposed (rebuilds in ${Math.round((R.TOWER.tier3RespawnMs || 180000) / 1000)}s)` : undefined,
+        color: target.team === 'blue' ? '#ff8a8a' : '#7ec8ff',
+      });
+      this.emit('feed', { text: `🔥 ${owner} lost a ${where}`, color: '#ffb347' });
+      if (target.tier === 3 && R.TOWER.tier3RespawnMs > 0) {
+        const sid = target.id;
+        this._timers.push([this.t + R.TOWER.tier3RespawnMs, () => {
+          if (st.phase !== 'playing') return;
+          const tw = st.structures.get(sid);
+          if (!tw || tw.alive) return;
+          tw.alive = true; tw.hp = tw.maxHp; tw.targetId = ''; tw._rampId = ''; tw._rampCount = 0; tw._atkAt = 0;
+          this._refreshInvulnerability();
+          const col = tw.team === 'blue' ? '#39c2ff' : '#ff5e5e';
+          this.emit('announce', { title: `🛡️ ${owner}'s ${tw.lane} Core Firewall has respawned!`, sub: `Super minions halted in ${tw.lane} lane`, color: col });
+          this.emit('feed', { text: `🛡️ ${owner}'s ${tw.lane} Core Firewall has respawned`, color: col });
+        }]);
+      }
       return;
     }
     // unit

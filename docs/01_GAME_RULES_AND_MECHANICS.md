@@ -132,13 +132,13 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 - **Starting Gold:** `500g` · **Passive Gold:** `2.4g/s` starting at `0:30` (`144g/min`).
 - **Champion Takedowns:** Kill `300g` · Assist pool `150g` (split among assisters who dealt damage within `ASSIST_WINDOW_MS = 10s`) · First Blood `+100g`.
 - **Champion Kill XP:** `140 + 30 * victimLevel` shared equally among living enemy champions within `XP_SHARE_RADIUS = 1300 px`.
-- **Tower Destruction:** `+120g` to every living/dead teammate (`14` towers + `2` cores on map).
+- **Tower Destruction:** `+120g` to every living/dead teammate (`18` towers + `2` cores on map; `9` towers per team across `3` lanes).
 - **Shop & Sell Rules:** `SHOP_ONLY_IN_FOUNTAIN = true` (`FOUNTAIN_RADIUS = 520 px`, or while dead). Sell refunds `70%` (`SELL_UNDO_MS = 10s` grants `100%` undo refund). Fountain heals `12% max HP/s` and `15% max Mana/s`.
 
 ### 3.1. Minion Waves, AI & Anti-Pileup Caps
 - **Spawn Cadence:** First wave at `0:20` (`WAVE_FIRST_MS = 20000`), subsequent waves every `30s` (`WAVE_EVERY_MS = 30000`), growing **linearly** `+2.5%` HP/DMG per wave (`1 + 0.025 * (wave - 1)`, **capped at `MINION_GROWTH_MAX = 1.85x`** around wave 35 / `17:30` so late-game waves remain clearable).
 - **Support Ambient Lane Gold (`NEARBY_MINION_GOLD_PCT = 0.25`):** When a champion last-hits a lane minion, the single lowest-gold nearby ally within `XP_SHARE_RADIUS = 1300 px` (excluding the killer) receives `25%` ambient gold (`~32g/wave = +64g/min`) without reducing the killer's `100%` gold, allowing Supports to stay on item pace without stealing CS.
-- **Composition:** `3 Melee + 3 Ranged` per wave; `+1 Siege` every `3` waves. Super Minions (`1.85x HP`, `1.55x DMG`) replace the lead unit in a lane once the enemy Tier-2 or Core Firewall falls.
+- **Composition:** `3 Melee + 3 Ranged` per wave; `+1 Siege` every `3` waves. Super Minions (`1.85x HP`, `1.55x DMG`) replace the lead unit in a lane while that lane's enemy Tier-3 Core Firewall (`top_3`, `mid_3`, or `bot_3`) is destroyed (and halt if the Tier-3 Core Firewall respawns).
 - **Wave Caps & Spacing (`tuning.js`):** `MINION_SPACING = 48 px`, `MINION_LANE_CAP = 16` per team per lane, `MINION_TOTAL_CAP = 60` server-wide, `MINION_CORE_STOP = 160 px`, `UNIT_REMOVE_MS = 600 ms` death linger.
 - **Minion Aggro:** `MINION_AGGRO_RANGE = 520 px`, `MINION_RETARGET_MS = 250 ms`, `MINION_CHAMP_AGGRO_MS = 2500 ms` (switches onto enemy champions attacking allied champions), `MINION_CHASE_RANGE = 700 px`.
 
@@ -183,8 +183,12 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 
 ## 4. Structures, Tower AI, Ward Trinket & Heal Relics
 
-- **Structure HP & Armor:** Tier-1 Tower `2100 HP` / `40 Armor`; Tier-2 Tower `2500 HP` / `40 Armor`; Tier-3 Core Firewall `2900 HP` / `40 Armor`; Production Server Core `5000 HP` / `30 Armor`.
-- **Tower Combat & Aggro:** `range = 600 px`, `atkMs = 1000 ms`, `dmgChampByTier = { T1: 155, T2: 195, T3 Core Firewall: 260 }` (`+25%` per consecutive hit on the same champion, capped at `TOWER_MAX_RAMP_HITS = 6` -> `+150%` max, up to `650/shot` on Tier-3 Core Firewall on both server & `OfflineSim`), `dmgMinionPctMaxHp = 28%` max HP. Switches immediately to any enemy champion damaging an ally within `TOWER_AGGRO_VICTIM_PAD = 200 px` over the last `TOWER_AGGRO_MS = 2000 ms` with a red Warning Laser.
+- **Structure HP & Armor:** Tier-1 Tower `2100 HP` / `40 Armor`; Tier-2 Tower `2500 HP` / `40 Armor`; Tier-3 Core Firewall (`top_3`, `mid_3`, `bot_3`) `2900 HP` / `40 Armor`; Production Server Core `5000 HP` / `30 Armor`.
+- **Tower & Core Combat / Aggro:**
+  - **Towers:** `range = 600 px`, `atkMs = 1000 ms`, `dmgChampByTier = { T1: 155, T2: 195, T3 Core Firewall: 260 }` (`+25%` per consecutive hit on the same champion, capped at `TOWER_MAX_RAMP_HITS = 6` -> `+150%` max, up to `650/shot` on Tier-3 Core Firewall on both server & `OfflineSim`), `dmgMinionPctMaxHp = 28%` max HP.
+  - **Production Server Core (`CORE`):** Defends itself with `range = 640 px`, `atkMs = 950 ms`, `dmgChamp = 300` (`+25%` per consecutive hit, capped at `6` stacks -> up to `750/shot`), `dmgMinionPctMaxHp = 32%` max HP, bush vision inside `640 px`, and live target laser + danger range ring.
+  - **Targeting Priority:** Both Towers and Production Server switch immediately to any enemy champion damaging an ally within `TOWER_AGGRO_VICTIM_PAD = 200 px` over the last `TOWER_AGGRO_MS = 2000 ms` with a red Warning Laser, else enemy minions first, else nearest enemy champion.
+- **Tier-3 Core Firewall Respawn (`TOWER.tier3RespawnMs = 180000 ms`):** Each destroyed Tier-3 Core Firewall (`top_3`, `mid_3`, `bot_3`) rebuilds automatically after `180s` (`3 min`) at full `2900 HP`, halts Super Minions in that lane, and re-locks the Production Server's invulnerability shield if all 3 Tier-3 Core Firewalls are standing again.
 - **Backdoor Protection & Crunch Time:** Structures take `0.40x` damage (`BACKDOOR_DAMAGE_MUL = 0.4`) without allied minions within `BACKDOOR_RADIUS = 700 px`. After `30:00` (`CRUNCH_MS`), backdoor guard disables and structures take `2.0x` damage (`CRUNCH_STRUCT_MUL = 2`) in both `TeamRoom` and `OfflineSim`.
 - **Tower Heal Relics:** `6` orbs behind Tier-1 towers restore `18% max HP + 15% max Mana` (`60s` respawn).
 - **Jungle Buffs (75s):** Top-side big camp -> **Blue Buff** (`+3%` max mana/s regen, `+15%` Haste in the capped `40%` Haste pool); Bot-side big camp -> **Red Buff** (`+18` burn dmg, `20%` slow for `1.5s`).
@@ -199,14 +203,14 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 - **Role-Based Pick & Spell Assignment:** Bots fill open seats per `ROLE_ORDER` (`top`, `jungle`, `mid`, `bot`, `support`) using `ROLE_PICKS`, and equip role Summoner Spells (`ROLE_SPELLS`).
 - **Static Skill Classification (`SkillEngine.classifySkill`):** On spawn, each bot statically tags its `Q/W/E/R` skills (`damage`, `cc`, `hardCC`, `heal`, `shield`, `defensive`, `steroid`, `speed`, `mobility`, `selfCentered`, `allies`, `zone`, `fan`, `knockback`, `wallStun`, `atPet`, `petBuff`) so all 18 champions use generic tactical rules without hardcoded per-champion scripts.
 
-#### Adaptive MMR Difficulty Tiers (`BOT_SKILL` & `BOT_SKILL_MMR`)
-The server selects difficulty dynamically from the match's average human MMR (`botSkillFor(avgMmr)`; bots-only matches default to `normal`):
+#### Adaptive MMR & Custom Room Bot Difficulty Tiers (`BOT_SKILL` & `BOT_SKILL_MMR`)
+In Quick Play, the server selects difficulty from the match's average human MMR (`botSkillFor(avgMmr)`; bots-only matches default to `normal`). In **Custom Rooms**, rooms default to **`easy`** and only the **host** (`hostId`) can cycle `easy` / `normal` / `hard` via the `BOT` button (hotkey `B`, message `botLevel`). Skillshot aim error scales with `(1 - aim) * 130 px`:
 
-| Tier | Trigger MMR | Think Cadence | Aim / Aggro | Retreat HP (Solo / Outnumbered) | Fight Min HP | Danger Power Ratio | Human Grace / Gank Grace | Mercy Rule (Skip Fighting Human) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Easy** | `< 1050` | `240–360 ms` | `0.55–0.90` / `0.50–0.85` | `20%` / `42%` | `32%` | `1.6x` | `5:00` / `5:00` | `2` deaths in `180s` |
-| **Normal** | `1050–1199` | `200–300 ms` | `0.70–0.95` / `0.60–0.90` | `18%` / `38%` | `28%` | `1.8x` | `2:00` / `2:00` | `3` deaths in `120s` |
-| **Hard** | `>= 1200` | `150–230 ms` | `0.85–1.00` / `0.70–0.95` | `15%` / `34%` | `24%` | `2.0x` | `0:00` / `0:00` | Disabled (`Infinity`) |
+| Tier | Trigger MMR / Custom | Think Cadence | Aim / Aggro | Cast Prob | Summoner Spells | Retreat HP (Solo / Outnumbered) | Fight Min HP | Danger Ratio | Human Grace / Gank Grace | Mercy Rule |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Easy** | `< 1050` (Custom default) | `480–680 ms` | `0.25–0.50` / `0.35–0.65` | `45%` | Off | `28%` / `48%` | `40%` | `1.4x` | `5:00` / `5:00` | `2` deaths in `180s` |
+| **Normal** | `1050–1199` | `300–440 ms` | `0.50–0.75` / `0.50–0.80` | `68%` | On | `22%` / `42%` | `34%` | `1.65x` | `2:00` / `2:00` | `3` deaths in `120s` |
+| **Hard** | `>= 1200` | `170–250 ms` | `0.80–0.96` / `0.70–0.95` | `90%` | On | `16%` / `35%` | `25%` | `2.0x` | `0:00` / `0:00` | Disabled (`Infinity`) |
 
 *Note: Newcomer Grace & Mercy Rules immediately lift for `4s` (`PROVOKED_MS = 4000 ms`) whenever a human damages the bot.*
 
