@@ -16,6 +16,10 @@
   - **Git Revert Charm (`git_revert`):** `50s` CD, cleanses all active stuns, roots, and slows + `+35%` MS for `2s` (**usable while stunned**).
   - **Shadow Proxy (`shadow_proxy`):** `60s` CD, grants `240` shield (`3s`) + `+30%` MS + `1.8s` stealth veil (invisible beyond `280 px`, broken immediately on attack or skill cast; **not usable while stunned**).
 - **Shop & Sell Rules:** Buy/sell only in fountain (`FOUNTAIN_RADIUS = 520 px`) or while dead. Sell refunds `70%` (`100%` undo within `10s` of purchase).
+- **Shop UI Architecture (`ShopPanel.js` — Unified LoL-Style Inspector):**
+  - Right column consolidates **Builds Into** (top horizontal icon strip), **Requires** (inline icon recipe tree with gold costs, connector lines, and green `✓`/`OWNED` indicators), and **Selected Item Detail + `BUY`/`UPGRADE`/`SELL`** inside one unified card above `INVENTORY 0/6` and `RECOMMENDED`.
+  - **Controls:** Hovering a grid tile only highlights its border without changing the inspected item; **Left-click** selects any item (grid, `Builds Into`, `Requires` component, or `Recommended`) into the inspector; **Right-click** (or double-click) purchases items/components directly or sells owned inventory slots.
+- **Server Passive Caching (`TeamRoom.js`):** `itemPassives(ch.items)` is cached per champion inside `_recalc()` keyed by `itemsVer` so `_dealDamage()` performs zero per-hit `Set` allocations.
 
 ---
 

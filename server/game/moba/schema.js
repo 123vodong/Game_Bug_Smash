@@ -75,6 +75,8 @@ export class TeamChamp extends Schema {
     this.rankW = 1;
     this.rankE = 1;
     this.rankR = 0;
+    this.chargesD = 0;
+    this.chargesF = 0;
   }
 }
 // v4 optimisation: positions are integers inside the map (0…6000) → uint16 on the wire
@@ -135,6 +137,8 @@ type('uint8')(TeamChamp.prototype, 'rankQ');
 type('uint8')(TeamChamp.prototype, 'rankW');
 type('uint8')(TeamChamp.prototype, 'rankE');
 type('uint8')(TeamChamp.prototype, 'rankR');
+type('uint8')(TeamChamp.prototype, 'chargesD');
+type('uint8')(TeamChamp.prototype, 'chargesF');
 
 /** state.units — key = 'u<n>'. Minions, jungle monsters, river epics and (v2) pets. */
 export class TeamUnit extends Schema {

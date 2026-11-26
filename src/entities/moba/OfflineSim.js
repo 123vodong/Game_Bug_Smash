@@ -30,7 +30,7 @@ import { AUGMENT_LEVELS, AUGMENTS, rollAugmentChoices, rollSingleAugment } from 
 import {
   STRUCTURES, CAMPS, EPIC_SPOTS, STRUCTURE_RADIUS, CHAMP_RADIUS, MINION_RADIUS, laneFor, unlockedBy, distToSeg,
 } from '../../../shared/moba/map.js';
-import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, validSpellPair } from '../../../shared/moba/spells.js';
+import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, validSpellPair, spellCooldownMs, spellInitialCharges } from '../../../shared/moba/spells.js';
 import { WORLD_5V5 } from './world.js';
 
 const BOT_NAMES = ['Ada', 'Linus', 'Grace', 'Ken', 'Barbara', 'Dennis', 'Margaret', 'Guido', 'Bjarne', 'Yuki'];
@@ -74,6 +74,7 @@ export class OfflineSim {
     const me = this._addChamp('me', 'blue', CHAMPIONS[champ] ? champ : 'pixel', name || 'You', false);
     const sp = Array.isArray(spells) && validSpellPair(spells[0], spells[1]) ? spells : DEFAULT_SPELLS;
     me.spellD = sp[0]; me.spellF = sp[1];
+    me.chargesD = spellInitialCharges(me.spellD); me.chargesF = spellInitialCharges(me.spellF);
     me.hat = typeof hat === 'string' ? hat.slice(0, 16) : ''; // EP-11 cosmetic (ChampionView renders it)
     for (const s of STRUCTURES) {
       const hp = s.kind === 'core' ? R.CORE.hp : R.TOWER.hp[s.tier];
@@ -157,7 +158,9 @@ export class OfflineSim {
       dead: false, respawnAt: 0, kills: 0, deaths: 0, assists: 0, cs: 0, items: ['', '', '', '', '', ''],
       cdQ: 0, cdW: 0, cdE: 0, cdR: 0, skillPoints: 0, ranks: { q: 1, w: 1, e: 1, r: 0 },
       locked: true, spellD: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[0],
-      spellF: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[1], cdD: 0, cdF: 0, stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, shield: 0, buffs: '',
+      spellF: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[1], cdD: 0, cdF: 0,
+      chargesD: 0, chargesF: 0, _spellRechD: 0, _spellRechF: 0, _spellCastCdD: 0, _spellCastCdF: 0,
+      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, shield: 0, buffs: '',
       recallUntil: 0, action: 'idle', action_seq: 0, targetId: '', hat: '',
       _order: null, _atkAt: 0, _role: role || def.lane, _buffs: {}, _shieldUntil: 0, _thinkAt: 0, _coffeeUntil: 0,
       _ghostUntil: 0, _spMsUntil: 0, _spMsPct: 0, _ignite: null, _atkCount: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0, _grievousUntil: 0,
@@ -166,6 +169,8 @@ export class OfflineSim {
       augments: [], augmentOffer: null, _augNextIdx: 0, _augCd: {}, _lastQAt: 0, _cleaveReady: false, _lastStandUntil: 0, _wasInBush: false,
     };
     if (isBot) this._autoSpendSkills(c);
+    c.chargesD = spellInitialCharges(c.spellD);
+    c.chargesF = spellInitialCharges(c.spellF);
     this._recalc(c, true);
     this.state.champions.set(id, c);
     return c;
@@ -203,7 +208,10 @@ export class OfflineSim {
         const pid = typeof p === 'string' ? p : p?.champ;
         if (n0 >= R.TEAM_SIZE || !CHAMPIONS[pid] || [...st.champions.values()].some((c) => c.team === team && c.champ === pid)) continue;
         const bot = this._addChamp(`bot_${bi}`, team, pid, p?.name || BOT_NAMES[bi % BOT_NAMES.length], true, p?.role || CHAMPIONS[pid].lane);
-        if (Array.isArray(p?.spells) && validSpellPair(p.spells[0], p.spells[1])) { bot.spellD = p.spells[0]; bot.spellF = p.spells[1]; }
+        if (Array.isArray(p?.spells) && validSpellPair(p.spells[0], p.spells[1])) {
+          bot.spellD = p.spells[0]; bot.spellF = p.spells[1];
+          bot.chargesD = spellInitialCharges(bot.spellD); bot.chargesF = spellInitialCharges(bot.spellF);
+        }
         bi++;
       }
       const members = [...st.champions.values()].filter((c) => c.team === team);
@@ -245,7 +253,7 @@ export class OfflineSim {
     this._wave++;
     const baseKinds = [...R.WAVE_COMPOSITION];
     if (this._wave % R.SIEGE_EVERY_N_WAVES === 0) baseKinds.splice(3, 0, 'siege');
-    const mul = 1 + R.MINION_GROWTH_PER_WAVE * (this._wave - 1);
+    const mul = Math.min(R.MINION_GROWTH_MAX, 1 + R.MINION_GROWTH_PER_WAVE * (this._wave - 1));
     for (const team of ['blue', 'red']) {
       const enemy = ENEMY[team];
       const tmKey = team === 'blue' ? 'Blue' : 'Red';
@@ -554,7 +562,8 @@ export class OfflineSim {
     if (!t) { s._rampId = ''; s._rampCount = 0; return; }
     if (this.t < s._atkAt) return;
     s._atkAt = this.t + R.TOWER.atkMs;
-    let dmg = t.champ ? R.TOWER.dmgChamp : t.maxHp * R.TOWER.dmgMinionPctMaxHp;
+    const baseDmg = R.TOWER.dmgChampByTier?.[s.tier] ?? R.TOWER.dmgChamp;
+    let dmg = t.champ ? baseDmg : t.maxHp * R.TOWER.dmgMinionPctMaxHp;
     if (t.champ) {
       if (s._rampId === t.id) s._rampCount = Math.min(6, (s._rampCount || 0) + 1);
       else { s._rampId = t.id; s._rampCount = 0; }
@@ -581,6 +590,25 @@ export class OfflineSim {
           break;
         }
       }
+    }
+    // Recharge multi-charge summoner spells (e.g. 2-charge Smite)
+    for (const K of ['D', 'F']) {
+      const sp = SPELLS[c['spell' + K]];
+      if (!sp || !(sp.maxCharges > 1)) continue;
+      let charges = c['charges' + K] ?? sp.maxCharges;
+      let nextAt = c['_spellRech' + K] || 0;
+      if (charges < sp.maxCharges && nextAt > 0 && t >= nextAt) {
+        const augMul = c.augments?.includes('flash_cache') ? 0.8 : 1;
+        const rechMs = spellCooldownMs(sp, c.level, augMul);
+        while (charges < sp.maxCharges && nextAt > 0 && t >= nextAt) {
+          charges++;
+          nextAt = charges < sp.maxCharges ? nextAt + rechMs : 0;
+        }
+        c['charges' + K] = charges;
+        c['_spellRech' + K] = nextAt;
+      }
+      const castCd = c['_spellCastCd' + K] || 0;
+      c['cd' + K] = charges > 0 ? (castCd > t ? castCd : 0) : Math.max(castCd, nextAt);
     }
     // buffs + shield + coffee + Blue/Red jungle buffs + regen
     let tags = Object.entries(c._buffs).filter(([, until]) => until > t).map(([k]) => k);
@@ -622,6 +650,11 @@ export class OfflineSim {
     if (bstr !== c.buffs) { c.buffs = bstr; this._recalc(c, false); }
     if (c.shield > 0 && t > c._shieldUntil) c.shield = 0;
     const inFountain = dist(c, this.world.fountain[c.team]) <= R.FOUNTAIN_RADIUS;
+    const enemyFountain = this.world.fountain[ENEMY[c.team]];
+    if (enemyFountain && dist(c, enemyFountain) <= R.FOUNTAIN_RADIUS) {
+      this._damage(c, R.FOUNTAIN_LASER_DPS * dt, null, false, true);
+      if (c.dead) return;
+    }
     const hpRate = inFountain ? R.FOUNTAIN_HEAL_PER_SEC : R.HP_REGEN_PCT_PER_SEC;
     c.hp = Math.min(c.maxHp, c.hp + c.maxHp * hpRate * dt * this._healMul(c));
     c.mana = Math.min(c.maxMana, c.mana + (c.maxMana * (inFountain ? R.FOUNTAIN_MANA_PER_SEC : R.MANA_REGEN_PCT_PER_SEC) + (c._manaRegen || 0)) * dt);
@@ -944,6 +977,16 @@ export class OfflineSim {
       if (c.augments?.includes('jungle_contract') && (target.kind === 'big' || R.EPICS[target.kind])) xpGain = Math.round(xpGain * 1.15);
       c.xp += xpGain;
       this._levelCheck(c);
+    }
+    // Ambient Support economy: award 25% minion gold to the single lowest-gold nearby ally (non-killer).
+    if (killer && R.MINIONS[target.kind] && near.length > 1) {
+      let lowest = null;
+      for (const c of near) if (c !== killer && (!lowest || c.gold < lowest.gold)) lowest = c;
+      const share = Math.round((sp.gold || 0) * R.NEARBY_MINION_GOLD_PCT);
+      if (lowest && share > 0) {
+        lowest.gold += share;
+        if (lowest.id === this.localId) this.emit('gold', { n: share, x: Math.round(target.x), y: Math.round(target.y) });
+      }
     }
     if (R.EPICS[target.kind]) {
       const at = this.t + R.EPICS[target.kind].respawnMs;
@@ -1423,7 +1466,18 @@ export class OfflineSim {
       }
       default: return false;
     }
-    c[`cd${slot}`] = t + sp.cd * 1000;
+    const augMul = c.augments?.includes('flash_cache') ? 0.8 : 1;
+    const scaledCdMs = spellCooldownMs(sp, c.level, augMul);
+    if (sp.maxCharges > 1) {
+      const nextChg = Math.max(0, (c[`charges${slot}`] ?? sp.maxCharges) - 1);
+      c[`charges${slot}`] = nextChg;
+      if (!c[`_spellRech${slot}`]) c[`_spellRech${slot}`] = t + scaledCdMs;
+      const castCdAt = t + Math.round((sp.castCd || 10) * 1000 * augMul);
+      c[`_spellCastCd${slot}`] = castCdAt;
+      c[`cd${slot}`] = nextChg > 0 ? castCdAt : Math.max(castCdAt, c[`_spellRech${slot}`]);
+    } else {
+      c[`cd${slot}`] = t + scaledCdMs;
+    }
     if (c.augments?.includes('flash_cache')) {
       c._spMsUntil = Math.max(c._spMsUntil || 0, t + 2000);
       c._spMsPct = Math.max(c._spMsPct || 0, 0.25);

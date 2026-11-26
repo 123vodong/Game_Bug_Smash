@@ -43,7 +43,7 @@ import {
   respawnMs, RECALL_MS, FOUNTAIN_RADIUS, FOUNTAIN_HEAL_PER_SEC, FOUNTAIN_MANA_PER_SEC, FOUNTAIN_LASER_DPS,
   SHOP_ONLY_IN_FOUNTAIN, INVENTORY_SLOTS, damageAfterArmor, damageAfterResist, applyHardCcDuration, campScaleAt, OUT_OF_COMBAT_MS, HP_REGEN_PCT_PER_SEC,
   MANA_REGEN_PCT_PER_SEC, MOVE_ORDER_RATE_MS, CAST_RATE_MS,
-  WAVE_FIRST_MS, WAVE_EVERY_MS, SIEGE_EVERY_N_WAVES, WAVE_COMPOSITION, MINION_GROWTH_PER_WAVE, MINIONS,
+  WAVE_FIRST_MS, WAVE_EVERY_MS, SIEGE_EVERY_N_WAVES, WAVE_COMPOSITION, MINION_GROWTH_PER_WAVE, MINION_GROWTH_MAX, NEARBY_MINION_GOLD_PCT, MINIONS,
   MINION_AGGRO_RANGE, TOWER, CORE, BACKDOOR_RADIUS, BACKDOOR_DAMAGE_MUL, CRUNCH_MS, CRUNCH_STRUCT_MUL,
   CAMPS as CAMP_TYPES, CAMP_LEASH_RADIUS, EPICS, statAt, MAX_HASTE_PCT, cooldownMs, skillCooldownMs,
   KNOCKBACK_MS, PET_SPEED_MUL, PET_LEASH, PET_OWNER_HIT_MEMORY_MS, scaledAmount,
@@ -58,7 +58,7 @@ import {
 import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, ROLE_PICKS, isChampionId, autoAimsAtEnemy, autoAimReach, championPassive } from '../../shared/moba/champions.js';
 import { ITEMS, isItemId, itemStats, itemPassives, ownedActiveItem, buyBlocker, recipePlan, applyBuy } from '../../shared/moba/items.js';
 import { AUGMENTS, AUGMENT_LEVELS, rollAugmentChoices } from '../../shared/moba/augments.js';
-import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, isSpellId, validSpellPair } from '../../shared/moba/spells.js';
+import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, isSpellId, validSpellPair, spellCooldownMs, spellInitialCharges } from '../../shared/moba/spells.js';
 import { TeamState, TeamChamp, TeamUnit, TeamStructure, TeamScore } from '../game/moba/schema.js';
 import { SkillEngine, MIN_AIM_DIST } from '../game/moba/SkillEngine.js';
 import { MobaBots, BOT_SKILL, botSkillFor } from '../game/moba/MobaBots.js';
@@ -662,8 +662,10 @@ export class TeamRoom extends Room {
       action: 'idle', actionSeq: 0,
       // v2
       nav: null, knock: null, petId: '', petPct: 0, lastChampHitId: '', lastChampHitAt: 0,
-      // v3 summoner spells
-      spells: { d: s.spellD, f: s.spellF }, spellCd: { d: 0, f: 0 }, lastSpellAt: 0, burns: [],
+      // v3 summoner spells (supports multi-charge spells like 2-charge Smite)
+      spells: { d: s.spellD, f: s.spellF }, spellCd: { d: 0, f: 0 },
+      spellCharges: { d: spellInitialCharges(s.spellD), f: spellInitialCharges(s.spellF) },
+      spellRechargeAt: { d: 0, f: 0 }, lastSpellAt: 0, burns: [],
     };
     s.champ = champ; s.isBot = !!sl.isBot; s.locked = true;
     this.champs.set(sid, ch);
@@ -791,7 +793,10 @@ export class TeamRoom extends Room {
     if (ch.boughtAt) ch.boughtAt.fill(0);
     ch.itemsVer = (ch.itemsVer || 0) + 1;
     ch.cd = { q: 0, w: 0, e: 0, r: 0 };
-    ch.spellCd = { d: 0, f: 0 }; ch.burns = [];
+    ch.spellCd = { d: 0, f: 0 };
+    ch.spellCharges = { d: spellInitialCharges(ch.spells.d), f: spellInitialCharges(ch.spells.f) };
+    ch.spellRechargeAt = { d: 0, f: 0 };
+    ch.burns = [];
     ch.dead = false; ch.respawnAt = 0;
     ch.stunnedUntil = 0; ch.rootedUntil = 0; ch.slowUntil = 0; ch.slowPct = 0;
     ch._ccChainCount = 0; ch._ccChainUntil = 0; ch._ccImmuneUntil = 0;
@@ -1390,12 +1395,14 @@ export class TeamRoom extends Room {
     const slot = msg.slot;
     if (slot !== 'd' && slot !== 'f') return false;
     const now = Date.now();
+    this._tickSpellCharges(ch, now);
     if (now - ch.lastSpellAt < CAST_RATE_MS) return false;
     if (now < ch.stunnedUntil || ch.knock) return false;
     if (now < ch.spellCd[slot]) return false;
     const spellId = ch.spells[slot];
     if (!isSpellId(spellId)) return false;
     const sp = SPELLS[spellId];
+    if (sp.maxCharges > 1 && (ch.spellCharges?.[slot] || 0) <= 0) return false;
     const hasAim = Number.isFinite(msg.x) && Number.isFinite(msg.y);
     const aim = clampToMap(hasAim ? msg.x : ch.x, hasAim ? msg.y : ch.y, 0);
     const tid = (typeof msg.id === 'string' && msg.id.length <= 64) ? msg.id : '';
@@ -1446,8 +1453,18 @@ export class TeamRoom extends Room {
       default: return false;
     }
     ch.lastSpellAt = now;
-    ch.spellCd[slot] = now + sp.cd * 1000 * ((ch.augments || []).includes('flash_cache') ? 0.8 : 1);
+    const augMul = (ch.augments || []).includes('flash_cache') ? 0.8 : 1;
+    const scaledCdMs = spellCooldownMs(sp, ch.level, augMul);
+    if (sp.maxCharges > 1) {
+      ch.spellCharges[slot] = Math.max(0, (ch.spellCharges[slot] || 0) - 1);
+      if (!ch.spellRechargeAt[slot]) ch.spellRechargeAt[slot] = now + scaledCdMs;
+      ch.spellCd[slot] = now + Math.round((sp.castCd || 10) * 1000 * augMul);
+    } else {
+      ch.spellCd[slot] = now + scaledCdMs;
+    }
+    if (augMul < 1) this._addBuff(ch, 'flash_cache', { msPct: 0.25 }, now + 2000, true);
     ch.revealUntil = now + BUSH_REVEAL_MS; // v4: casting a spell reveals you (before the fx goes out)
+    ch._stealthUntil = 0;
     this._cancelRecall(ch);
     this._fx({ k: 'spell', sid, spell: spellId, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(x1), y1: Math.round(y1), id: target ? target.id : '' });
     this.spellStats.casts[spellId] = (this.spellStats.casts[spellId] || 0) + 1;
@@ -1633,6 +1650,8 @@ export class TeamRoom extends Room {
         if (!ch || ch.dead) break;
         ch.cd = { q: 0, w: 0, e: 0, r: 0 };
         ch.spellCd = { d: 0, f: 0 };
+        ch.spellCharges = { d: spellInitialCharges(ch.spells.d), f: spellInitialCharges(ch.spells.f) };
+        ch.spellRechargeAt = { d: 0, f: 0 };
         ch.mana = ch.maxMana;
         break;
       case 'clock': { // EP-04 tests: fast-forward the match clock by n ms (≤ 1 h) — e.g. past ROLLBACK_FROM_MS
@@ -1778,9 +1797,11 @@ export class TeamRoom extends Room {
     // Passive gold keeps flowing while dead (it's time-based, per contract §2).
     if (ch.dead && now - this.state.startedAt >= PASSIVE_GOLD_DELAY_MS) ch.gold += PASSIVE_GOLD_PER_SEC * dt / 1000;
     if (ch.dead) {
+      this._tickSpellCharges(ch, now);
       if (now >= ch.respawnAt) this._respawn(ch, now);
       return;
     }
+    this._tickSpellCharges(ch, now);
     if (ch.burns.length && this._tickIgnite(ch, now)) return; // burned out
     // Timed effects
     if (ch.buffs.length) prune(ch.buffs, (b) => b.until > now);
@@ -2002,7 +2023,7 @@ export class TeamRoom extends Room {
     this._nextWaveAt += WAVE_EVERY_MS;
     this._waveNo++;
     const siege = this._waveNo % SIEGE_EVERY_N_WAVES === 0;
-    const growth = 1 + MINION_GROWTH_PER_WAVE * (this._waveNo - 1);
+    const growth = Math.min(MINION_GROWTH_MAX, 1 + MINION_GROWTH_PER_WAVE * (this._waveNo - 1));
     const full = siege ? [...WAVE_COMPOSITION, 'siege'] : WAVE_COMPOSITION;
     const perLane = {};
     for (const u of this.units.values()) {
@@ -2362,7 +2383,8 @@ export class TeamRoom extends Room {
     if (t.etype === 'champ') {
       if (tw.rampId === t.id) tw.ramp = Math.min(TOWER_MAX_RAMP_HITS, tw.ramp + 1);
       else { tw.rampId = t.id; tw.ramp = 0; }
-      dmg = TOWER.dmgChamp * (1 + TOWER.dmgChampRampPct * tw.ramp);
+      const baseDmg = TOWER.dmgChampByTier?.[tw.tier] ?? TOWER.dmgChamp;
+      dmg = baseDmg * (1 + TOWER.dmgChampRampPct * tw.ramp);
       opts = { kind: 'tower' };
     } else {
       tw.rampId = ''; tw.ramp = 0;
@@ -3199,6 +3221,13 @@ export class TeamRoom extends Room {
         if (!c.dead && c.team !== u.team && dist(c, u) <= XP_SHARE_RADIUS) near.push(c);
       }
       for (const c of near) this._giveXp(c, u.xp / near.length, now);
+      // Ambient Support economy: award 25% minion gold to the single lowest-gold nearby ally (non-killer) without reducing killer's gold.
+      if (src && src.etype === 'champ' && src.team !== u.team && near.length > 1) {
+        let lowest = null;
+        for (const c of near) if (c !== src && (!lowest || c.gold < lowest.gold)) lowest = c;
+        const share = Math.round(u.gold * NEARBY_MINION_GOLD_PCT);
+        if (lowest && share > 0) this._giveGold(lowest, share, u.x, u.y);
+      }
       return;
     }
     // Monster / epic
@@ -3297,6 +3326,27 @@ export class TeamRoom extends Room {
     for (const s of this.structs.values()) this._syncStruct(s);
   }
 
+  /** Recharge multi-charge summoner spells (e.g. 2-charge Smite). */
+  _tickSpellCharges(ch, now) {
+    if (!ch.spellCharges || !ch.spellRechargeAt) return;
+    const augMul = (ch.augments || []).includes('flash_cache') ? 0.8 : 1;
+    for (const slot of ['d', 'f']) {
+      const sp = SPELLS[ch.spells?.[slot]];
+      if (!sp || !(sp.maxCharges > 1)) continue;
+      let charges = ch.spellCharges[slot] || 0;
+      let nextAt = ch.spellRechargeAt[slot] || 0;
+      if (charges < sp.maxCharges && nextAt > 0 && now >= nextAt) {
+        const rechMs = spellCooldownMs(sp, ch.level, augMul);
+        while (charges < sp.maxCharges && nextAt > 0 && now >= nextAt) {
+          charges++;
+          nextAt = charges < sp.maxCharges ? nextAt + rechMs : 0;
+        }
+        ch.spellCharges[slot] = charges;
+        ch.spellRechargeAt[slot] = nextAt;
+      }
+    }
+  }
+
   _syncChamp(ch, now) {
     if (!Number.isFinite(ch.x) || !Number.isFinite(ch.y)) { // never let a NaN reach the wire
       const spot = this._fountainSpot(ch.team, ch.slot);
@@ -3353,8 +3403,15 @@ export class TeamRoom extends Room {
     v = ch.atkTarget || ''; if (s.targetId !== v) s.targetId = v;
     if (s.spellD !== ch.spells.d) s.spellD = ch.spells.d;
     if (s.spellF !== ch.spells.f) s.spellF = ch.spells.f;
-    v = ch.spellCd.d > now ? ch.spellCd.d : 0; if (s.cdD !== v) s.cdD = v;
-    v = ch.spellCd.f > now ? ch.spellCd.f : 0; if (s.cdF !== v) s.cdF = v;
+    const spD = SPELLS[ch.spells.d], spF = SPELLS[ch.spells.f];
+    const chD = spD?.maxCharges > 1 ? (ch.spellCharges?.d || 0) : 0;
+    const chF = spF?.maxCharges > 1 ? (ch.spellCharges?.f || 0) : 0;
+    if (s.chargesD !== chD) s.chargesD = chD;
+    if (s.chargesF !== chF) s.chargesF = chF;
+    const readyD = spD?.maxCharges > 1 && chD <= 0 ? Math.max(ch.spellCd.d, ch.spellRechargeAt?.d || 0) : ch.spellCd.d;
+    const readyF = spF?.maxCharges > 1 && chF <= 0 ? Math.max(ch.spellCd.f, ch.spellRechargeAt?.f || 0) : ch.spellCd.f;
+    v = readyD > now ? readyD : 0; if (s.cdD !== v) s.cdD = v;
+    v = readyF > now ? readyF : 0; if (s.cdF !== v) s.cdF = v;
     v = ch.bush || ''; if (s.inBush !== v) s.inBush = v;
     if (s._augVer !== (ch._augVer || 0)) {
       s._augVer = ch._augVer || 0;

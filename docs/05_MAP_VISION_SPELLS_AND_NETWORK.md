@@ -66,27 +66,28 @@
 ---
 
 ## 3. Summoner Spells (D / F — `shared/moba/spells.js`)
-- **Selection Rules:** Every champion brings **2 distinct spells** (`validSpellPair(d, f)` forbids duplicates). Role defaults assign `['flash', 'smite']` to Junglers (`ROLE_SPELLS`), though human players may swap freely. Cooldowns are **not** reduced by item haste. `Flash Cache` augment grants `+25% MS` for `2s` on any D/F cast.
+- **Selection & Scaling Rules:** Every champion brings **2 distinct spells** (`validSpellPair(d, f)` forbids duplicates). Role defaults assign `['flash', 'smite']` to Junglers (`ROLE_SPELLS`), though human players may swap freely. Cooldowns are **not** reduced by item haste, but scale down with champion level via `spellCooldownMs(sp, level, mul)` (`max(cdMin, cd - cdPerLevel * (level - 3))`). `Flash Cache` augment grants `-20%` spell CD/recharge and `+25% MS` for `2s` on any D/F cast.
+- **Smite 2-Charge System (`kill -9`):** Holds up to `2` charges (`maxCharges: 2`, starts match with `2` charges ready). Each cast consumes `1` charge, triggers a `10s` internal inter-cast cooldown (`castCd: 10`, preventing instant double-smite on objectives), and recharges `1` charge every `40s` at Lv 3 (scaling `-1.2s/lv` down to `24s`). Synced via `chargesD` / `chargesF` (`uint8`) on `TeamChamp` and displayed as a charge badge on HUD D/F slots.
 
-| ID | Name | Kind | Cooldown | Range / Radius | Exact Parameters & Edge Rules |
+| ID | Name | Kind | Base CD -> Min CD (Scaling) | Range / Radius | Exact Parameters & Edge Rules |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| `flash` | **Alt+Tab** (⚡) | `blink` | 150s | 420 px | Instant teleport via `nearestFree` (crosses walls). Blocked while stunned, rooted, or displaced. |
-| `heal` | **Coffee Break** (☕) | `heal` | 120s | 750 px | Heals self + most-injured nearby ally for `80 + 18/lv`; grants `+30% MS` for `1.0s`. Cut by `-50%` under `Ignite` / `Grievous`. |
-| `ghost` | **Overtime** (🏃) | `haste` | 120s | Self | `+35%` move speed for `6.0s`; ignores unit collision (still affected normally by enemy slows). |
-| `barrier` | **Ctrl+Z** (🛡️) | `shield` | 120s | Self | Self-shield of `100 + 22/lv` for `2.5s` (scales with champion level). |
-| `ignite` | **Escalate** (🔥) | `dot` | 150s | 600 px | Deals `60 + 20/lv` True Damage over `5.0s` (ticks every `500 ms`) and cuts healing received by `50%`. |
-| `smite` | **kill -9** (💀) | `smite` | 60s | 500 px | Targets neutral monster/epic or enemy minion: deals `450 + 35/lv` True Damage and heals self `8% max HP` on monsters. |
+| `flash` | **Alt+Tab** (⚡) | `blink` | `120s -> 80s` (`-2.5s/lv`) | 420 px | Instant teleport via `nearestFree` (crosses walls). Blocked while stunned, rooted, or displaced. |
+| `heal` | **Coffee Break** (☕) | `heal` | `90s -> 60s` (`-2.0s/lv`) | 750 px | Heals self + most-injured nearby ally for `80 + 18/lv`; grants `+30% MS` for `1.0s`. Cut by `-50%` under `Ignite` / `Grievous`. |
+| `ghost` | **Overtime** (🏃) | `haste` | `85s -> 55s` (`-2.0s/lv`) | Self | `+35%` move speed for `6.0s`; ignores unit collision (still affected normally by enemy slows). |
+| `barrier` | **Ctrl+Z** (🛡️) | `shield` | `80s -> 50s` (`-2.0s/lv`) | Self | Self-shield of `100 + 22/lv` for `2.5s` (scales with champion level). |
+| `ignite` | **Escalate** (🔥) | `dot` | `95s -> 65s` (`-2.0s/lv`) | 600 px | Deals `60 + 20/lv` True Damage over `5.0s` (ticks every `500 ms`) and cuts healing received by `50%`. |
+| `smite` | **kill -9** (💀) | `smite` | `2` charges · `40s -> 24s` (`-1.2s/lv`), `10s` cast CD | 500 px | Targets neutral monster/epic or enemy minion: deals `450 + 35/lv` True Damage and heals self `8% max HP` on monsters. |
 
 ---
 
 ## 4. Vision, Fog of War & Ward Trinket
 - **Sight Radii:** Friendly Champions `1100 px`, Friendly Structures `1050 px`, Ward Trinkets `750 px`, Friendly Minions `680 px`.
-- **Ward Trinket (Key `[4]`):** Places a `3 HP` stealth ward within `550 px` (`750 px` sight, `45s` duration, `90s` CD, max `2` active wards per player). Wards inside a bush share that bush (`sameBush = true`) and reveal enemies inside to the entire team.
+- **Ward Trinket (Key `[4]`):** Places a `3 HP` stealth ward within `550 px` (`750 px` sight, `45s` duration, `90s` CD, max `2` active wards per player; placing a 3rd expires the oldest ward). Wards inside a bush share that bush (`sameBush = true`) and reveal enemies inside to the entire team.
 - **Shadow Proxy Stealth:** Veil active grants `1.8s` stealth, invisible beyond `280 px` and broken immediately on basic attack or skill cast.
 - **Bush Mechanics:** Standing in any of the `24` bushes hides the unit from opponents unless: (a) an opposing champion or ward occupies the same bush, (b) the unit attacks or casts (`BUSH_REVEAL_MS = 1500 ms`), or (c) `Bush Hacker` reveals within `750 px` (`2s`). Own-team units in bushes render at `HIDDEN_ALPHA = 0.5` with `LEAF_TINT`.
-- **Authoritative Visibility vs. Client Fog Separation:**
+- **Authoritative Visibility & Rendering Performance:**
   - **Server `StateView` (`TeamRoom.js`) & `OfflineSim._hiddenFrom`:** Authoritative source of truth evaluated at `20 Hz` (`VISION_EVERY_TICKS = 1`). Hidden enemies are removed from per-team `StateView`, `atk` / `fx` events beyond `INTEREST_RADIUS = 1600 px` or from hidden sources are filtered, and target orders/spells on hidden IDs are rejected.
-  - **Client Fog Canvas (`MobaMap.js`):** Purely visual `150 x 150` offscreen texture (`40 px/cell`), updated at `10 Hz` (`5 Hz` in `lowFx`) and GPU-interpolated across `6000 x 6000`. Never consulted for gameplay truth.
+  - **Client Rendering (`MobaMap.js`, `TeamModeScene.js`, `MobaHud.js`):** Full-screen dynamic fog canvas overlay is disabled to eliminate full-viewport alpha overdraw and periodic `gl.texImage2D` stalls. Walls are piece-sliced into a single tight canvas atlas (`moba-walls`), `relicsJson` is string-cached, `MobaHud.setTarget()` is dirty-checked and throttled to `10 Hz`, and hover outlines use `4` shared tintFill sprites instead of WebGL `postFX`.
 
 ---
 
