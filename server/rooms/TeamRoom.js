@@ -246,7 +246,7 @@ export class TeamRoom extends Room {
     });
     // Unknown message types (a newer client vs an older server, typos) are ignored —
     // Colyseus would otherwise drop the client (close 4002).
-    this.onMessage('*', () => {});
+    this.onMessage('*', () => { });
     // v3: repeatable clock sync (any scene, any phase) — reply { serverNow, t } echoing the
     // client's own timestamp so it can halve the round trip. ≥ 500 ms apart per client.
     this.onMessage('time', (client, msg) => {
@@ -262,7 +262,7 @@ export class TeamRoom extends Room {
       console.log('[TeamRoom] debug hooks ENABLED (BUG_SMASH_DEBUG=1)');
     } else {
       // Colyseus drops a client that sends an unregistered type — ignore `debug` quietly instead.
-      this.onMessage('debug', () => {});
+      this.onMessage('debug', () => { });
     }
 
     this.setSimulationInterval((dt) => this._tick(dt), TICK_MS);
@@ -779,7 +779,7 @@ export class TeamRoom extends Room {
       meta = { mode: 'team', phase: st.phase, humans: this.humanCount(), bots };
     }
     try {
-      this.setMetadata(meta)?.catch?.(() => {});
+      this.setMetadata(meta)?.catch?.(() => { });
     } catch (_) { /* listing not ready (or a harness) */ }
   }
 
@@ -821,7 +821,7 @@ export class TeamRoom extends Room {
     st.lobbyEndsAt = 0;
     st.selectEndsAt = now + SELECT_MS;
     this._allLocked = false;
-    try { this.lock()?.catch?.(() => {}); } catch (_) { /* harness */ }
+    try { this.lock()?.catch?.(() => { }); } catch (_) { /* harness */ }
     this._fillBotSlots(now);
     this._announce({ title: '🎯 CHAMPION SELECT', sub: 'Pick your champion and two office perks (D / F)', color: '#ffd23f' });
     this._updateMetadata();
@@ -1678,7 +1678,7 @@ export class TeamRoom extends Room {
     if (st.phase === 'ended') {
       if (this._endAt && now >= this._endAt && !this._closing) {
         this._closing = true;
-        try { this.disconnect()?.catch?.(() => {}); } catch (_) { /* already disposing */ }
+        try { this.disconnect()?.catch?.(() => { }); } catch (_) { /* already disposing */ }
       }
       return;
     }
@@ -1946,8 +1946,12 @@ export class TeamRoom extends Room {
   _recalc(ch, now) {
     const b = ch.def.base, g = ch.def.growth || {};
     const lv = ch.level;
-    // v4: item stats only change on a purchase / reset (itemsVer) — cached per champion.
-    if (ch._itemsVerSeen !== (ch.itemsVer || 0) || !ch._itemStats) { ch._itemStats = itemStats(ch.items); ch._itemsVerSeen = ch.itemsVer || 0; }
+    // v4: item stats & passives only change on a purchase / reset (itemsVer) — cached per champion.
+    if (ch._itemsVerSeen !== (ch.itemsVer || 0) || !ch._itemStats || !ch._itemPassives) {
+      ch._itemStats = itemStats(ch.items);
+      ch._itemPassives = itemPassives(ch.items);
+      ch._itemsVerSeen = ch.itemsVer || 0;
+    }
     const it = ch._itemStats;
     let asPct = it.as || 0, msPct = 0, armorAdd = 0, apPct = it.apPct || 0, adPct = 0, keep = 1, petPct = 0;
     for (const bf of ch.buffs) {
@@ -2047,13 +2051,7 @@ export class TeamRoom extends Room {
       gold: def.gold, xp: def.xp, ranged: kind !== 'melee', empowered,
       path: minionPath(team, lane), wp: 1, par: this._nextUnitId & 1, // par: v4 staggered position sync
       target: '', atkReadyAt: 0, retargetAt: 0, forcedUntil: 0,
-      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0,
-      _ccChainCount: 0, _ccChainUntil: 0, _ccImmuneUntil: 0,
-      _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
-      _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
-      augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
-      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
-      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0, hitSeq: 0, removeAt: 0,
+      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, hitSeq: 0, removeAt: 0,
       nav: null, knock: null,
     };
     s.team = team; s.kind = kind; s.campId = '';
@@ -2203,13 +2201,7 @@ export class TeamRoom extends Room {
       dmg: def.dmg, atkMs: def.atkMs, range: MONSTER_REACH, speed: epic ? MONSTER_SPEED * 0.8 : MONSTER_SPEED,
       gold: def.gold || 0, xp: def.xp || 0, leash,
       target: '', atkReadyAt: 0, resetting: false, lastHitBy: '',
-      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0,
-      _ccChainCount: 0, _ccChainUntil: 0, _ccImmuneUntil: 0,
-      _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
-      _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
-      augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
-      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
-      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0, hitSeq: 0, removeAt: 0,
+      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, hitSeq: 0, removeAt: 0,
       nav: null, knock: null,
     };
     s.team = 'neutral'; s.kind = kind; s.campId = campId;
@@ -2600,13 +2592,7 @@ export class TeamRoom extends Room {
       maxHp: 1, hp: 1, alive: true, armor: 0,
       range: Math.max(50, def.range || 300), atkMs: Math.max(200, def.atkMs || 1000),
       target: '', atkReadyAt: 0, hitSeq: 0, removeAt: 0,
-      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0,
-      _ccChainCount: 0, _ccChainUntil: 0, _ccImmuneUntil: 0,
-      _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
-      _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
-      augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
-      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
-      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0, nav: null, knock: null,
+      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, nav: null, knock: null,
     };
     s.team = ch.team; s.kind = 'pet'; s.campId = ''; s.owner = ch.id;
     this.units.set(id, u);
@@ -2724,7 +2710,7 @@ export class TeamRoom extends Room {
       else if (!this._hasMinionNear(src?.team, t.x, t.y, BACKDOOR_RADIUS)) dmg *= BACKDOOR_DAMAGE_MUL;
     }
     if (src && src.etype === 'champ' && !trueDmg && (kind === 'atk' || kind === 'skill')) {
-      const srcP = itemPassives(src.items);
+      const srcP = src._itemPassives || itemPassives(src.items);
       const roleP = championPassive(src.def)?.id;
       let didCrit = false;
       if (kind === 'atk') {
@@ -2803,7 +2789,7 @@ export class TeamRoom extends Room {
     }
     if (t.etype === 'champ') {
       dmg *= t.dmgTakenMul || 1;
-      const tgtP = itemPassives(t.items);
+      const tgtP = t._itemPassives || itemPassives(t.items);
       const tgtRoleP = championPassive(t.def)?.id;
       if (tgtP.has('fortress')) dmg *= 0.9;
       if (tgtRoleP === 'brick_wall') {
@@ -2846,7 +2832,7 @@ export class TeamRoom extends Room {
     if (t.etype === 'champ') {
       // Shields soak first (soonest-expiring first); CORS Bypass deals 1.5x to shields.
       if (t.shields.length) {
-        const sMul = (src?.etype === 'champ' && itemPassives(src.items).has('anti_shield')) ? 1.5 : 1;
+        const sMul = (src?.etype === 'champ' && (src._itemPassives || itemPassives(src.items)).has('anti_shield')) ? 1.5 : 1;
         t.shields.sort((a, b) => a.until - b.until);
         for (const sh of t.shields) {
           if (dmg <= 0) break;
@@ -3367,7 +3353,8 @@ export class TeamRoom extends Room {
     v = ch.bush || ''; if (s.inBush !== v) s.inBush = v;
     if (s._augVer !== (ch._augVer || 0)) {
       s._augVer = ch._augVer || 0;
-      s.augments.splice(0, s.augments.length, ...ch.augments);
+      const csv = (ch.augments || []).join(',');
+      if (s.augmentsCsv !== csv) s.augmentsCsv = csv;
     }
     v = ch.augmentOffer ? JSON.stringify(ch.augmentOffer) : '';
     if (s.augmentOfferJson !== v) s.augmentOfferJson = v;
@@ -3413,7 +3400,8 @@ export class TeamRoom extends Room {
     if (sc.rank !== (ch.s.rank || '')) sc.rank = ch.s.rank || '';
     if (sc._augVer !== (ch._augVer || 0)) {
       sc._augVer = ch._augVer || 0;
-      sc.augments.splice(0, sc.augments.length, ...ch.augments);
+      const csv = (ch.augments || []).join(',');
+      if (sc.augmentsCsv !== csv) sc.augmentsCsv = csv;
     }
   }
 

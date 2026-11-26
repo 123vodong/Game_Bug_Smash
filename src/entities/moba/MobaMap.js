@@ -111,11 +111,11 @@ export class MobaMap {
     this._collectStatics();
   }
 
-  /** Lightweight 150×150 Fog of War canvas stretched over 6000×6000 (updated at 10 Hz, <0.25ms/frame). */
+  /** Lightweight 120x120 Fog of War canvas stretched over 6000x6000 with pre-baked radial vision stamp. */
   _buildFog() {
     const s = this.scene;
     const key = 'moba-fog';
-    const W = 150, H = 150;
+    const W = 120, H = 120;
     if (s.textures.exists(key)) s.textures.remove(key);
     const tex = s.textures.createCanvas(key, W, H);
     if (!tex) return;
@@ -123,13 +123,28 @@ export class MobaMap {
     this._fogCtx = tex.getContext();
     this._fogW = W; this._fogH = H;
     this._fogAt = 0;
+    // Pre-bake a single 64x64 radial alpha stamp once so updateFog avoids per-watcher gradient allocations.
+    const st = document.createElement('canvas');
+    st.width = 64; st.height = 64;
+    const sc = st.getContext('2d');
+    const g = sc.createRadialGradient(32, 32, 18, 32, 32, 32);
+    g.addColorStop(0, 'rgba(0,0,0,1)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    sc.fillStyle = g;
+    sc.fillRect(0, 0, 64, 64);
+    this._fogStamp = st;
     this._fogImg = s.add.image(0, 0, key).setOrigin(0, 0).setDisplaySize(MAP_W, MAP_H).setDepth(D.fxTop + 1);
   }
 
-  /** Update Fog of War vision holes at 10 Hz (5 Hz in lowFx mode). watchers: [{x, y, r}] */
+  /** True when the Fog of War canvas is due for its next throttled redraw. */
+  shouldUpdateFog(now) {
+    return !!(this._fogCtx && this._fogTex) && now >= (this._fogAt || 0);
+  }
+
+  /** Update Fog of War vision holes at ~6.7 Hz (4 Hz in lowFx mode). watchers: [{x, y, r}] */
   updateFog(watchers, now) {
     if (!this._fogCtx || !this._fogTex) return;
-    const step = this.lowFx ? 200 : 100;
+    const step = this.lowFx ? 250 : 150;
     if (now < this._fogAt) return;
     this._fogAt = now + step;
     const ctx = this._fogCtx, W = this._fogW, H = this._fogH;
@@ -139,303 +154,319 @@ export class MobaMap {
     ctx.fillStyle = 'rgba(4, 9, 20, 0.56)';
     ctx.fillRect(0, 0, W, H);
     ctx.globalCompositeOperation = 'destination-out';
-    for (const w of watchers) {
-      const fx = w.x * sx, fy = w.y * sy, fr = w.r * sx;
-      const g = ctx.createRadialGradient(fx, fy, fr * 0.58, fx, fy, fr);
-      g.addColorStop(0, 'rgba(0,0,0,1)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(fx, fy, fr, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalCompositeOperation = 'source-over';
-    this._fogTex.refresh();
-  }
-
-  /** v4 perf: static world images / decor texts with precomputed bounds, culled vs the camera. */
-  _collectStatics() {
-    this._statics = [];
-    this._cullAt = 0;
-    const add = (o, decor = false) => {
-      if (!o?.getBounds) return;
-      const b = o.getBounds();
-      this._statics.push({ o, x0: b.x, y0: b.y, x1: b.right, y1: b.bottom, on: true, decor });
-    };
-    for (const w of this.walls || []) add(w);
-    for (const b of this.bushImgs?.values() || []) add(b);
-    // Only always-on decor texts are culled: skip texts hidden at build time (graffiti with no clear
-    // spot) and texts whose visibility other logic owns (camp 💤 icons, epic timers) — review v4.
-    const owned = new Set([...this.campIcons.values(), ...Object.values(this.epicLabels).map((l) => l?.timer)]);
-    for (const o of this.scene.children.list) {
-      if (o.type === 'Text' && o.depth === D.decor && o.visible && !owned.has(o)) add(o, true);
-    }
-  }
-
-  _cullStatics(view) {
-    const now = this.scene.time.now;
-    if (now < this._cullAt || !this._statics) return;
-    this._cullAt = now + 100;
-    const m = 80, x0 = view.x - m, y0 = view.y - m, x1 = view.right + m, y1 = view.bottom + m;
-    for (const st of this._statics) {
-      const on = st.x1 > x0 && st.x0 < x1 && st.y1 > y0 && st.y0 < y1 && !(st.decor && this.lowFx);
-      if (on !== st.on) { st.on = on; st.o.setVisible(on); }
-    }
-  }
-
-  /** Bake the static vector layers into one RenderTexture (half-res on desktop, ~1/3 on mobile). */
-  _bake(g) {
-    const s = this.scene;
-    const size = s.sys.game.device.os.desktop ? 3000 : 2048;
-    const k = size / MAP_W;
-    g.setScale(k);
-    const rt = s.add.renderTexture(0, 0, size, size).setOrigin(0, 0).setDepth(D.river);
-    rt.draw(g, 0, 0);
-    rt.setScale(1 / k);
-    this.rt = rt;
-  }
-
-  // ───────────────────────── static layers (drawn into `g`, world coords) ─────────────────────────
-  _drawFloor(g) {
-    g.lineStyle(3, GRID, 1);
-    for (let x = 100; x < MAP_W; x += 100) g.lineBetween(x, 0, x, MAP_H);
-    for (let y = 100; y < MAP_H; y += 100) g.lineBetween(0, y, MAP_W, y);
-    g.fillStyle(0x000000, 0.32);
-    for (const t of JUNGLES) g.fillTriangle(t[0][0], t[0][1], t[1][0], t[1][1], t[2][0], t[2][1]);
-  }
-
-  _drawRiver(g) {
-    const { from, to, width } = RIVER, rv = this._river;
-    const band = (w, color, a) => {
-      g.lineStyle(w, color, a); g.lineBetween(from.x, from.y, to.x, to.y);
-      g.fillStyle(color, a); g.fillCircle(from.x, from.y, w / 2); g.fillCircle(to.x, to.y, w / 2);
-    };
-    // 2.5D Recessed River Channel: outer embankment rim + deep inner cliff shadow
-    band(width + 160, RIVER_GLOW, 0.05);
-    band(width + 58, 0x050a14, 0.72);
-    band(width + 24, 0x192b44, 0.9);
-    band(width, RIVER_DEEP, 1);
-    band(width * 0.78, 0x072642, 0.85);
-    band(width * 0.52, RIVER_MID, 0.78);
-    band(width * 0.14, 0x2278b5, 0.65);
-    const hw = width / 2;
-    // Steep north-east inner bank drop shadow (gives recessed depth)
-    g.lineStyle(22, 0x030812, 0.55);
-    g.lineBetween(from.x - rv.nx * (hw - 10), from.y - rv.ny * (hw - 10), to.x - rv.nx * (hw - 10), to.y - rv.ny * (hw - 10));
-    g.lineStyle(5, RIVER_GLOW, 0.65);
-    for (const sg of [-1, 1]) {
-      g.lineBetween(from.x + rv.nx * hw * sg, from.y + rv.ny * hw * sg, to.x + rv.nx * hw * sg, to.y + rv.ny * hw * sg);
-    }
-    const ang = Math.atan2(rv.uy, rv.ux);
-    g.beginPath(); g.arc(from.x, from.y, hw, ang + Math.PI / 2, ang + Math.PI * 1.5); g.strokePath();
-    g.beginPath(); g.arc(to.x, to.y, hw, ang - Math.PI / 2, ang + Math.PI / 2); g.strokePath();
-  }
-
-  _drawBasesAndLanes(g) {
-    // 2.5D Elevated Base Terraces (2-tier stepped platform with cast drop shadow)
-    for (const team of ['blue', 'red']) {
-      const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
-      const col = teamColor(team);
-      g.fillStyle(0x000000, 0.42); g.fillCircle(core.x + 24, core.y + 28, BASE_RADIUS + 14);
-      g.fillStyle(0x162033, 0.95); g.fillCircle(core.x, core.y, BASE_RADIUS);
-      g.fillStyle(col, 0.08); g.fillCircle(core.x, core.y, BASE_RADIUS);
-      g.lineStyle(14, col, 0.52); g.strokeCircle(core.x, core.y, BASE_RADIUS);
-      g.lineStyle(4, 0xffffff, 0.22); g.strokeCircle(core.x, core.y, BASE_RADIUS - 14);
-      // Inner elevated core tier
-      g.fillStyle(0x000000, 0.35); g.fillCircle(core.x + 14, core.y + 18, BASE_RADIUS * 0.56);
-      g.fillStyle(0x1e2b42, 0.9); g.fillCircle(core.x, core.y, BASE_RADIUS * 0.55);
-      g.lineStyle(5, col, 0.42); g.strokeCircle(core.x, core.y, BASE_RADIUS * 0.55);
-    }
-    const poly = (pts, w, color, a, ox = 0, oy = 0) => {
-      g.lineStyle(w, color, a);
-      g.beginPath(); g.moveTo(pts[0].x + ox, pts[0].y + oy);
-      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x + ox, pts[i].y + oy);
-      g.strokePath();
-      g.fillStyle(color, a);
-      for (const p of pts) g.fillCircle(p.x + ox, p.y + oy, w / 2);
-    };
-    const lanes = Object.values(LANES);
-    // Raised 2.5D lane shadow + beveled stone curb + surface
-    for (const pts of lanes) poly(pts, LANE_WIDTH + 34, 0x000000, 0.36, 10, 14);
-    for (const pts of lanes) poly(pts, LANE_WIDTH + 22, CARPET_EDGE, 1);
-    for (const pts of lanes) poly(pts, LANE_WIDTH, CARPET, 1);
-    for (const pts of lanes) {
-      g.lineStyle(4, CARPET_LINE, 0.55);
-      g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-      g.strokePath();
-    }
-    // Break-room fountains (heal + shop zone).
-    for (const team of ['blue', 'red']) {
-      const f = FOUNTAIN[team], col = teamColor(team);
-      g.fillStyle(col, 0.13); g.fillCircle(f.x, f.y, FOUNTAIN_RADIUS);
-      g.lineStyle(8, col, 0.7); g.strokeCircle(f.x, f.y, FOUNTAIN_RADIUS);
-      g.lineStyle(3, 0xffffff, 0.25); g.strokeCircle(f.x, f.y, FOUNTAIN_RADIUS - 24);
-      g.fillStyle(col, 0.22); g.fillCircle(f.x, f.y, 120);
-    }
-    g.lineStyle(14, 0x39c2ff, 0.45); g.strokeRect(0, 0, MAP_W, MAP_H);
-  }
-
-  _drawPads(g) {
-    for (const c of CAMPS) {
-      g.fillStyle(NEUTRAL, 0.05); g.fillCircle(c.x, c.y, 110);
-      g.lineStyle(4, NEUTRAL, 0.3);
-      for (let i = 0; i < 12; i++) { // dashed ring
-        const a0 = (i / 12) * Math.PI * 2;
-        g.beginPath(); g.arc(c.x, c.y, 110, a0, a0 + 0.32); g.strokePath();
+      const stamp = this._fogStamp;
+      for (let i = 0; i < watchers.length; i++) {
+        const w = watchers[i];
+        const fx = w.x * sx, fy = w.y * sy, fr = w.r * sx;
+        ctx.drawImage(stamp, fx - fr, fy - fr, fr * 2, fr * 2);
       }
+      ctx.globalCompositeOperation = 'source-over';
+      this._fogTex.refresh();
     }
-    for (const [kind, p] of Object.entries(EPIC_SPOTS)) {
-      const col = kind === 'golden' ? 0xffd700 : 0xff4a4a;
-      g.fillStyle(col, 0.07); g.fillCircle(p.x, p.y, 240);
-      g.lineStyle(7, col, 0.5); g.strokeCircle(p.x, p.y, 240);
-      g.lineStyle(3, col, 0.3); g.strokeCircle(p.x, p.y, 200);
-    }
-  }
 
-  /** Soft floor shadows (light from the top-left) under every wall — baked with the floor. */
-  _drawWallShadows(g) {
-    for (const w of WALLS) {
-      const H = WALL_H[w.look] ?? 30;
-      if (w.kind === 'circle') {
-        g.fillStyle(0x000000, 0.16); g.fillCircle(w.x + H * 0.45 + 6, w.y + 8, w.r + 10);
-        g.fillStyle(0x000000, 0.26); g.fillCircle(w.x + 4, w.y + 3, w.r + 2);
-      } else if (w.kind === 'seg') {
-        const cap = (ox, oy, lw, a) => {
-          g.lineStyle(lw, 0x000000, a); g.lineBetween(w.x1 + ox, w.y1 + oy, w.x2 + ox, w.y2 + oy);
-          g.fillStyle(0x000000, a); g.fillCircle(w.x1 + ox, w.y1 + oy, lw / 2); g.fillCircle(w.x2 + ox, w.y2 + oy, lw / 2);
-        };
-        const glass = w.look === 'glass';
-        cap(H * 0.4 + 6, 10, w.w + 26, glass ? 0.08 : 0.15);
-        cap(3, 4, w.w + 8, glass ? 0.14 : 0.28);
-      } else {
-        g.fillStyle(0x000000, 0.16); g.fillRect(w.x + 4, w.y + 4, w.w + H * 0.5 + 10, w.h + 12);
-        g.fillStyle(0x000000, 0.28); g.fillRect(w.x - 3, w.y - 2, w.w + 9, w.h + 8);
-      }
-    }
-  }
-
-  /** v4: dark soil + leaf-litter patch under every bush (baked with the floor). */
-  _drawBushSoil(g) {
-    for (const b of BUSHES) {
-      if (b.kind === 'circle') {
-        g.fillStyle(BUSH_EDGE, 0.55); g.fillCircle(b.x, b.y, b.r + 8);
-        g.fillStyle(BUSH_SOIL, 0.95); g.fillCircle(b.x, b.y, b.r);
-        continue;
-      }
-      const cap = (lw, col, a) => {
-        g.lineStyle(lw, col, a); g.lineBetween(b.x1, b.y1, b.x2, b.y2);
-        g.fillStyle(col, a); g.fillCircle(b.x1, b.y1, lw / 2); g.fillCircle(b.x2, b.y2, lw / 2);
+    /** v4 perf: static world images / decor texts with precomputed bounds, culled vs the camera. */
+    _collectStatics() {
+      this._statics = [];
+      this._cullAt = 0;
+      const add = (o, decor = false) => {
+        if (!o?.getBounds) return;
+        const b = o.getBounds();
+        this._statics.push({ o, x0: b.x, y0: b.y, x1: b.right, y1: b.bottom, on: true, decor });
       };
-      cap(b.w + 16, BUSH_EDGE, 0.55);
-      cap(b.w, BUSH_SOIL, 0.95);
-    }
-  }
-
-  /** v4: every bush canopy → one canvas atlas (drawn once per page), one y-sorted image per bush. */
-  _buildBushes() {
-    const s = this.scene;
-    this.bushImgs = new Map();
-    this._bushFocus = '';
-    const k = s.sys.game.device.os.desktop ? 0.8 : 0.55;
-    const key = 'moba-bushes';
-    const frames = BUSHES.map((b) => {
-      const bb = bushBounds(b);
-      return { b, bb, fw: Math.ceil((bb.x1 - bb.x0) * k), fh: Math.ceil((bb.y1 - bb.y0) * k) };
-    });
-    // Shelf-pack into a 2048-wide atlas.
-    let x = 0, y = 0, rowH = 0;
-    for (const f of [...frames].sort((a, c) => c.fh - a.fh)) {
-      if (x + f.fw > 2048) { x = 0; y += rowH + 2; rowH = 0; }
-      f.fx = x; f.fy = y; x += f.fw + 2; rowH = Math.max(rowH, f.fh);
-    }
-    const H = Math.max(2, y + rowH);
-    if (!s.textures.exists(key)) {
-      const tex = H <= 4096 ? s.textures.createCanvas(key, 2048, H) : null;
-      if (!tex) return;
-      const ctx = tex.getContext();
-      for (const f of frames) {
-        ctx.save();
-        ctx.beginPath(); ctx.rect(f.fx, f.fy, f.fw, f.fh); ctx.clip();
-        ctx.setTransform(k, 0, 0, k, f.fx - f.bb.x0 * k, f.fy - f.bb.y0 * k);
-        try { drawBush(ctx, f.b); } catch (e) { console.warn('[MobaMap] bush draw failed', f.b.id, e?.message); }
-        ctx.restore();
-        tex.add(f.b.id, 0, f.fx, f.fy, f.fw, f.fh);
+      for (const w of this.walls || []) add(w);
+      for (const b of this.bushImgs?.values() || []) add(b);
+      // Only always-on decor texts are culled: skip texts hidden at build time (graffiti with no clear
+      // spot) and texts whose visibility other logic owns (camp 💤 icons, epic timers) — review v4.
+      const owned = new Set([...this.campIcons.values(), ...Object.values(this.epicLabels).map((l) => l?.timer)]);
+      for (const o of this.scene.children.list) {
+        if (o.type === 'Text' && o.depth === D.decor && o.visible && !owned.has(o)) add(o, true);
       }
-      tex.refresh();
     }
-    const tex = s.textures.get(key);
-    for (const f of frames) {
-      if (!tex.has(f.b.id)) continue;
-      const img = s.add.image(f.bb.x0, f.bb.y0, key, f.b.id).setOrigin(0, 0).setScale(1 / k)
-        .setDepth(depthAt(f.bb.footY) + 0.02).setAlpha(BUSH_ALPHA);
-      this.bushImgs.set(f.b.id, img);
+
+    _cullStatics(view) {
+      const now = this.scene.time.now;
+      if (now < this._cullAt || !this._statics) return;
+      this._cullAt = now + 100;
+      const m = 80, x0 = view.x - m, y0 = view.y - m, x1 = view.right + m, y1 = view.bottom + m;
+      for (const st of this._statics) {
+        const on = st.x1 > x0 && st.x0 < x1 && st.y1 > y0 && st.y0 < y1 && !(st.decor && this.lowFx);
+        if (on !== st.on) { st.on = on; st.o.setVisible(on); }
+      }
     }
-  }
 
-  /** v4: the bush the local player stands in ('' = none) thins out so you can see yourself. */
-  setBushFocus(id) {
-    id = id || '';
-    if (id === this._bushFocus || !this.bushImgs) return;
-    const prev = this.bushImgs.get(this._bushFocus), next = this.bushImgs.get(id);
-    this._bushFocus = id;
-    const tw = this.scene.tweens;
-    if (prev) { tw.killTweensOf(prev); tw.add({ targets: prev, alpha: BUSH_ALPHA, duration: 220 }); }
-    if (next) { tw.killTweensOf(next); tw.add({ targets: next, alpha: BUSH_FOCUS_ALPHA, duration: 160 }); }
-  }
+    /** Bake the static vector layers into one RenderTexture (half-res on desktop, ~1/3 on mobile). */
+    _bake(g) {
+      const s = this.scene;
+      const size = s.sys.game.device.os.desktop ? 3000 : 2048;
+      const k = size / MAP_W;
+      g.setScale(k);
+      const rt = s.add.renderTexture(0, 0, size, size).setOrigin(0, 0).setDepth(D.river);
+      rt.draw(g, 0, 0);
+      rt.setScale(1 / k);
+      this.rt = rt;
+    }
 
-  /** v4: brief leaf rustle when a visible unit enters a bush. */
-  rustle(id) {
-    const img = this.bushImgs?.get(id);
-    if (!img || img._rustling || this.lowFx) return;
-    img._rustling = true;
-    const x0 = img.x;
-    this.scene.tweens.add({ targets: img, x: x0 + 3, duration: 70, yoyo: true, repeat: 1, onComplete: () => { img.x = x0; img._rustling = false; } });
-  }
+    // ───────────────────────── static layers (drawn into `g`, world coords) ─────────────────────────
+    _drawFloor(g) {
+      g.lineStyle(3, GRID, 1);
+      for (let x = 100; x < MAP_W; x += 100) g.lineBetween(x, 0, x, MAP_H);
+      for (let y = 100; y < MAP_H; y += 100) g.lineBetween(0, y, MAP_W, y);
+      g.fillStyle(0x000000, 0.32);
+      for (const t of JUNGLES) g.fillTriangle(t[0][0], t[0][1], t[1][0], t[1][1], t[2][0], t[2][1]);
+    }
 
-  /** v4 quality: low effects hide the drifting river glyphs + decor props / legacy-code texts. */
-  setQuality(low) {
-    this.lowFx = !!low;
-    if (low) for (const g of this.glyphs) if (g.img.visible) g.img.setVisible(false);
-    this._cullAt = 0; // re-evaluate decor visibility next frame
-  }
+    _drawRiver(g) {
+      const { from, to, width } = RIVER, rv = this._river;
+      const band = (w, color, a) => {
+        g.lineStyle(w, color, a); g.lineBetween(from.x, from.y, to.x, to.y);
+        g.fillStyle(color, a); g.fillCircle(from.x, from.y, w / 2); g.fillCircle(to.x, to.y, w / 2);
+      };
+      // 2.5D Recessed River Channel: outer embankment rim + deep inner cliff shadow
+      band(width + 160, RIVER_GLOW, 0.05);
+      band(width + 58, 0x050a14, 0.72);
+      band(width + 24, 0x192b44, 0.9);
+      band(width, RIVER_DEEP, 1);
+      band(width * 0.78, 0x072642, 0.85);
+      band(width * 0.52, RIVER_MID, 0.78);
+      band(width * 0.14, 0x2278b5, 0.65);
+      const hw = width / 2;
+      // Steep north-east inner bank drop shadow (gives recessed depth)
+      g.lineStyle(22, 0x030812, 0.55);
+      g.lineBetween(from.x - rv.nx * (hw - 10), from.y - rv.ny * (hw - 10), to.x - rv.nx * (hw - 10), to.y - rv.ny * (hw - 10));
+      g.lineStyle(5, RIVER_GLOW, 0.65);
+      for (const sg of [-1, 1]) {
+        g.lineBetween(from.x + rv.nx * hw * sg, from.y + rv.ny * hw * sg, to.x + rv.nx * hw * sg, to.y + rv.ny * hw * sg);
+      }
+      const ang = Math.atan2(rv.uy, rv.ux);
+      g.beginPath(); g.arc(from.x, from.y, hw, ang + Math.PI / 2, ang + Math.PI * 1.5); g.strokePath();
+      g.beginPath(); g.arc(to.x, to.y, hw, ang - Math.PI / 2, ang + Math.PI / 2); g.strokePath();
+    }
 
-  /** Seamless continuous 2.5D cyber-office walls + round planters + subtle base/river props. */
-  _buildWalls() {
-    const s = this.scene;
-    const THEME = {
-      partition: { h: 42, sideTop: '#263147', sideBot: '#141b29', capTop: '#47597a', capBot: '#2f3d57', edge: '#0d121d', accent: '#39c2ff', glow: 'rgba(57,194,255,0.45)', glass: false },
-      cubicles:  { h: 38, sideTop: '#2a3650', sideBot: '#161e2e', capTop: '#52668a', capBot: '#364663', edge: '#0f1420', accent: '#7ec8ff', glow: 'rgba(126,200,255,0.35)', glass: false },
-      glass:     { h: 46, sideTop: 'rgba(58,185,245,0.38)', sideBot: 'rgba(22,88,138,0.52)', capTop: '#8ecae6', capBot: '#548ca8', edge: '#152a3d', accent: '#00f0ff', glow: 'rgba(0,240,255,0.65)', glass: true },
-      shelf:     { h: 48, sideTop: '#282638', sideBot: '#14131f', capTop: '#4e4866', capBot: '#332f47', edge: '#0c0b14', accent: '#ffd23f', glow: 'rgba(255,210,63,0.45)', glass: false },
-    };
-    this.walls = [];
-    WALLS.forEach((w, idx) => {
-      if (w.kind === 'seg') {
-        const key = `moba-wall-s-${w.id || idx}`;
-        const th = THEME[w.look] || THEME.partition;
-        const H = th.h;
-        const r = (w.w || 60) * 0.5;
-        const pad = Math.ceil(r + 22);
-        const minX = Math.min(w.x1, w.x2) - pad;
-        const maxX = Math.max(w.x1, w.x2) + pad;
-        const minY = Math.min(w.y1, w.y2) - pad - H;
-        const maxY = Math.max(w.y1, w.y2) + pad + 12;
-        if (!s.textures.exists(key)) {
-          const tex = s.textures.createCanvas(key, Math.max(8, Math.ceil(maxX - minX)), Math.max(8, Math.ceil(maxY - minY)));
-          if (tex) {
-            const ctx = tex.getContext();
-            const x1 = w.x1 - minX, y1 = w.y1 - minY;
-            const x2 = w.x2 - minX, y2 = w.y2 - minY;
+    _drawBasesAndLanes(g) {
+      // 2.5D Elevated Base Terraces (2-tier stepped platform with cast drop shadow)
+      for (const team of ['blue', 'red']) {
+        const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
+        const col = teamColor(team);
+        g.fillStyle(0x000000, 0.42); g.fillCircle(core.x + 24, core.y + 28, BASE_RADIUS + 14);
+        g.fillStyle(0x162033, 0.95); g.fillCircle(core.x, core.y, BASE_RADIUS);
+        g.fillStyle(col, 0.08); g.fillCircle(core.x, core.y, BASE_RADIUS);
+        g.lineStyle(14, col, 0.52); g.strokeCircle(core.x, core.y, BASE_RADIUS);
+        g.lineStyle(4, 0xffffff, 0.22); g.strokeCircle(core.x, core.y, BASE_RADIUS - 14);
+        // Inner elevated core tier
+        g.fillStyle(0x000000, 0.35); g.fillCircle(core.x + 14, core.y + 18, BASE_RADIUS * 0.56);
+        g.fillStyle(0x1e2b42, 0.9); g.fillCircle(core.x, core.y, BASE_RADIUS * 0.55);
+        g.lineStyle(5, col, 0.42); g.strokeCircle(core.x, core.y, BASE_RADIUS * 0.55);
+      }
+      const poly = (pts, w, color, a, ox = 0, oy = 0) => {
+        g.lineStyle(w, color, a);
+        g.beginPath(); g.moveTo(pts[0].x + ox, pts[0].y + oy);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x + ox, pts[i].y + oy);
+        g.strokePath();
+        g.fillStyle(color, a);
+        for (const p of pts) g.fillCircle(p.x + ox, p.y + oy, w / 2);
+      };
+      const lanes = Object.values(LANES);
+      // Raised 2.5D lane shadow + beveled stone curb + surface
+      for (const pts of lanes) poly(pts, LANE_WIDTH + 34, 0x000000, 0.36, 10, 14);
+      for (const pts of lanes) poly(pts, LANE_WIDTH + 22, CARPET_EDGE, 1);
+      for (const pts of lanes) poly(pts, LANE_WIDTH, CARPET, 1);
+      for (const pts of lanes) {
+        g.lineStyle(4, CARPET_LINE, 0.55);
+        g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+        g.strokePath();
+      }
+      // Break-room fountains (heal + shop zone).
+      for (const team of ['blue', 'red']) {
+        const f = FOUNTAIN[team], col = teamColor(team);
+        g.fillStyle(col, 0.13); g.fillCircle(f.x, f.y, FOUNTAIN_RADIUS);
+        g.lineStyle(8, col, 0.7); g.strokeCircle(f.x, f.y, FOUNTAIN_RADIUS);
+        g.lineStyle(3, 0xffffff, 0.25); g.strokeCircle(f.x, f.y, FOUNTAIN_RADIUS - 24);
+        g.fillStyle(col, 0.22); g.fillCircle(f.x, f.y, 120);
+      }
+      g.lineStyle(14, 0x39c2ff, 0.45); g.strokeRect(0, 0, MAP_W, MAP_H);
+    }
+
+    _drawPads(g) {
+      for (const c of CAMPS) {
+        g.fillStyle(NEUTRAL, 0.05); g.fillCircle(c.x, c.y, 110);
+        g.lineStyle(4, NEUTRAL, 0.3);
+        for (let i = 0; i < 12; i++) { // dashed ring
+          const a0 = (i / 12) * Math.PI * 2;
+          g.beginPath(); g.arc(c.x, c.y, 110, a0, a0 + 0.32); g.strokePath();
+        }
+      }
+      for (const [kind, p] of Object.entries(EPIC_SPOTS)) {
+        const col = kind === 'golden' ? 0xffd700 : 0xff4a4a;
+        g.fillStyle(col, 0.07); g.fillCircle(p.x, p.y, 240);
+        g.lineStyle(7, col, 0.5); g.strokeCircle(p.x, p.y, 240);
+        g.lineStyle(3, col, 0.3); g.strokeCircle(p.x, p.y, 200);
+      }
+    }
+
+    /** Soft floor shadows (light from the top-left) under every wall — baked with the floor. */
+    _drawWallShadows(g) {
+      for (const w of WALLS) {
+        const H = WALL_H[w.look] ?? 30;
+        if (w.kind === 'circle') {
+          g.fillStyle(0x000000, 0.16); g.fillCircle(w.x + H * 0.45 + 6, w.y + 8, w.r + 10);
+          g.fillStyle(0x000000, 0.26); g.fillCircle(w.x + 4, w.y + 3, w.r + 2);
+        } else if (w.kind === 'seg') {
+          const cap = (ox, oy, lw, a) => {
+            g.lineStyle(lw, 0x000000, a); g.lineBetween(w.x1 + ox, w.y1 + oy, w.x2 + ox, w.y2 + oy);
+            g.fillStyle(0x000000, a); g.fillCircle(w.x1 + ox, w.y1 + oy, lw / 2); g.fillCircle(w.x2 + ox, w.y2 + oy, lw / 2);
+          };
+          const glass = w.look === 'glass';
+          cap(H * 0.4 + 6, 10, w.w + 26, glass ? 0.08 : 0.15);
+          cap(3, 4, w.w + 8, glass ? 0.14 : 0.28);
+        } else {
+          g.fillStyle(0x000000, 0.16); g.fillRect(w.x + 4, w.y + 4, w.w + H * 0.5 + 10, w.h + 12);
+          g.fillStyle(0x000000, 0.28); g.fillRect(w.x - 3, w.y - 2, w.w + 9, w.h + 8);
+        }
+      }
+    }
+
+    /** v4: dark soil + leaf-litter patch under every bush (baked with the floor). */
+    _drawBushSoil(g) {
+      for (const b of BUSHES) {
+        if (b.kind === 'circle') {
+          g.fillStyle(BUSH_EDGE, 0.55); g.fillCircle(b.x, b.y, b.r + 8);
+          g.fillStyle(BUSH_SOIL, 0.95); g.fillCircle(b.x, b.y, b.r);
+          continue;
+        }
+        const cap = (lw, col, a) => {
+          g.lineStyle(lw, col, a); g.lineBetween(b.x1, b.y1, b.x2, b.y2);
+          g.fillStyle(col, a); g.fillCircle(b.x1, b.y1, lw / 2); g.fillCircle(b.x2, b.y2, lw / 2);
+        };
+        cap(b.w + 16, BUSH_EDGE, 0.55);
+        cap(b.w, BUSH_SOIL, 0.95);
+      }
+    }
+
+    /** v4: every bush canopy → one canvas atlas (drawn once per page), one y-sorted image per bush. */
+    _buildBushes() {
+      const s = this.scene;
+      this.bushImgs = new Map();
+      this._bushFocus = '';
+      const k = s.sys.game.device.os.desktop ? 0.8 : 0.55;
+      const key = 'moba-bushes';
+      const frames = BUSHES.map((b) => {
+        const bb = bushBounds(b);
+        return { b, bb, fw: Math.ceil((bb.x1 - bb.x0) * k), fh: Math.ceil((bb.y1 - bb.y0) * k) };
+      });
+      // Shelf-pack into a 2048-wide atlas.
+      let x = 0, y = 0, rowH = 0;
+      for (const f of [...frames].sort((a, c) => c.fh - a.fh)) {
+        if (x + f.fw > 2048) { x = 0; y += rowH + 2; rowH = 0; }
+        f.fx = x; f.fy = y; x += f.fw + 2; rowH = Math.max(rowH, f.fh);
+      }
+      const H = Math.max(2, y + rowH);
+      if (!s.textures.exists(key)) {
+        const tex = H <= 4096 ? s.textures.createCanvas(key, 2048, H) : null;
+        if (!tex) return;
+        const ctx = tex.getContext();
+        for (const f of frames) {
+          ctx.save();
+          ctx.beginPath(); ctx.rect(f.fx, f.fy, f.fw, f.fh); ctx.clip();
+          ctx.setTransform(k, 0, 0, k, f.fx - f.bb.x0 * k, f.fy - f.bb.y0 * k);
+          try { drawBush(ctx, f.b); } catch (e) { console.warn('[MobaMap] bush draw failed', f.b.id, e?.message); }
+          ctx.restore();
+          tex.add(f.b.id, 0, f.fx, f.fy, f.fw, f.fh);
+        }
+        tex.refresh();
+      }
+      const tex = s.textures.get(key);
+      for (const f of frames) {
+        if (!tex.has(f.b.id)) continue;
+        const img = s.add.image(f.bb.x0, f.bb.y0, key, f.b.id).setOrigin(0, 0).setScale(1 / k)
+          .setDepth(depthAt(f.bb.footY) + 0.02).setAlpha(BUSH_ALPHA);
+        this.bushImgs.set(f.b.id, img);
+      }
+    }
+
+    /** v4: the bush the local player stands in ('' = none) thins out so you can see yourself. */
+    setBushFocus(id) {
+      id = id || '';
+      if (id === this._bushFocus || !this.bushImgs) return;
+      const prev = this.bushImgs.get(this._bushFocus), next = this.bushImgs.get(id);
+      this._bushFocus = id;
+      const tw = this.scene.tweens;
+      if (prev) { tw.killTweensOf(prev); tw.add({ targets: prev, alpha: BUSH_ALPHA, duration: 220 }); }
+      if (next) { tw.killTweensOf(next); tw.add({ targets: next, alpha: BUSH_FOCUS_ALPHA, duration: 160 }); }
+    }
+
+    /** v4: brief leaf rustle when a visible unit enters a bush. */
+    rustle(id) {
+      const img = this.bushImgs?.get(id);
+      if (!img || img._rustling || this.lowFx) return;
+      img._rustling = true;
+      const x0 = img.x;
+      this.scene.tweens.add({ targets: img, x: x0 + 3, duration: 70, yoyo: true, repeat: 1, onComplete: () => { img.x = x0; img._rustling = false; } });
+    }
+
+    /** v4 quality: low effects hide the drifting river glyphs + decor props / legacy-code texts. */
+    setQuality(low) {
+      this.lowFx = !!low;
+      if (low) for (const g of this.glyphs) if (g.img.visible) g.img.setVisible(false);
+      this._cullAt = 0; // re-evaluate decor visibility next frame
+    }
+
+    /** Seamless continuous 2.5D cyber-office walls packed into a single canvas atlas + round planters + base/river props. */
+    _buildWalls() {
+      const s = this.scene;
+      const THEME = {
+        partition: { h: 42, sideTop: '#263147', sideBot: '#141b29', capTop: '#47597a', capBot: '#2f3d57', edge: '#0d121d', accent: '#39c2ff', glow: 'rgba(57,194,255,0.45)', glass: false },
+        cubicles: { h: 38, sideTop: '#2a3650', sideBot: '#161e2e', capTop: '#52668a', capBot: '#364663', edge: '#0f1420', accent: '#7ec8ff', glow: 'rgba(126,200,255,0.35)', glass: false },
+        glass: { h: 46, sideTop: 'rgba(58,185,245,0.38)', sideBot: 'rgba(22,88,138,0.52)', capTop: '#8ecae6', capBot: '#548ca8', edge: '#152a3d', accent: '#00f0ff', glow: 'rgba(0,240,255,0.65)', glass: true },
+        shelf: { h: 48, sideTop: '#282638', sideBot: '#14131f', capTop: '#4e4866', capBot: '#332f47', edge: '#0c0b14', accent: '#ffd23f', glow: 'rgba(255,210,63,0.45)', glass: false },
+      };
+      this.walls = [];
+      // Pack all segment walls into one shared 2048-wide canvas atlas (1 WebGL texture instead of ~44 separate textures).
+      const k = s.sys.game.device.os.desktop ? 0.65 : 0.45;
+      const atlasKey = 'moba-walls-v2';
+      const segFrames = [];
+      WALLS.forEach((w, idx) => {
+                if (w.kind !== 'seg') return;
+                const th = THEME[w.look] || THEME.partition;
+                const H = th.h;
+                const r = (w.w || 60) * 0.5;
+                const pad = Math.ceil(r + 22);
+                const minX = Math.min(w.x1, w.x2) - pad;
+                const maxX = Math.max(w.x1, w.x2) + pad;
+                const minY = Math.min(w.y1, w.y2) - pad - H;
+                const maxY = Math.max(w.y1, w.y2) + pad + 12;
+                const fw = Math.max(8, Math.ceil((maxX - minX) * k));
+                const fh = Math.max(8, Math.ceil((maxY - minY) * k));
+                segFrames.push({ name: `w_${w.id || idx}`, w, th, H, r, minX, minY, fw, fh });
+              });
+      const ATLAS_W = 2048;
+      let ax = 0, ay = 0, rowH = 0;
+      for (const f of [...segFrames].sort((a, b) => b.fh - a.fh)) {
+        if (ax + f.fw > ATLAS_W) { ax = 0; ay += rowH + 2; rowH = 0; }
+        f.fx = ax; f.fy = ay; ax += f.fw + 2; rowH = Math.max(rowH, f.fh);
+      }
+      const ATLAS_H = Math.max(2, ay + rowH);
+      if (!s.textures.exists(atlasKey) && ATLAS_H <= 4096) {
+        const tex = s.textures.createCanvas(atlasKey, ATLAS_W, ATLAS_H);
+        if (tex) {
+          const ctx = tex.getContext();
+          const ribbon = (x1, y1, x2, y2, width, style) => {
+            ctx.beginPath();
+            ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+            ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.strokeStyle = style; ctx.stroke();
+          };
+          for (const f of segFrames) {
+            const { w, th, H, r, minX, minY } = f;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(f.fx, f.fy, f.fw, f.fh); ctx.clip();
+            ctx.setTransform(k, 0, 0, k, f.fx - minX * k, f.fy - minY * k);
+            const x1 = w.x1, y1 = w.y1, x2 = w.x2, y2 = w.y2;
             const dx = x2 - x1, dy = y2 - y1;
             const len = Math.hypot(dx, dy) || 1;
-            const ux = dx / len, uy = dy / len;
-            const ribbon = (ax, ay, bx, by, width, style) => {
-              ctx.beginPath();
-              ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-              ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-              ctx.strokeStyle = style; ctx.stroke();
-            };
+            const ux = dx / len;
             ribbon(x1 + 6, y1 + 10, x2 + 6, y2 + 10, r * 2 + 10, 'rgba(0,0,0,0.42)');
-            const steps = Math.max(8, Math.ceil(H / 2.5));
+            const steps = Math.max(8, Math.ceil(H / 3));
             for (let i = 0; i <= steps; i++) {
               const t = i / steps, lift = t * H, outer = i === 0 || i === steps;
               if (th.glass) {
@@ -447,7 +478,7 @@ export class MobaMap {
             }
             const midLift = H * 0.42;
             ctx.save();
-            ctx.shadowColor = th.glow; ctx.shadowBlur = th.glass ? 10 : 6;
+            ctx.shadowColor = th.glow; ctx.shadowBlur = th.glass ? 8 : 5;
             ribbon(x1, y1 - midLift, x2, y2 - midLift, r * 2 - 4, th.accent);
             ctx.restore();
             if (!th.glass) {
@@ -470,244 +501,252 @@ export class MobaMap {
             ribbon(x1, y1 - H, x2, y2 - H, r * 2 - 3, g);
             ribbon(x1, y1 - H, x2, y2 - H, Math.max(6, r * 0.45), 'rgba(10,16,28,0.42)');
             ribbon(x1, y1 - H, x2, y2 - H, 2.5, th.accent);
-            tex.refresh();
+            ctx.restore();
+            tex.add(f.name, 0, f.fx, f.fy, f.fw, f.fh);
           }
+          tex.refresh();
         }
-        if (s.textures.exists(key)) {
-          const img = s.add.image(minX, minY, key).setOrigin(0, 0).setDepth(depthAt((w.y1 + w.y2) * 0.5));
+      }
+      if (s.textures.exists(atlasKey)) {
+        const tex = s.textures.get(atlasKey);
+        for (const f of segFrames) {
+          if (!tex.has(f.name)) continue;
+          const img = s.add.image(f.minX, f.minY, atlasKey, f.name).setOrigin(0, 0).setScale(1 / k).setDepth(depthAt((f.w.y1 + f.w.y2) * 0.5));
           this.walls.push(img);
         }
-      } else if (w.kind === 'circle') {
-        const c = s.add.container(w.x, w.y).setDepth(depthAt(w.y));
-        const r = w.r || 70;
-        c.add([
-          s.add.ellipse(6, 10, r * 2.1, r * 1.9, 0x000000, 0.4),
-          s.add.circle(0, 0, r, 0x2a3650).setStrokeStyle(4, 0x0f1420),
-          s.add.circle(0, -6, r * 0.84, 0x1c2838).setStrokeStyle(2, 0x39c2ff, 0.65),
-        ]);
-        if (s.textures.exists('moba-prop-plant')) {
-          c.add(s.add.image(0, -14, 'moba-prop-plant').setDisplaySize(r * 1.9, r * 1.9));
-        }
-        this.walls.push(c);
       }
-    });
-    // Subtle river & base environment accents (assets/moba/*)
-    const props = [
-      { x: 2680, y: 2680, k: 'moba-prop-crystal', s: 54 },
-      { x: 3320, y: 3320, k: 'moba-prop-crystal', s: 54 },
-      { x: 2810, y: 3190, k: 'moba-prop-barricade', s: 52, rot: -45 },
-      { x: 3190, y: 2810, k: 'moba-prop-barricade', s: 52, rot: -45 },
-      { x: 1080, y: 4920, k: 'moba-prop-beacon', s: 50 },
-      { x: 4920, y: 1080, k: 'moba-prop-beacon', s: 50 },
-    ];
-    for (const p of props) {
-      if (!s.textures.exists(p.k)) continue;
-      const im = s.add.image(p.x, p.y, p.k).setDisplaySize(p.s, p.s).setDepth(D.ground + 0.5).setAlpha(0.9);
-      if (p.rot) im.setAngle(p.rot);
-      this.walls.push(im);
+      WALLS.forEach((w) => {
+        if (w.kind === 'circle') {
+          const c = s.add.container(w.x, w.y).setDepth(depthAt(w.y));
+          const r = w.r || 70;
+          c.add([
+            s.add.ellipse(6, 10, r * 2.1, r * 1.9, 0x000000, 0.4),
+            s.add.circle(0, 0, r, 0x2a3650).setStrokeStyle(4, 0x0f1420),
+            s.add.circle(0, -6, r * 0.84, 0x1c2838).setStrokeStyle(2, 0x39c2ff, 0.65),
+          ]);
+          if (s.textures.exists('moba-prop-plant')) {
+            c.add(s.add.image(0, -14, 'moba-prop-plant').setDisplaySize(r * 1.9, r * 1.9));
+          }
+          this.walls.push(c);
+        }
+      });
+      // Subtle river & base environment accents (assets/moba/*)
+      const props = [
+        { x: 2680, y: 2680, k: 'moba-prop-crystal', s: 54 },
+        { x: 3320, y: 3320, k: 'moba-prop-crystal', s: 54 },
+        { x: 2810, y: 3190, k: 'moba-prop-barricade', s: 52, rot: -45 },
+        { x: 3190, y: 2810, k: 'moba-prop-barricade', s: 52, rot: -45 },
+        { x: 1080, y: 4920, k: 'moba-prop-beacon', s: 50 },
+        { x: 4920, y: 1080, k: 'moba-prop-beacon', s: 50 },
+      ];
+      for (const p of props) {
+        if (!s.textures.exists(p.k)) continue;
+        const im = s.add.image(p.x, p.y, p.k).setDisplaySize(p.s, p.s).setDepth(D.ground + 0.5).setAlpha(0.9);
+        if (p.rot) im.setAngle(p.rot);
+        this.walls.push(im);
+      }
     }
-  }
 
-  // ───────────────────────── text + decor (separate objects) ─────────────────────────
-  _buildTexts() {
-    const s = this.scene;
-    const spots = [...LEGACY_SPOTS, ...LEGACY_SPOTS.map(mirror)];
-    spots.forEach((p, i) => {
-      const t = s.add.text(p.x, p.y, LEGACY[i % LEGACY.length], {
-        fontFamily: MONO, fontSize: 24, color: '#7f95c4', lineSpacing: 10,
-      }).setAlpha(0.16).setDepth(D.decor);
-      // Keep the floor graffiti off the partitions: nudge it to the nearest clear spot.
-      const clear = (x, y) => {
-        for (let yy = y; yy <= y + t.height; yy += 35) {
-          for (let xx = x; xx <= x + t.width; xx += 35) {
-            for (const w of WALLS) if (wallDist(xx, yy, w) < 30) return false;
-            if (this._onLane(xx, yy)) return false;
+    // ───────────────────────── text + decor (separate objects) ─────────────────────────
+    _buildTexts() {
+      const s = this.scene;
+      const spots = [...LEGACY_SPOTS, ...LEGACY_SPOTS.map(mirror)];
+      spots.forEach((p, i) => {
+        const t = s.add.text(p.x, p.y, LEGACY[i % LEGACY.length], {
+          fontFamily: MONO, fontSize: 24, color: '#7f95c4', lineSpacing: 10,
+        }).setAlpha(0.16).setDepth(D.decor);
+        // Keep the floor graffiti off the partitions: nudge it to the nearest clear spot.
+        const clear = (x, y) => {
+          for (let yy = y; yy <= y + t.height; yy += 35) {
+            for (let xx = x; xx <= x + t.width; xx += 35) {
+              for (const w of WALLS) if (wallDist(xx, yy, w) < 30) return false;
+              if (this._onLane(xx, yy)) return false;
+            }
+          }
+          return true;
+        };
+        if (clear(p.x, p.y)) return;
+        for (let rad = 60; rad <= 900; rad += 60) {
+          for (let a = 0; a < 12; a++) {
+            const x = p.x + Math.cos((a / 12) * Math.PI * 2) * rad, y = p.y + Math.sin((a / 12) * Math.PI * 2) * rad;
+            if (clear(x, y)) { t.setPosition(x, y); return; }
           }
         }
+        t.setVisible(false);
+      });
+      for (const team of ['blue', 'red']) {
+        const f = FOUNTAIN[team];
+        s.add.text(f.x, f.y - 10, '⛲', { fontSize: 72 }).setOrigin(0.5).setDepth(D.decor);
+        const lx = f.x + (team === 'blue' ? 40 : -40), ly = f.y + (team === 'blue' ? -230 : 230);
+        s.add.text(lx, ly, `${TEAM_INFO[team].emoji} BREAK ROOM\nheal · shop`, {
+          fontFamily: FONT, fontSize: 22, color: teamCss(team), align: 'center', stroke: '#000', strokeThickness: 5,
+        }).setOrigin(0.5).setAlpha(0.85).setDepth(D.decor);
+      }
+      for (const c of CAMPS) {
+        const icon = s.add.text(c.x, c.y, '💤', { fontSize: 30 }).setOrigin(0.5).setAlpha(0.6)
+          .setDepth(D.decor).setVisible(false);
+        this.campIcons.set(c.id, icon);
+      }
+      for (const [kind, p] of Object.entries(EPIC_SPOTS)) {
+        const col = kind === 'golden' ? 0xffd700 : 0xff4a4a;
+        s.add.text(p.x, p.y + 262, EPICS[kind]?.title || kind, {
+          fontFamily: FONT, fontSize: 20, color: css(col), stroke: '#000', strokeThickness: 5,
+        }).setOrigin(0.5, 0).setAlpha(0.8).setDepth(D.decor);
+        const timer = s.add.text(p.x, p.y, '', {
+          fontFamily: FONT, fontSize: 30, color: '#ffffff', stroke: '#000', strokeThickness: 6, align: 'center',
+        }).setOrigin(0.5).setDepth(D.decor).setVisible(false);
+        this.epicLabels[kind] = { timer };
+      }
+    }
+
+    _buildDecor() {
+      const s = this.scene, rand = rng(1337);
+      const cores = STRUCTURES.filter((st) => st.kind === 'core');
+      const ok = (x, y) => {
+        for (const sg of this._laneSegs) if (distToSeg(x, y, sg[0], sg[1], sg[2], sg[3]) < LANE_WIDTH / 2 + 90) return false;
+        if (distToSeg(x, y, RIVER.from.x, RIVER.from.y, RIVER.to.x, RIVER.to.y) < RIVER.width / 2 + 90) return false;
+        for (const c of CAMPS) if (Math.hypot(c.x - x, c.y - y) < 260) return false;
+        for (const p of Object.values(EPIC_SPOTS)) if (Math.hypot(p.x - x, p.y - y) < 340) return false;
+        for (const c of cores) if (Math.hypot(c.x - x, c.y - y) < BASE_RADIUS + 60) return false;
+        for (const w of WALLS) if (wallDist(x, y, w) < 130) return false; // walls are mirror-symmetric
         return true;
       };
-      if (clear(p.x, p.y)) return;
-      for (let rad = 60; rad <= 900; rad += 60) {
-        for (let a = 0; a < 12; a++) {
-          const x = p.x + Math.cos((a / 12) * Math.PI * 2) * rad, y = p.y + Math.sin((a / 12) * Math.PI * 2) * rad;
-          if (clear(x, y)) { t.setPosition(x, y); return; }
+      const placed = [];
+      for (let tries = 0; tries < 400 && placed.length < 16; tries++) {
+        const t = JUNGLES[tries % 2]; // blue-side quadrants, mirrored below
+        let a = rand(), b = rand();
+        if (a + b > 1) { a = 1 - a; b = 1 - b; }
+        const x = t[0][0] + a * (t[1][0] - t[0][0]) + b * (t[2][0] - t[0][0]);
+        const y = t[0][1] + a * (t[1][1] - t[0][1]) + b * (t[2][1] - t[0][1]);
+        if (!ok(x, y) || placed.some((p) => Math.hypot(p.x - x, p.y - y) < 260)) continue;
+        placed.push({ x, y, e: PROPS[Math.floor(rand() * PROPS.length)] });
+      }
+      for (const p of placed) {
+        for (const q of [p, { ...mirror(p), e: p.e }]) {
+          s.add.text(q.x, q.y, q.e, { fontSize: 44 }).setOrigin(0.5).setAlpha(0.5).setDepth(D.decor);
         }
       }
-      t.setVisible(false);
-    });
-    for (const team of ['blue', 'red']) {
-      const f = FOUNTAIN[team];
-      s.add.text(f.x, f.y - 10, '⛲', { fontSize: 72 }).setOrigin(0.5).setDepth(D.decor);
-      const lx = f.x + (team === 'blue' ? 40 : -40), ly = f.y + (team === 'blue' ? -230 : 230);
-      s.add.text(lx, ly, `${TEAM_INFO[team].emoji} BREAK ROOM\nheal · shop`, {
-        fontFamily: FONT, fontSize: 22, color: teamCss(team), align: 'center', stroke: '#000', strokeThickness: 5,
-      }).setOrigin(0.5).setAlpha(0.85).setDepth(D.decor);
     }
-    for (const c of CAMPS) {
-      const icon = s.add.text(c.x, c.y, '💤', { fontSize: 30 }).setOrigin(0.5).setAlpha(0.6)
-        .setDepth(D.decor).setVisible(false);
-      this.campIcons.set(c.id, icon);
-    }
-    for (const [kind, p] of Object.entries(EPIC_SPOTS)) {
-      const col = kind === 'golden' ? 0xffd700 : 0xff4a4a;
-      s.add.text(p.x, p.y + 262, EPICS[kind]?.title || kind, {
-        fontFamily: FONT, fontSize: 20, color: css(col), stroke: '#000', strokeThickness: 5,
-      }).setOrigin(0.5, 0).setAlpha(0.8).setDepth(D.decor);
-      const timer = s.add.text(p.x, p.y, '', {
-        fontFamily: FONT, fontSize: 30, color: '#ffffff', stroke: '#000', strokeThickness: 6, align: 'center',
-      }).setOrigin(0.5).setDepth(D.decor).setVisible(false);
-      this.epicLabels[kind] = { timer };
-    }
-  }
 
-  _buildDecor() {
-    const s = this.scene, rand = rng(1337);
-    const cores = STRUCTURES.filter((st) => st.kind === 'core');
-    const ok = (x, y) => {
-      for (const sg of this._laneSegs) if (distToSeg(x, y, sg[0], sg[1], sg[2], sg[3]) < LANE_WIDTH / 2 + 90) return false;
-      if (distToSeg(x, y, RIVER.from.x, RIVER.from.y, RIVER.to.x, RIVER.to.y) < RIVER.width / 2 + 90) return false;
-      for (const c of CAMPS) if (Math.hypot(c.x - x, c.y - y) < 260) return false;
-      for (const p of Object.values(EPIC_SPOTS)) if (Math.hypot(p.x - x, p.y - y) < 340) return false;
-      for (const c of cores) if (Math.hypot(c.x - x, c.y - y) < BASE_RADIUS + 60) return false;
-      for (const w of WALLS) if (wallDist(x, y, w) < 130) return false; // walls are mirror-symmetric
-      return true;
-    };
-    const placed = [];
-    for (let tries = 0; tries < 400 && placed.length < 16; tries++) {
-      const t = JUNGLES[tries % 2]; // blue-side quadrants, mirrored below
-      let a = rand(), b = rand();
-      if (a + b > 1) { a = 1 - a; b = 1 - b; }
-      const x = t[0][0] + a * (t[1][0] - t[0][0]) + b * (t[2][0] - t[0][0]);
-      const y = t[0][1] + a * (t[1][1] - t[0][1]) + b * (t[2][1] - t[0][1]);
-      if (!ok(x, y) || placed.some((p) => Math.hypot(p.x - x, p.y - y) < 260)) continue;
-      placed.push({ x, y, e: PROPS[Math.floor(rand() * PROPS.length)] });
+    _buildGlyphs() {
+      const s = this.scene, rand = rng(42);
+      const { from, width } = RIVER, rv = this._river;
+      for (let i = 0; i < 110; i++) {
+        const t = rand() * rv.len;
+        const off = (rand() - 0.5) * width * 0.84;
+        const img = s.add.image(0, 0, 'moba-bits', rand() < 0.5 ? '0' : '1')
+          .setDepth(D.glyphs).setAlpha(0.2 + rand() * 0.45).setScale(0.6 + rand() * 0.6).setVisible(false);
+        this.glyphs.push({ img, t, off, v: 40 + rand() * 80 });
+      }
+      this._glyphFrom = from;
     }
-    for (const p of placed) {
-      for (const q of [p, { ...mirror(p), e: p.e }]) {
-        s.add.text(q.x, q.y, q.e, { fontSize: 44 }).setOrigin(0.5).setAlpha(0.5).setDepth(D.decor);
+
+    _onLane(x, y) {
+      const lim = LANE_WIDTH / 2 + 12;
+      for (const sg of this._laneSegs) if (distToSeg(x, y, sg[0], sg[1], sg[2], sg[3]) < lim) return true;
+      return false;
+    }
+
+    // ───────────────────────── per frame ─────────────────────────
+    /**
+     * @param dt seconds
+     * @param view camera worldView (Rectangle) — glyphs outside it are hidden, not moved
+     * @param info { liveCamps:Set<campId>, epicAt:{golden,deadline} (server ms, 0 = alive), srvNow, playing }
+     */
+    update(dt, view, info) {
+      const rv = this._river, f = this._glyphFrom;
+      this._cullStatics(view);
+      if (this.lowFx) { this._updateTimers(info); return; }
+      const vx0 = view.x - 60, vy0 = view.y - 60, vx1 = view.right + 60, vy1 = view.bottom + 60;
+      for (const g of this.glyphs) {
+        g.t += g.v * dt;
+        if (g.t > rv.len) g.t -= rv.len;
+        const x = f.x + rv.ux * g.t + rv.nx * g.off, y = f.y + rv.uy * g.t + rv.ny * g.off;
+        // Glyphs flow under the lane "bridges": hide them where a lane crosses the river.
+        const show = x >= vx0 && x <= vx1 && y >= vy0 && y <= vy1 && !this._onLane(x, y);
+        if (g.img.visible !== show) g.img.setVisible(show);
+        if (show) g.img.setPosition(x, y);
+      }
+      this._updateTimers(info);
+    }
+
+    _updateTimers(info) {
+      if (!info) return;
+      const now = this.scene.time.now;
+      if (now < this._timerAt) return;
+      this._timerAt = now + 500;
+      for (const [id, icon] of this.campIcons) {
+        const down = !!info.playing && !!info.liveCamps && !info.liveCamps.has(id);
+        if (icon.visible !== down) icon.setVisible(down);
+      }
+      for (const kind of ['golden', 'deadline']) {
+        const at = info.epicAt?.[kind] || 0, lbl = this.epicLabels[kind];
+        if (!lbl) continue;
+        const show = !!info.playing && at > 0 && at > info.srvNow;
+        if (show) {
+          const str = `⏳ ${fmtTime(at - info.srvNow)}`;
+          if (lbl.timer.text !== str) lbl.timer.setText(str);
+        }
+        if (lbl.timer.visible !== show) lbl.timer.setVisible(show);
       }
     }
-  }
 
-  _buildGlyphs() {
-    const s = this.scene, rand = rng(42);
-    const { from, width } = RIVER, rv = this._river;
-    for (let i = 0; i < 110; i++) {
-      const t = rand() * rv.len;
-      const off = (rand() - 0.5) * width * 0.84;
-      const img = s.add.image(0, 0, 'moba-bits', rand() < 0.5 ? '0' : '1')
-        .setDepth(D.glyphs).setAlpha(0.2 + rand() * 0.45).setScale(0.6 + rand() * 0.6).setVisible(false);
-      this.glyphs.push({ img, t, off, v: 40 + rand() * 80 });
-    }
-    this._glyphFrom = from;
-  }
-
-  _onLane(x, y) {
-    const lim = LANE_WIDTH / 2 + 12;
-    for (const sg of this._laneSegs) if (distToSeg(x, y, sg[0], sg[1], sg[2], sg[3]) < lim) return true;
-    return false;
-  }
-
-  // ───────────────────────── per frame ─────────────────────────
-  /**
-   * @param dt seconds
-   * @param view camera worldView (Rectangle) — glyphs outside it are hidden, not moved
-   * @param info { liveCamps:Set<campId>, epicAt:{golden,deadline} (server ms, 0 = alive), srvNow, playing }
-   */
-  update(dt, view, info) {
-    const rv = this._river, f = this._glyphFrom;
-    this._cullStatics(view);
-    if (this.lowFx) { this._updateTimers(info); return; }
-    const vx0 = view.x - 60, vy0 = view.y - 60, vx1 = view.right + 60, vy1 = view.bottom + 60;
-    for (const g of this.glyphs) {
-      g.t += g.v * dt;
-      if (g.t > rv.len) g.t -= rv.len;
-      const x = f.x + rv.ux * g.t + rv.nx * g.off, y = f.y + rv.uy * g.t + rv.ny * g.off;
-      // Glyphs flow under the lane "bridges": hide them where a lane crosses the river.
-      const show = x >= vx0 && x <= vx1 && y >= vy0 && y <= vy1 && !this._onLane(x, y);
-      if (g.img.visible !== show) g.img.setVisible(show);
-      if (show) g.img.setPosition(x, y);
-    }
-    this._updateTimers(info);
-  }
-
-  _updateTimers(info) {
-    if (!info) return;
-    const now = this.scene.time.now;
-    if (now < this._timerAt) return;
-    this._timerAt = now + 500;
-    for (const [id, icon] of this.campIcons) {
-      const down = !!info.playing && !!info.liveCamps && !info.liveCamps.has(id);
-      if (icon.visible !== down) icon.setVisible(down);
-    }
-    for (const kind of ['golden', 'deadline']) {
-      const at = info.epicAt?.[kind] || 0, lbl = this.epicLabels[kind];
-      if (!lbl) continue;
-      const show = !!info.playing && at > 0 && at > info.srvNow;
-      if (show) {
-        const str = `⏳ ${fmtTime(at - info.srvNow)}`;
-        if (lbl.timer.text !== str) lbl.timer.setText(str);
+    // ───────────────────────── minimap ─────────────────────────
+    /** Draws the static minimap into `g` at (x0, y0), `size` px square (callers bake it). */
+    drawMinimap(g, x0, y0, size) {
+      const k = size / MAP_W;
+      const P = (x, y) => [x0 + x * k, y0 + y * k];
+      g.fillStyle(0x0b0f17, 0.94); g.fillRect(x0, y0, size, size);
+      g.fillStyle(0x000000, 0.35);
+      for (const t of JUNGLES) {
+        const [a, b, c] = t.map(([x, y]) => P(x, y));
+        g.fillTriangle(a[0], a[1], b[0], b[1], c[0], c[1]);
       }
-      if (lbl.timer.visible !== show) lbl.timer.setVisible(show);
+      for (const team of ['blue', 'red']) {
+        const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
+        const [cx, cy] = P(core.x, core.y);
+        g.fillStyle(teamColor(team), 0.2); g.fillCircle(cx, cy, BASE_RADIUS * k);
+        const [fx, fy] = P(FOUNTAIN[team].x, FOUNTAIN[team].y);
+        g.fillStyle(teamColor(team), 0.35); g.fillCircle(fx, fy, FOUNTAIN_RADIUS * k);
+      }
+      const [rx0, ry0] = P(RIVER.from.x, RIVER.from.y), [rx1, ry1] = P(RIVER.to.x, RIVER.to.y);
+      g.lineStyle(Math.max(4, RIVER.width * k), 0x15598a, 0.95); g.lineBetween(rx0, ry0, rx1, ry1);
+      g.lineStyle(Math.max(4, LANE_WIDTH * k), 0x46557a, 1);
+      for (const pts of Object.values(LANES)) {
+        g.beginPath();
+        pts.forEach((p, i) => { const [x, y] = P(p.x, p.y); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+        g.strokePath();
+      }
+      // v4 bushes — green blobs (drawn under the walls).
+      for (const b of BUSHES) {
+        if (b.kind === 'circle') {
+          const [cx, cy] = P(b.x, b.y);
+          g.fillStyle(BUSH_MAP, 0.95); g.fillCircle(cx, cy, Math.max(2.5, b.r * k));
+          continue;
+        }
+        const [ax, ay] = P(b.x1, b.y1), [bx, by] = P(b.x2, b.y2), lw = Math.max(3, b.w * k);
+        g.lineStyle(lw, BUSH_MAP, 0.95); g.lineBetween(ax, ay, bx, by);
+        g.fillStyle(BUSH_MAP, 0.95); g.fillCircle(ax, ay, lw / 2); g.fillCircle(bx, by, lw / 2);
+      }
+      // Walls (solid obstacles) — light so they read against the dark jungle.
+      for (const w of WALLS) {
+        const col = shade(wallMapColor(w.look), 0.3);
+        if (w.kind === 'seg') {
+          const [ax, ay] = P(w.x1, w.y1), [bx, by] = P(w.x2, w.y2), lw = Math.max(2, w.w * k);
+          g.lineStyle(lw + 2, 0x000000, 0.6); g.lineBetween(ax, ay, bx, by);
+          g.lineStyle(lw, col, 1); g.lineBetween(ax, ay, bx, by);
+          continue;
+        }
+        g.fillStyle(0x000000, 0.6);
+        if (w.kind === 'circle') { const [cx, cy] = P(w.x, w.y); g.fillCircle(cx, cy, Math.max(2, w.r * k) + 1); }
+        else { const [rx, ry] = P(w.x, w.y); g.fillRect(rx - 1, ry - 1, Math.max(2, w.w * k) + 2, Math.max(2, w.h * k) + 2); }
+        g.fillStyle(col, 1);
+        if (w.kind === 'circle') { const [cx, cy] = P(w.x, w.y); g.fillCircle(cx, cy, Math.max(2, w.r * k)); }
+        else { const [rx, ry] = P(w.x, w.y); g.fillRect(rx, ry, Math.max(2, w.w * k), Math.max(2, w.h * k)); }
+      }
+      g.lineStyle(2, 0x39c2ff, 0.85); g.strokeRect(x0 + 1, y0 + 1, size - 2, size - 2);
     }
   }
-
-  // ───────────────────────── minimap ─────────────────────────
-  /** Draws the static minimap into `g` at (x0, y0), `size` px square (callers bake it). */
-  drawMinimap(g, x0, y0, size) {
-    const k = size / MAP_W;
-    const P = (x, y) => [x0 + x * k, y0 + y * k];
-    g.fillStyle(0x0b0f17, 0.94); g.fillRect(x0, y0, size, size);
-    g.fillStyle(0x000000, 0.35);
-    for (const t of JUNGLES) {
-      const [a, b, c] = t.map(([x, y]) => P(x, y));
-      g.fillTriangle(a[0], a[1], b[0], b[1], c[0], c[1]);
-    }
-    for (const team of ['blue', 'red']) {
-      const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
-      const [cx, cy] = P(core.x, core.y);
-      g.fillStyle(teamColor(team), 0.2); g.fillCircle(cx, cy, BASE_RADIUS * k);
-      const [fx, fy] = P(FOUNTAIN[team].x, FOUNTAIN[team].y);
-      g.fillStyle(teamColor(team), 0.35); g.fillCircle(fx, fy, FOUNTAIN_RADIUS * k);
-    }
-    const [rx0, ry0] = P(RIVER.from.x, RIVER.from.y), [rx1, ry1] = P(RIVER.to.x, RIVER.to.y);
-    g.lineStyle(Math.max(4, RIVER.width * k), 0x15598a, 0.95); g.lineBetween(rx0, ry0, rx1, ry1);
-    g.lineStyle(Math.max(4, LANE_WIDTH * k), 0x46557a, 1);
-    for (const pts of Object.values(LANES)) {
-      g.beginPath();
-      pts.forEach((p, i) => { const [x, y] = P(p.x, p.y); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
-      g.strokePath();
-    }
-    // v4 bushes — green blobs (drawn under the walls).
-    for (const b of BUSHES) {
-      if (b.kind === 'circle') {
-        const [cx, cy] = P(b.x, b.y);
-        g.fillStyle(BUSH_MAP, 0.95); g.fillCircle(cx, cy, Math.max(2.5, b.r * k));
-        continue;
-      }
-      const [ax, ay] = P(b.x1, b.y1), [bx, by] = P(b.x2, b.y2), lw = Math.max(3, b.w * k);
-      g.lineStyle(lw, BUSH_MAP, 0.95); g.lineBetween(ax, ay, bx, by);
-      g.fillStyle(BUSH_MAP, 0.95); g.fillCircle(ax, ay, lw / 2); g.fillCircle(bx, by, lw / 2);
-    }
-    // Walls (solid obstacles) — light so they read against the dark jungle.
-    for (const w of WALLS) {
-      const col = shade(wallMapColor(w.look), 0.3);
-      if (w.kind === 'seg') {
-        const [ax, ay] = P(w.x1, w.y1), [bx, by] = P(w.x2, w.y2), lw = Math.max(2, w.w * k);
-        g.lineStyle(lw + 2, 0x000000, 0.6); g.lineBetween(ax, ay, bx, by);
-        g.lineStyle(lw, col, 1); g.lineBetween(ax, ay, bx, by);
-        continue;
-      }
-      g.fillStyle(0x000000, 0.6);
-      if (w.kind === 'circle') { const [cx, cy] = P(w.x, w.y); g.fillCircle(cx, cy, Math.max(2, w.r * k) + 1); }
-      else { const [rx, ry] = P(w.x, w.y); g.fillRect(rx - 1, ry - 1, Math.max(2, w.w * k) + 2, Math.max(2, w.h * k) + 2); }
-      g.fillStyle(col, 1);
-      if (w.kind === 'circle') { const [cx, cy] = P(w.x, w.y); g.fillCircle(cx, cy, Math.max(2, w.r * k)); }
-      else { const [rx, ry] = P(w.x, w.y); g.fillRect(rx, ry, Math.max(2, w.w * k), Math.max(2, w.h * k)); }
-    }
-    g.lineStyle(2, 0x39c2ff, 0.85); g.strokeRect(x0 + 1, y0 + 1, size - 2, size - 2);
-  }
-}
 
 // ───────────────────────── furniture (walls) — canvas 2D, world units ─────────────────────────
 // ── seg geometry (shared by the piece layout, the clip polygons and the drawing) ──
@@ -718,8 +757,10 @@ function segGeom(w) {
   // Normal pointing "south" (toward the camera); a vertical wall has no visible long face.
   let nx = -uy, ny = ux;
   if (ny < 0 || (ny === 0 && nx < 0)) { nx = -nx; ny = -ny; }
-  return { ax: w.x1, ay: w.y1, ux, uy, nx, ny, hw, len, t0: -hw, t1: len + hw, front: ny > 0.05,
-    endT: uy > 0.05 ? len + hw : (uy < -0.05 ? -hw : null) };
+  return {
+    ax: w.x1, ay: w.y1, ux, uy, nx, ny, hw, len, t0: -hw, t1: len + hw, front: ny > 0.05,
+    endT: uy > 0.05 ? len + hw : (uy < -0.05 ? -hw : null)
+  };
 }
 const gAt = (G, t, off = 0) => [G.ax + G.ux * t + G.nx * off, G.ay + G.uy * t + G.ny * off];
 const up = (p, H) => [p[0], p[1] - H];
