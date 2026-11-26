@@ -88,7 +88,7 @@ const LOW_FPS = 45, LOW_FPS_MS = 3000, FPS_WARMUP_MS = 4000;
 const RECONNECT_EVERY_MS = 2000;   // §3.3: client.reconnect(token) cadence while in grace
 const STALL_MS = 8000;             // EP-07 watchdog: no patch / message this long while playing = suspect
 const STALL_GRACE_MS = 4000;       // … plus one extra window (ping sent) before it counts as dropped
-                                   // (a dead Wi-Fi leaves the socket CLOSING for minutes without onLeave)
+// (a dead Wi-Fi leaves the socket CLOSING for minutes without onLeave)
 const COACH_GAP_MS = 20000;        // EP-10: at most one coaching tip per 20 s
 const COACH_MATCHES = 2;           // tips stop (flag tipsSiege) after this many finished matches
 const SHOP_ASSIST_GAMES = 3;       // EP-21: the first 3 games open the shop at 0:00
@@ -137,7 +137,7 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!this.textures.exists('boss-deadline')) this.load.image('boss-deadline', 'assets/boss/deadline.png');
     const MOBA_ASSETS = [
       ['moba-tower-blue-art', 'tower-blue.png'], ['moba-tower-red-art', 'tower-red.png'],
-      ['moba-core-blue-art',  'core-blue.png'],  ['moba-core-red-art',  'core-red.png'],
+      ['moba-core-blue-art', 'core-blue.png'], ['moba-core-red-art', 'core-red.png'],
       ['moba-vfx-magic', 'vfx-magic.png'], ['moba-vfx-slash', 'vfx-slash.png'],
       ['moba-vfx-spark', 'vfx-spark.png'], ['moba-vfx-flare', 'vfx-flare.png'],
       ['moba-prop-plant', 'plant.png'], ['moba-prop-barricade', 'barricade.png'],
@@ -173,6 +173,11 @@ export default class TeamModeScene extends Phaser.Scene {
     this._hoverSlot = null; this._aimFlash = null; this._mouseWorld = null; this._mouseHeld = false; this._dragAt = 0;
     this._hoverPickAt = 0; this._hoverEnemy = null; this._hoverEntity = null; this._selectedId = null; this._cursorKind = '';
     this._hoverGlow = null; this._hoverEntity = null; this._hoverCursor = '';
+    this._hoverGlow = null;
+    this._lastOfferJson = ''; this._cachedOffer = null;
+    this._lastAugCsv = ''; this._cachedAugs = [];
+    this._lastRelicsJson = ''; this._cachedRelics = null;
+    this._fogWatchers = [];
     this._sbOpen = false; this._chatActive = false; this._lastChatAt = 0;
     this._camInit = false; this._grayFx = null; this._meDead = false; this._hudChamp = null; this._lastPnow = 0;
     // Pass 2 RP-08 camera: locked (follow) or free; a minimap drag "peeks" while locked.
@@ -243,7 +248,7 @@ export default class TeamModeScene extends Phaser.Scene {
     });
     this._initQuality();
     this.hud.setCamLocked?.(this._camLocked);
-    try { this.info = new InfoPanel(this, { onClose: () => {} }); } catch (e) { console.warn('[TeamMode] InfoPanel failed:', e?.message); this.info = null; }
+    try { this.info = new InfoPanel(this, { onClose: () => { } }); } catch (e) { console.warn('[TeamMode] InfoPanel failed:', e?.message); this.info = null; }
     try {
       this.augmentPanel = new AugmentPanel(this, {
         onPick: (id) => { this._send('augmentPick', { id }); AudioManager.reward?.(); },
@@ -257,6 +262,13 @@ export default class TeamModeScene extends Phaser.Scene {
     // Review fix 3: a phone resuming from sleep must not look like a dead link to the watchdog.
     this._onVis = () => { if (document.visibilityState === 'visible') { this._lastRxAt = Date.now(); this._stallAt = 0; } };
     document.addEventListener('visibilitychange', this._onVis);
+    this._onBeforeUnload = (e) => {
+      if (this._phase === 'playing' && !this._ended && !this._shuttingDown) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', this._onBeforeUnload);
     this.cameras.main.centerOn(this.world.fountain.blue.x, this.world.fountain.blue.y);
 
     // Only data decides (main.js reads the deep link once) — a later PLAY AGAIN in
@@ -525,6 +537,12 @@ export default class TeamModeScene extends Phaser.Scene {
 
   /** Reconnected: the new room replays the full state — drop every view so nothing is duplicated. */
   _resetWorld() {
+    this._setHoverOutline?.(null, '');
+    this._setHoverCursor?.('');
+    if (this._relicViews) { for (const rv of this._relicViews.values()) { try { rv.c.destroy(); } catch (_) { } } this._relicViews.clear(); }
+    this._lastOfferJson = ''; this._cachedOffer = null;
+    this._lastAugCsv = ''; this._cachedAugs = [];
+    this._lastRelicsJson = ''; this._cachedRelics = null;
     for (const v of this.views.champs.values()) { try { v.destroy(); } catch (_) { /* gone */ } }
     for (const v of this.views.units.values()) { try { v.destroy(); } catch (_) { /* gone */ } }
     for (const v of this.views.structs.values()) { try { v.destroy(); } catch (_) { /* gone */ } }
@@ -891,8 +909,11 @@ export default class TeamModeScene extends Phaser.Scene {
     switch (code) {
       case 'KeyQ': case 'KeyW': case 'KeyE': case 'KeyR': {
         const sl = code[3].toLowerCase();
-        if (ev.ctrlKey) this._upgradeSkill(sl);
-        else this._tryCast(sl, false);
+        if (ev.shiftKey || ev.ctrlKey) {
+          ev.preventDefault?.();
+          ev.stopPropagation?.();
+          this._upgradeSkill(sl);
+        } else this._tryCast(sl, false);
         break;
       }
       case 'KeyD': case 'KeyF': this._trySpell(code[3].toLowerCase(), false); break;
@@ -935,7 +956,7 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!quiet) {
       this.hud.toast(locked ? '🔒 Camera locked on you (Y)'
         : (this._isTouch ? '🔓 Camera free — drag the minimap' : '🔓 Camera free — push the mouse to a screen edge · drag the minimap · hold Z = you'),
-      '#ffd23f', 2600);
+        '#ffd23f', 2600);
     }
     AudioManager.uiClick?.();
   }
@@ -1417,6 +1438,7 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   /** Apply a pixel-hugging silhouette outline (Phaser 3.70 postFX glow) around the sprite itself, not a hitbox rect. */
+  /** Highlight hovered champion's built-in silhouette outlines (zero WebGL postFX pipeline overhead). */
   _setHoverOutline(hv, rel) {
     const prev = this._hoverGlow;
     const same = prev && prev.v === hv && prev.rel === rel;
@@ -1443,6 +1465,7 @@ export default class TeamModeScene extends Phaser.Scene {
       }
     } catch (_) { /* canvas fallback */ }
     this._hoverGlow = { v: hv, obj, fx, rel };
+    this._hoverGlow = { v: hv, rel };
   }
 
   /** Tactical Ping (G key) at cursor position — expanding neon ring + alert toast. */
@@ -1677,1034 +1700,1067 @@ export default class TeamModeScene extends Phaser.Scene {
     if (this.augmentPanel) {
       let offer = me?.augmentOffer || null;
       if (!offer && me?.augmentOfferJson) {
-        try { offer = JSON.parse(me.augmentOfferJson); } catch {}
+        try { offer = JSON.parse(me.augmentOfferJson); } catch { }
+        if (!offer) {
+          const rawOffer = me?.augmentOfferJson || '';
+          if (rawOffer !== this._lastOfferJson) {
+            this._lastOfferJson = rawOffer;
+            this._cachedOffer = null;
+            if (rawOffer) { try { this._cachedOffer = JSON.parse(rawOffer); } catch { } }
+          }
+          offer = this._cachedOffer;
+        }
+        this.augmentPanel.update(offer, me?.augments || []);
+        let ownedAugs = me?.augments;
+        if (!Array.isArray(ownedAugs)) {
+          const csv = me?.augmentsCsv || '';
+          if (csv !== this._lastAugCsv) {
+            this._lastAugCsv = csv;
+            this._cachedAugs = csv ? csv.split(',') : [];
+          }
+          ownedAugs = this._cachedAugs;
+        }
+        this.augmentPanel.update(offer, ownedAugs);
       }
-      this.augmentPanel.update(offer, me?.augments || []);
+      this._tickReconnect();
+      if (st) this._tickVote(st, srvNow);
+      if (now >= (this._slowTickAt || 0)) {
+        this._slowTickAt = now + 250;
+        if (this._shopAssistAt && now >= this._shopAssistAt) this._tickShopAssist(me, now);
+        this._tickBuyNudge(me, canShop);
+        if (st && me) this._tickCoach(st, me, srvNow, now, canShop);
+      }
+      if (this._sbOpen && this.scoreboard && now >= (this._sbAt || 0)) { this._sbAt = now + 250; this.scoreboard.update(st, this.localId); }
+      this._updateInfo(false);
+      if (now - this._minePrunedAt > 5000) {
+        this._minePrunedAt = now;
+        for (const [id, t] of this._mine) if (now - t > 4000) this._mine.delete(id);
+      }
     }
-    this._tickReconnect();
-    if (st) this._tickVote(st, srvNow);
-    if (now >= (this._slowTickAt || 0)) {
-      this._slowTickAt = now + 250;
-      if (this._shopAssistAt && now >= this._shopAssistAt) this._tickShopAssist(me, now);
-      this._tickBuyNudge(me, canShop);
-      if (st && me) this._tickCoach(st, me, srvNow, now, canShop);
-    }
-    if (this._sbOpen && this.scoreboard && now >= (this._sbAt || 0)) { this._sbAt = now + 250; this.scoreboard.update(st, this.localId); }
-    this._updateInfo(false);
-    if (now - this._minePrunedAt > 5000) {
-      this._minePrunedAt = now;
-      for (const [id, t] of this._mine) if (now - t > 4000) this._mine.delete(id);
-    }
-  }
 
-  _syncPhase(st) {
-    const ph = st.phase;
-    if (ph === this._phase) return;
-    const prev = this._phase;
-    this._phase = ph;
-    const world = WORLD_PHASES.has(ph);
-    // lobby / select / loading: waiting overlay, and the world is never rendered.
-    this.hud.showLobby(!world && !!ph);
-    this.cameras.main.setVisible(world);
-    if (!world) { this.shop?.close?.(); this.info?.close?.(); }
-    if (ph === 'playing' && prev !== 'playing') {
-      this._playingAt = this.time.now;
-      this.hud.toast(this._isTouch ? 'Joystick to move · ⚔ attack · skills + D/F auto-aim · ℹ info' : 'Right-click: move / attack · Q W E R: skills · D F: spells · C: info · B: recall · P: shop', '#7ec8ff', 4200);
-      // EP-21: the first games open the shop at 0:00 (starting gold is meant to be spent).
-      if (this._shopAssist) this._shopAssistAt = this.time.now + 900; // fired from update once the shop module is loaded
+    _syncPhase(st) {
+      const ph = st.phase;
+      if (ph === this._phase) return;
+      const prev = this._phase;
+      this._phase = ph;
+      const world = WORLD_PHASES.has(ph);
+      // lobby / select / loading: waiting overlay, and the world is never rendered.
+      this.hud.showLobby(!world && !!ph);
+      this.cameras.main.setVisible(world);
+      if (!world) { this.shop?.close?.(); this.info?.close?.(); }
+      if (ph === 'playing' && prev !== 'playing') {
+        this._playingAt = this.time.now;
+        this.hud.toast(this._isTouch ? 'Joystick to move · ⚔ attack · skills + D/F auto-aim · ℹ info' : 'Right-click: move / attack · Q W E R: skills · D F: spells · C: info · B: recall · P: shop', '#7ec8ff', 4200);
+        // EP-21: the first games open the shop at 0:00 (starting gold is meant to be spent).
+        if (this._shopAssist) this._shopAssistAt = this.time.now + 900; // fired from update once the shop module is loaded
+      }
+      if (ph === 'ended') this._onEnded(st);
     }
-    if (ph === 'ended') this._onEnded(st);
-  }
 
-  _syncWorld(st, dt, now, srvNow) {
-    const f = ++this._frame;
-    const me = st.champions.get?.(this.localId);
-    const myAd = me?.ad || 0;
-    const mi = this._meInfo;
-    mi.team = this.myTeam; mi.dead = !me || !!me.dead;
-    if (this._pred) { mi.x = this._pred.x; mi.y = this._pred.y; } else if (me) { mi.x = me.x; mi.y = me.y; }
-    // Cull rect: views outside it are hidden and skip their per-frame update (§3.4).
-    const wv = this.cameras.main.worldView, cr = this._cull;
-    cr.x0 = wv.x - CULL_PAD; cr.y0 = wv.y - CULL_PAD - 120; cr.x1 = wv.right + CULL_PAD; cr.y1 = wv.bottom + CULL_PAD;
-    const low = this._lowFx;
+    _syncWorld(st, dt, now, srvNow) {
+      const f = ++this._frame;
+      const me = st.champions.get?.(this.localId);
+      const myAd = me?.ad || 0;
+      const mi = this._meInfo;
+      mi.team = this.myTeam; mi.dead = !me || !!me.dead;
+      if (this._pred) { mi.x = this._pred.x; mi.y = this._pred.y; } else if (me) { mi.x = me.x; mi.y = me.y; }
+      // Cull rect: views outside it are hidden and skip their per-frame update (§3.4).
+      const wv = this.cameras.main.worldView, cr = this._cull;
+      cr.x0 = wv.x - CULL_PAD; cr.y0 = wv.y - CULL_PAD - 120; cr.x1 = wv.right + CULL_PAD; cr.y1 = wv.bottom + CULL_PAD;
+      const low = this._lowFx;
 
-    st.structures?.forEach((s, id) => {
-      let v = this.views.structs.get(id);
-      if (!v) { v = new StructureView(this, id, s, this.myTeam); this.views.structs.set(id, v); }
-      else {
-        if (s.hp < v.hp && v.alive && this._isMine(id)) this._dmgNumber(v, v.hp - s.hp);
-        const was = v.alive;
-        v.sync(s);
-        if (was && !v.alive) {
-          this.fx.explosion(v.x, v.y - v.height * 0.4, v.kind === 'core');
-          if (this.fx.onScreen(v.x, v.y, 200)) shakeCam(this, 280, 0.005);
-          AudioManager.towerDown?.(v.team === this.myTeam);
+      st.structures?.forEach((s, id) => {
+        let v = this.views.structs.get(id);
+        if (!v) { v = new StructureView(this, id, s, this.myTeam); this.views.structs.set(id, v); }
+        else {
+          if (s.hp < v.hp && v.alive && this._isMine(id)) this._dmgNumber(v, v.hp - s.hp);
+          const was = v.alive;
+          v.sync(s);
+          if (was && !v.alive) {
+            this.fx.explosion(v.x, v.y - v.height * 0.4, v.kind === 'core');
+            if (this.fx.onScreen(v.x, v.y, 200)) shakeCam(this, 280, 0.005);
+            AudioManager.towerDown?.(v.team === this.myTeam);
+          }
+        }
+        v._seen = f;
+        if (s.kind === 'tower') {
+          const tv = s.targetId ? this._viewOf(s.targetId) : null;
+          v.targetPos = tv && (tv.alive !== false) && !tv.dead ? tv.aimPoint() : null;
+          v.targetIsMe = !!s.targetId && s.targetId === this.localId;
+        }
+        if (this._inCull(v.x, v.y)) v.update(now, mi);
+        else v.laserG?.clear();
+      });
+      for (const [id, v] of this.views.structs) if (v._seen !== f) { v.destroy(); this.views.structs.delete(id); }
+
+      // AoV Tower Heal Relics (behind Tier-1 towers)
+      let relics = Array.isArray(st.relics) ? st.relics : null;
+      if (!relics && st.relicsJson) { try { relics = JSON.parse(st.relicsJson); } catch { } }
+      if (!relics) {
+        const rawRelics = st.relicsJson || '';
+        if (rawRelics !== this._lastRelicsJson) {
+          this._lastRelicsJson = rawRelics;
+          this._cachedRelics = null;
+          if (rawRelics) { try { this._cachedRelics = JSON.parse(rawRelics); } catch { } }
+        }
+        relics = this._cachedRelics;
+      }
+      if (Array.isArray(relics)) {
+        if (!this._relicViews) this._relicViews = new Map();
+        const simNow = this._sim ? this._sim.t : srvNow;
+        for (const rl of relics) {
+          let rv = this._relicViews.get(rl.id);
+          if (!rv) {
+            const c = this.add.container(rl.x, rl.y).setDepth(D.ground + 0.5);
+            const glow = this.add.image(0, 0, 'moba-glow').setTint(0x39ff14).setDisplaySize(64, 64).setAlpha(0.45).setBlendMode(1);
+            const disc = this.add.circle(0, 0, 18, 0x0b2916, 0.9).setStrokeStyle(2.5, 0x39ff14, 0.95);
+            const plus = this.add.image(0, 0, 'moba-plus').setTint(0x7ed957).setDisplaySize(20, 20);
+            c.add([glow, disc, plus]);
+            rv = { c, glow };
+            this._relicViews.set(rl.id, rv);
+          }
+          const ready = rl.upAt <= simNow && this._inCull(rl.x, rl.y);
+          rv.c.setVisible(ready);
+          if (ready) rv.glow.setAlpha(0.32 + 0.18 * Math.sin(now / 240));
         }
       }
-      v._seen = f;
-      if (s.kind === 'tower') {
-        const tv = s.targetId ? this._viewOf(s.targetId) : null;
-        v.targetPos = tv && (tv.alive !== false) && !tv.dead ? tv.aimPoint() : null;
-        v.targetIsMe = !!s.targetId && s.targetId === this.localId;
-      }
-      if (this._inCull(v.x, v.y)) v.update(now, mi);
-      else v.laserG?.clear();
-    });
-    for (const [id, v] of this.views.structs) if (v._seen !== f) { v.destroy(); this.views.structs.delete(id); }
 
-    // AoV Tower Heal Relics (behind Tier-1 towers)
-    let relics = Array.isArray(st.relics) ? st.relics : null;
-    if (!relics && st.relicsJson) { try { relics = JSON.parse(st.relicsJson); } catch {} }
-    if (Array.isArray(relics)) {
-      if (!this._relicViews) this._relicViews = new Map();
-      const simNow = this._sim ? this._sim.t : srvNow;
-      for (const rl of relics) {
-        let rv = this._relicViews.get(rl.id);
-        if (!rv) {
-          const c = this.add.container(rl.x, rl.y).setDepth(D.ground + 0.5);
-          const glow = this.add.image(0, 0, 'moba-glow').setTint(0x39ff14).setDisplaySize(64, 64).setAlpha(0.45).setBlendMode(1);
-          const disc = this.add.circle(0, 0, 18, 0x0b2916, 0.9).setStrokeStyle(2.5, 0x39ff14, 0.95);
-          const plus = this.add.image(0, 0, 'moba-plus').setTint(0x7ed957).setDisplaySize(20, 20);
-          c.add([glow, disc, plus]);
-          rv = { c, glow };
-          this._relicViews.set(rl.id, rv);
+      // Update lightweight 10Hz Fog of War layer (team vision circles)
+      if (this.map?.updateFog) {
+        const watchers = [];
+        // Update throttled Fog of War layer only on due frames (zero per-frame allocations)
+        if (this.map?.shouldUpdateFog?.(now)) {
+          const watchers = this._fogWatchers;
+          watchers.length = 0;
+          st.champions?.forEach((c) => { if (c.team === this.myTeam && !c.dead) watchers.push({ x: c.x, y: c.y, r: 1100 }); });
+          st.structures?.forEach((s) => { if (s.team === this.myTeam && s.alive) watchers.push({ x: s.x, y: s.y, r: 1050 }); });
+          st.units?.forEach((u) => { if (u.team === this.myTeam && u.alive && u.kind !== 'pet') watchers.push({ x: u.x, y: u.y, r: u.kind === 'ward' ? 750 : 680 }); });
+          this.map.updateFog(watchers, now);
         }
-        const ready = rl.upAt <= simNow && this._inCull(rl.x, rl.y);
-        rv.c.setVisible(ready);
-        if (ready) rv.glow.setAlpha(0.32 + 0.18 * Math.sin(now / 240));
-      }
-    }
 
-    // Update lightweight 10Hz Fog of War layer (team vision circles)
-    if (this.map?.updateFog) {
-      const watchers = [];
-      st.champions?.forEach((c) => { if (c.team === this.myTeam && !c.dead) watchers.push({ x: c.x, y: c.y, r: 1100 }); });
-      st.structures?.forEach((s) => { if (s.team === this.myTeam && s.alive) watchers.push({ x: s.x, y: s.y, r: 1050 }); });
-      st.units?.forEach((u) => { if (u.team === this.myTeam && u.alive && u.kind !== 'pet') watchers.push({ x: u.x, y: u.y, r: u.kind === 'ward' ? 750 : 680 }); });
-      this.map.updateFog(watchers, now);
-    }
-
-    const camps = this._liveCamps;
-    camps.clear();
-    let myPet = null;
-    const bushTick = f % 3 === 0;
-    st.units?.forEach((u, id) => {
-      if (u.kind === 'pet' && u.alive !== false && u.owner && u.owner === this.localId) myPet = id;
-      let v = this.views.units.get(id);
-      if (!v) {
-        v = new UnitView(this, id, u, this.myTeam); this.views.units.set(id, v);
-        if (low) v.glow?.setVisible(false);
-        if (this._worldReady && v.alive && v.team !== this.myTeam) { if (v.fadeIn) v.fadeIn(); else this._fadeIn([v.c]); } // came (back) into vision
-      } else {
-        if (u.hp < v.hp && v.alive && this._isMine(id)) this._dmgNumber(v, v.hp - u.hp);
-        const was = v.alive;
-        v.sync(u, myAd);
-        if (was && !v.alive && !v._culled) { const p = v.aimPoint(); this.fx.unitDeath(p.x, p.y, v.size, teamColor(v.team)); }
-      }
-      if (u.alive && u.campId) camps.add(u.campId);
-      v._seen = f;
-      if (this._inCull(u.x, u.y)) {
-        if (v._culled) { v._culled = false; v.x = v.tx; v.y = v.ty; if (!v.dying) v.c.setVisible(true); }
-        v.update(dt, now);
-        // Own-team units inside a bush: translucent ("hidden" look).
-        if (bushTick && v.team === this.myTeam && !v.dying) {
-          const inB = !!this.world.bushAt(v.x, v.y);
-          if (inB !== !!v._inBush) { v._inBush = inB; if (v.setHidden) v.setHidden(inB); else v.c.setAlpha(inB ? 0.55 : 1); }
+        const camps = this._liveCamps;
+        camps.clear();
+        let myPet = null;
+        const bushTick = f % 3 === 0;
+        st.units?.forEach((u, id) => {
+          if (u.kind === 'pet' && u.alive !== false && u.owner && u.owner === this.localId) myPet = id;
+          let v = this.views.units.get(id);
+          if (!v) {
+            v = new UnitView(this, id, u, this.myTeam); this.views.units.set(id, v);
+            if (low) v.glow?.setVisible(false);
+            if (this._worldReady && v.alive && v.team !== this.myTeam) { if (v.fadeIn) v.fadeIn(); else this._fadeIn([v.c]); } // came (back) into vision
+          } else {
+            if (u.hp < v.hp && v.alive && this._isMine(id)) this._dmgNumber(v, v.hp - u.hp);
+            const was = v.alive;
+            v.sync(u, myAd);
+            if (was && !v.alive && !v._culled) { const p = v.aimPoint(); this.fx.unitDeath(p.x, p.y, v.size, teamColor(v.team)); }
+          }
+          if (u.alive && u.campId) camps.add(u.campId);
+          v._seen = f;
+          if (this._inCull(u.x, u.y)) {
+            if (v._culled) { v._culled = false; v.x = v.tx; v.y = v.ty; if (!v.dying) v.c.setVisible(true); }
+            v.update(dt, now);
+            // Own-team units inside a bush: translucent ("hidden" look).
+            if (bushTick && v.team === this.myTeam && !v.dying) {
+              const inB = !!this.world.bushAt(v.x, v.y);
+              if (inB !== !!v._inBush) { v._inBush = inB; if (v.setHidden) v.setHidden(inB); else v.c.setAlpha(inB ? 0.55 : 1); }
+            }
+          } else {
+            if (!v._culled) { v._culled = true; v.c.setVisible(false); }
+            v.x = v.tx; v.y = v.ty; // keep picking / aim points honest without any render work
+          }
+        });
+        for (const [id, v] of this.views.units) {
+          if (v._seen === f) continue;
+          this.views.units.delete(id);
+          // Removed while alive = hidden by the server (bush / out of vision) → fade, no death puff.
+          if (v.alive && !v.dying && !v.removed && !v._culled) this._fadeOutUnit(v);
+          else v.remove();
+          this._onVanish(id);
         }
-      } else {
-        if (!v._culled) { v._culled = true; v.c.setVisible(false); }
-        v.x = v.tx; v.y = v.ty; // keep picking / aim points honest without any render work
-      }
-    });
-    for (const [id, v] of this.views.units) {
-      if (v._seen === f) continue;
-      this.views.units.delete(id);
-      // Removed while alive = hidden by the server (bush / out of vision) → fade, no death puff.
-      if (v.alive && !v.dying && !v.removed && !v._culled) this._fadeOutUnit(v);
-      else v.remove();
-      this._onVanish(id);
-    }
-    this._myPetId = myPet;
+        this._myPetId = myPet;
 
-    st.champions.forEach((c, id) => {
-      let v = this.views.champs.get(id);
-      const isMe = id === this.localId;
-      if (!v) {
-        v = new ChampionView(this, id, c, { isMe, myTeam: this.myTeam });
-        this.views.champs.set(id, v);
+        st.champions.forEach((c, id) => {
+          let v = this.views.champs.get(id);
+          const isMe = id === this.localId;
+          if (!v) {
+            v = new ChampionView(this, id, c, { isMe, myTeam: this.myTeam });
+            this.views.champs.set(id, v);
+            v.sync(c, srvNow, now);
+            if (low) v.light?.setVisible(false);
+            if (this._worldReady && !isMe && v.team !== this.myTeam && !v.dead) { if (v.fadeIn) v.fadeIn(); else this._fadeIn([v.c, v.ov]); }
+          } else this._champEvents(v, c, isMe, srvNow, now);
+          v._seen = f;
+          // Reveal tracking (attacks / casts bump action_seq) for the own-team "hidden" look.
+          const seq = c.action_seq || 0;
+          if (v._v4seq !== seq) { if (v._v4seq != null) v._actAt = now; v._v4seq = seq; }
+          if (isMe) this._predict(c, v, dt, srvNow);
+          if (isMe || this._inCull(v.x, v.y) || this._inCull(v.tx, v.ty)) {
+            if (v._culled) { v._culled = false; v.x = v.tx; v.y = v.ty; v.c.setVisible(!v.dead); v.ov.setVisible(!v.dead); }
+            v.update(dt, now, srvNow, isMe);
+            this._spellTrails(id, v, c, now);
+            if (bushTick && !v.dead) {
+              const b = this.world.bushAt(v.x, v.y);
+              if (b !== (v._bushNow || '')) { v._bushNow = b; if (b) this.map.rustle(b); }
+            }
+          } else {
+            v._culled = true;
+            if (v.c.visible) { v.c.setVisible(false); v.ov.setVisible(false); } // sync() re-shows on respawn
+            v.x = v.tx; v.y = v.ty;
+          }
+          if (v.team === this.myTeam) this._applyHidden(v, c, isMe, now);
+        });
+        for (const [id, v] of this.views.champs) {
+          if (v._seen === f) continue;
+          this.views.champs.delete(id); this._trailAt.delete(id);
+          if (!v.dead && !v._culled) this._fadeOutChamp(v); else v.destroy();
+          this._onVanish(id);
+        }
+        if (f % 4 === 0) this._layoutPlates();
+        // The bush you stand in thins out so you can see yourself.
+        this.map.setBushFocus(this._pred && me && !me.dead ? this.world.bushAt(this._pred.x, this._pred.y) : '');
+        this._worldReady = true;
+      }
+
+      /** Round 2: nameplates of champions standing close together stack upward instead of
+       *  overlapping (you keep yours in place); in a > 4-champion crowd the others shrink a bit. */
+      _layoutPlates() {
+        const list = this._plateList || (this._plateList = []);
+        list.length = 0;
+        for (const v of this.views.champs.values()) if (!v.dead && !v._culled && !v._gone) list.push(v);
+        list.sort((a, b) => (b.isMe - a.isMe) || (b.y - a.y));
+        const placed = this._platePlaced || (this._platePlaced = []);
+        placed.length = 0;
+        for (const v of list) {
+          let dy = 0;
+          for (let k = 0; k < 4; k++) {
+            const py = v.y + dy;
+            let hit = false;
+            for (let i = 0; i < placed.length; i += 2) if (Math.abs(placed[i] - v.x) < 120 && Math.abs(placed[i + 1] - py) < 34) { hit = true; break; }
+            if (!hit) break;
+            dy -= 34;
+          }
+          v.plateDy = dy;
+          placed.push(v.x, v.y + dy);
+          let near = 0;
+          for (const o of list) if (o !== v && Math.abs(o.x - v.x) < 200 && Math.abs(o.y - v.y) < 200) near++;
+          v.setPlateScale?.(near >= 4 && !v.isMe ? 0.82 : 1);
+        }
+      }
+
+      _inCull(x, y) { const c = this._cull; return x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1; }
+
+      /** Fade objects in from 0 (an enemy (re-)entering our vision). */
+      _fadeIn(objs) {
+        for (const o of objs) o.setAlpha(0);
+        this.tweens.add({ targets: objs, alpha: 1, duration: 220, ease: 'Quad.easeOut' });
+      }
+      _fadeOutChamp(v) {
+        v._gone = true;
+        if (v.fadeOut) { v.fadeOut(240); return; }
+        this.tweens.killTweensOf([v.c, v.ov]);
+        this.tweens.add({ targets: [v.c, v.ov], alpha: 0, duration: 240, ease: 'Quad.easeIn', onComplete: () => v.destroy() });
+      }
+      _fadeOutUnit(v) {
+        if (v.vanish) { v.vanish(); return; }
+        v.removed = true;
+        this.tweens.killTweensOf(v.c);
+        this.tweens.add({ targets: v.c, alpha: 0, duration: 240, ease: 'Quad.easeIn', onComplete: () => v.c.destroy() });
+      }
+
+      /** An entity left our state (died + removed, or hidden by the server): forget every reference. */
+      _onVanish(id) {
+        if (this._hoverEnemy?.id === id) this._hoverEnemy = null;
+        if (this._hoverEntity?.id === id) this._hoverEntity = null;
+        if (this._hoverGlow?.v?.id === id) this._setHoverOutline(null, '');
+        if (this._selectedId === id) { this._selectedId = null; this.hud.setTarget(null); }
+        if (this._pendingOrder?.id === id) this._pendingOrder = null;
+        const q = this._castQueue;
+        if (q && q.length) {
+          for (let i = q.length - 1; i >= 0; i--) if (q[i].msg?.id === id) q.splice(i, 1);
+          if (this._pendingCast) this._pendingCast = q[0] || null;
+        } else if (this._pendingCast?.msg?.id === id) this._pendingCast = null;
+        this._mine.delete(id);
+        if (this.info?.isOpen && this.info.sid === id) this.info.close();
+      }
+
+      /** Own-team champion in a bush and not revealed → translucent; you also get the HUD hint.
+       *  Revealed (client approximation of the server rule): attacked / cast within BUSH_REVEAL_MS,
+       *  or a visible enemy champion stands in the same bush. */
+      _applyHidden(v, c, isMe, now) {
+        const bush = v.dead ? '' : (typeof c.inBush === 'string' ? c.inBush : (isMe && this._pred ? this.world.bushAt(this._pred.x, this._pred.y) : ''));
+        let hidden = false, why = '';
+        if (bush) {
+          const act = Math.max(v._actAt || -1e9, isMe ? this._myCastAt : -1e9);
+          hidden = now - act >= (R.BUSH_REVEAL_MS ?? 1500);
+          if (!hidden) why = 'attacked';
+          else {
+            for (const e of this.views.champs.values()) {
+              if (e.team === this.myTeam || e.dead || e._gone) continue;
+              if (Math.abs(e.x - v.x) < 500 && Math.abs(e.y - v.y) < 500 && this.world.bushAt(e.x, e.y) === bush) { hidden = false; why = 'enemy'; break; }
+            }
+          }
+        }
+        if (hidden !== !!v._hidden) {
+          v._hidden = hidden;
+          if (typeof v.setHidden === 'function') { try { v.setHidden(hidden); } catch (_) { /* UI agent API */ } }
+          else v.c.setAlpha(hidden ? 0.5 : 1);
+        }
+        if (isMe) this._meHidden = bush ? (hidden ? 'hidden' : why || 'revealed') : null;
+      }
+
+      _dmgNumber(v, d) {
+        if (d < 1) return;
+        const p = v.aimPoint();
+        this.fx.number(p.x, p.y - 24, `-${Math.round(d)}`, d >= 150 ? 'big' : 'dealt');
+      }
+
+      _champEvents(v, c, isMe, srvNow, now) {
+        const wasDead = v.dead, oldHp = v.hp, oldMax = v.maxHp, oldLv = v.level;
         v.sync(c, srvNow, now);
-        if (low) v.light?.setVisible(false);
-        if (this._worldReady && !isMe && v.team !== this.myTeam && !v.dead) { if (v.fadeIn) v.fadeIn(); else this._fadeIn([v.c, v.ov]); }
-      } else this._champEvents(v, c, isMe, srvNow, now);
-      v._seen = f;
-      // Reveal tracking (attacks / casts bump action_seq) for the own-team "hidden" look.
-      const seq = c.action_seq || 0;
-      if (v._v4seq !== seq) { if (v._v4seq != null) v._actAt = now; v._v4seq = seq; }
-      if (isMe) this._predict(c, v, dt, srvNow);
-      if (isMe || this._inCull(v.x, v.y) || this._inCull(v.tx, v.ty)) {
-        if (v._culled) { v._culled = false; v.x = v.tx; v.y = v.ty; v.c.setVisible(!v.dead); v.ov.setVisible(!v.dead); }
-        v.update(dt, now, srvNow, isMe);
-        this._spellTrails(id, v, c, now);
-        if (bushTick && !v.dead) {
-          const b = this.world.bushAt(v.x, v.y);
-          if (b !== (v._bushNow || '')) { v._bushNow = b; if (b) this.map.rustle(b); }
+        if (!wasDead && v.dead) {
+          this.fx.champDeath(v.x, v.y, teamColor(v.team));
+          if (isMe || this.fx.onScreen(v.x, v.y, 100)) AudioManager.teamDeath?.(isMe);
+          return;
         }
-      } else {
-        v._culled = true;
-        if (v.c.visible) { v.c.setVisible(false); v.ov.setVisible(false); } // sync() re-shows on respawn
-        v.x = v.tx; v.y = v.ty;
-      }
-      if (v.team === this.myTeam) this._applyHidden(v, c, isMe, now);
-    });
-    for (const [id, v] of this.views.champs) {
-      if (v._seen === f) continue;
-      this.views.champs.delete(id); this._trailAt.delete(id);
-      if (!v.dead && !v._culled) this._fadeOutChamp(v); else v.destroy();
-      this._onVanish(id);
-    }
-    if (f % 4 === 0) this._layoutPlates();
-    // The bush you stand in thins out so you can see yourself.
-    this.map.setBushFocus(this._pred && me && !me.dead ? this.world.bushAt(this._pred.x, this._pred.y) : '');
-    this._worldReady = true;
-  }
-
-  /** Round 2: nameplates of champions standing close together stack upward instead of
-   *  overlapping (you keep yours in place); in a > 4-champion crowd the others shrink a bit. */
-  _layoutPlates() {
-    const list = this._plateList || (this._plateList = []);
-    list.length = 0;
-    for (const v of this.views.champs.values()) if (!v.dead && !v._culled && !v._gone) list.push(v);
-    list.sort((a, b) => (b.isMe - a.isMe) || (b.y - a.y));
-    const placed = this._platePlaced || (this._platePlaced = []);
-    placed.length = 0;
-    for (const v of list) {
-      let dy = 0;
-      for (let k = 0; k < 4; k++) {
-        const py = v.y + dy;
-        let hit = false;
-        for (let i = 0; i < placed.length; i += 2) if (Math.abs(placed[i] - v.x) < 120 && Math.abs(placed[i + 1] - py) < 34) { hit = true; break; }
-        if (!hit) break;
-        dy -= 34;
-      }
-      v.plateDy = dy;
-      placed.push(v.x, v.y + dy);
-      let near = 0;
-      for (const o of list) if (o !== v && Math.abs(o.x - v.x) < 200 && Math.abs(o.y - v.y) < 200) near++;
-      v.setPlateScale?.(near >= 4 && !v.isMe ? 0.82 : 1);
-    }
-  }
-
-  _inCull(x, y) { const c = this._cull; return x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1; }
-
-  /** Fade objects in from 0 (an enemy (re-)entering our vision). */
-  _fadeIn(objs) {
-    for (const o of objs) o.setAlpha(0);
-    this.tweens.add({ targets: objs, alpha: 1, duration: 220, ease: 'Quad.easeOut' });
-  }
-  _fadeOutChamp(v) {
-    v._gone = true;
-    if (v.fadeOut) { v.fadeOut(240); return; }
-    this.tweens.killTweensOf([v.c, v.ov]);
-    this.tweens.add({ targets: [v.c, v.ov], alpha: 0, duration: 240, ease: 'Quad.easeIn', onComplete: () => v.destroy() });
-  }
-  _fadeOutUnit(v) {
-    if (v.vanish) { v.vanish(); return; }
-    v.removed = true;
-    this.tweens.killTweensOf(v.c);
-    this.tweens.add({ targets: v.c, alpha: 0, duration: 240, ease: 'Quad.easeIn', onComplete: () => v.c.destroy() });
-  }
-
-  /** An entity left our state (died + removed, or hidden by the server): forget every reference. */
-  _onVanish(id) {
-    if (this._hoverEnemy?.id === id) this._hoverEnemy = null;
-    if (this._hoverEntity?.id === id) this._hoverEntity = null;
-    if (this._selectedId === id) { this._selectedId = null; this.hud.setTarget(null); }
-    if (this._pendingOrder?.id === id) this._pendingOrder = null;
-    const q = this._castQueue;
-    if (q && q.length) {
-      for (let i = q.length - 1; i >= 0; i--) if (q[i].msg?.id === id) q.splice(i, 1);
-      if (this._pendingCast) this._pendingCast = q[0] || null;
-    } else if (this._pendingCast?.msg?.id === id) this._pendingCast = null;
-    this._mine.delete(id);
-    if (this.info?.isOpen && this.info.sid === id) this.info.close();
-  }
-
-  /** Own-team champion in a bush and not revealed → translucent; you also get the HUD hint.
-   *  Revealed (client approximation of the server rule): attacked / cast within BUSH_REVEAL_MS,
-   *  or a visible enemy champion stands in the same bush. */
-  _applyHidden(v, c, isMe, now) {
-    const bush = v.dead ? '' : (typeof c.inBush === 'string' ? c.inBush : (isMe && this._pred ? this.world.bushAt(this._pred.x, this._pred.y) : ''));
-    let hidden = false, why = '';
-    if (bush) {
-      const act = Math.max(v._actAt || -1e9, isMe ? this._myCastAt : -1e9);
-      hidden = now - act >= (R.BUSH_REVEAL_MS ?? 1500);
-      if (!hidden) why = 'attacked';
-      else {
-        for (const e of this.views.champs.values()) {
-          if (e.team === this.myTeam || e.dead || e._gone) continue;
-          if (Math.abs(e.x - v.x) < 500 && Math.abs(e.y - v.y) < 500 && this.world.bushAt(e.x, e.y) === bush) { hidden = false; why = 'enemy'; break; }
+        if (wasDead && !v.dead) { this.fx.respawn(c.x, c.y, teamColor(v.team)); return; }
+        if (v.dead || oldHp < 0) return;
+        const d = oldHp - c.hp;
+        const p = v.aimPoint();
+        // Your own numbers pop out to the side of your body (alternating), never on
+        // your nameplate / HP bar (playtest v2: they covered your own HP in fights).
+        let nx = p.x, ny = p.y - 34;
+        if (isMe) { this._numSide = -(this._numSide || 1); nx = p.x + this._numSide * (52 + Math.random() * 18); ny = p.y + 6; }
+        if (d >= 1) {
+          v.flash();
+          const kind = isMe ? 'self' : (v.team === this.myTeam ? null : (d >= 150 ? 'big' : 'dealt'));
+          if (kind) this.fx.number(nx, ny, `-${Math.round(d)}`, kind);
+        } else if (-d >= 40 && c.maxHp === oldMax && (isMe || v.team === this.myTeam)) {
+          this.fx.number(nx, ny, `+${Math.round(-d)}`, 'heal');
+        }
+        if (oldLv > 0 && v.level > oldLv) {
+          this.fx.levelUp(v.x, v.y, isMe);
+          if (isMe) AudioManager.combo?.(3);
         }
       }
-    }
-    if (hidden !== !!v._hidden) {
-      v._hidden = hidden;
-      if (typeof v.setHidden === 'function') { try { v.setHidden(hidden); } catch (_) { /* UI agent API */ } }
-      else v.c.setAlpha(hidden ? 0.5 : 1);
-    }
-    if (isMe) this._meHidden = bush ? (hidden ? 'hidden' : why || 'revealed') : null;
-  }
 
-  _dmgNumber(v, d) {
-    if (d < 1) return;
-    const p = v.aimPoint();
-    this.fx.number(p.x, p.y - 24, `-${Math.round(d)}`, d >= 150 ? 'big' : 'dealt');
-  }
-
-  _champEvents(v, c, isMe, srvNow, now) {
-    const wasDead = v.dead, oldHp = v.hp, oldMax = v.maxHp, oldLv = v.level;
-    v.sync(c, srvNow, now);
-    if (!wasDead && v.dead) {
-      this.fx.champDeath(v.x, v.y, teamColor(v.team));
-      if (isMe || this.fx.onScreen(v.x, v.y, 100)) AudioManager.teamDeath?.(isMe);
-      return;
-    }
-    if (wasDead && !v.dead) { this.fx.respawn(c.x, c.y, teamColor(v.team)); return; }
-    if (v.dead || oldHp < 0) return;
-    const d = oldHp - c.hp;
-    const p = v.aimPoint();
-    // Your own numbers pop out to the side of your body (alternating), never on
-    // your nameplate / HP bar (playtest v2: they covered your own HP in fights).
-    let nx = p.x, ny = p.y - 34;
-    if (isMe) { this._numSide = -(this._numSide || 1); nx = p.x + this._numSide * (52 + Math.random() * 18); ny = p.y + 6; }
-    if (d >= 1) {
-      v.flash();
-      const kind = isMe ? 'self' : (v.team === this.myTeam ? null : (d >= 150 ? 'big' : 'dealt'));
-      if (kind) this.fx.number(nx, ny, `-${Math.round(d)}`, kind);
-    } else if (-d >= 40 && c.maxHp === oldMax && (isMe || v.team === this.myTeam)) {
-      this.fx.number(nx, ny, `+${Math.round(-d)}`, 'heal');
-    }
-    if (oldLv > 0 && v.level > oldLv) {
-      this.fx.levelUp(v.x, v.y, isMe);
-      if (isMe) AudioManager.combo?.(3);
-    }
-  }
-
-  /** Local prediction: walk toward the order destination at `ms`, reconcile with the server. */
-  _predict(c, v, dt, srvNow) {
-    if (c.dead) { this._pred = { x: c.x, y: c.y }; this._moveDest = null; v.setDisplayPos(c.x, c.y); return; }
-    if (!this._pred) this._pred = { x: c.x, y: c.y };
-    const p = this._pred, now = this.time.now;
-    const err = Math.hypot(c.x - p.x, c.y - p.y);
-    if (now < this._dashUntil) {
-      const k = approach(dt, 18); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k;
-    } else if (err > PRED_SNAP_PX) {
-      p.x = c.x; p.y = c.y;
-      if (err > 400) this._moveDest = null;
-    } else {
-      const canMove = !((c.stunnedUntil || 0) > srvNow) && !((c.rootedUntil || 0) > srvNow) && !((c.recallUntil || 0) > srvNow);
-      if (this._moveDest && canMove && this._replan) {
-        this._replan = false;
-        const path = this.world.nav.findPath(p.x, p.y, this._moveDest.x, this._moveDest.y, CHAMP_RADIUS);
-        this._movePath = path.length ? path : null;
-      }
-      if (this._moveDest && canMove) {
-        const slow = (c.slowUntil || 0) > srvNow ? 1 - Math.min(90, c.slowPct || 0) / 100 : 1;
-        let step = Math.max(0, (c.ms || 330) * slow) * dt;
-        // Walk the nav path (waypoints around walls), carrying leftover step to the next waypoint.
-        for (let guard = 0; guard < 4 && this._moveDest && step > 0; guard++) {
-          const path = this._movePath;
-          const wp = path && path.length ? path[0] : this._moveDest;
-          const dx = wp.x - p.x, dy = wp.y - p.y, d = Math.hypot(dx, dy);
-          if (d <= step) {
-            p.x = wp.x; p.y = wp.y; step -= d;
-            if (path && path.length) path.shift();
-            if (!path || !path.length) { this._moveDest = null; this._movePath = null; }
-          } else { p.x += (dx / d) * step; p.y += (dy / d) * step; step = 0; }
-        }
-        if (err > 60) { const k = approach(dt, 2); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k; }
-      } else {
-        const k = approach(dt, 9); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k;
-      }
-      // Never show yourself inside furniture (reconcile blending can cut a corner).
-      if (this.world.nav.isBlocked(p.x, p.y, CHAMP_RADIUS - 4)) { const q = this.world.nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
-    }
-    v.setDisplayPos(p.x, p.y);
-  }
-
-  _updateLocal(me, dt, now, srvNow) {
-    // Death → desaturate the world camera (HUD stays in color).
-    const dead = !!me?.dead && this._phase === 'playing';
-    if (dead !== this._meDead) {
-      this._meDead = dead;
-      this._setGray(dead);
-      if (dead) { this.shop?.close?.(); this._moveDest = null; }
-      else this.hud.setDeathTitle(null);
-    }
-    // Camera follows the predicted position (slightly below center: the HUD covers the bottom).
-    const tgt = this._pred || me;
-    if (tgt) {
-      if (!this._camInit) { this._camInit = true; this._camX = tgt.x; this._camY = tgt.y + 40; this._camFreeX = this._camX; this._camFreeY = this._camY; }
-      // Pass 2 RP-08: follow when locked (and not peeking via the minimap) or while Z is held.
-      const follow = this._centerHeld || (this._camLocked && !this._camPeek);
-      if (follow) {
-        const k = approach(dt, this._centerHeld ? 14 : 7);
-        this._camX += (tgt.x - this._camX) * k; this._camY += (tgt.y + 40 - this._camY) * k;
-        this._camFreeX = this._camX; this._camFreeY = this._camY;
-      } else {
-        this._edgePan(dt);
-        const k = approach(dt, 16);
-        this._camX += (this._camFreeX - this._camX) * k; this._camY += (this._camFreeY - this._camY) * k;
-      }
-      this.cameras.main.centerOn(this._camX, this._camY);
-    }
-    // Joystick / arrow keys → move orders toward a point ahead.
-    let dir = this._stickDir;
-    if (!dir && this._cursors && !this._chatActive) {
-      const c = this._cursors;
-      const x = (c.right.isDown ? 1 : 0) - (c.left.isDown ? 1 : 0), y = (c.down.isDown ? 1 : 0) - (c.up.isDown ? 1 : 0);
-      if (x || y) { const l = Math.hypot(x, y); dir = { x: x / l, y: y / l }; }
-    }
-    if (dir && me && this._canAct()) {
-      this._sticking = true;
-      if (now - this._stickSentAt > STICK_ORDER_MS) {
-        this._stickSentAt = now;
-        const p = this._pred || me;
-        this._moveOrder(p.x + dir.x * 260, p.y + dir.y * 260, false);
-      }
-    } else if (this._sticking) {
-      this._sticking = false;
-      if (this._canAct()) this._order({ type: 'stop' });
-      this._moveDest = null;
-    }
-    // Attack target + hover marks.
-    const tv = me && !me.dead ? this._viewOf(me.targetId) : null;
-    if (tv && (tv.alive !== false) && !tv.dead) this._targetMark.setVisible(true).setPosition(tv.x, tv.y + 2);
-    else if (this._targetMark.visible) this._targetMark.setVisible(false);
-    if (!this._isTouch && this._mouseWorld && now >= this._hoverPickAt) {
-      this._hoverPickAt = now + 50;
-      const uiBlocking = this.hud.modalOpen || this.shop?.isOpen || this._sbOpen || this._chatActive || this._pointerOut;
-      const canPick = this._phase === 'playing' && !uiBlocking;
-      this._hoverEntity = canPick ? this._pickEntityAt(this._mouseWorld.x, this._mouseWorld.y) : null;
-      this._hoverEnemy = this._hoverEntity && this._hoverEntity.team !== this.myTeam ? this._hoverEntity : null;
-    }
-    const hv = this._hoverEntity;
-    const hvAlive = !!(hv && (hv.alive !== false) && !hv.dead && !hv.removed);
-    if (hvAlive) {
-      const rel = this._entityRel(hv);
-      const col = rel === 'enemy' ? 0xff4a4a : (rel === 'neutral' ? 0xffd23f : 0x39c2ff);
-      const rw = hv instanceof StructureView ? (hv.kind === 'core' ? 196 : 128) : (hv instanceof UnitView ? Math.max(60, (hv.size || 44) * 1.5) : 90);
-      this._hoverMark.setVisible(hv !== tv).setPosition(hv.x, hv.y + 4).setSize(rw, Math.round(rw * 0.36)).setStrokeStyle(2.5, col, 0.9);
-      this._setHoverOutline(hv, rel);
-      this._setHoverCursor(rel);
-    } else {
-      if (this._hoverMark.visible) this._hoverMark.setVisible(false);
-      this._setHoverOutline(null, '');
-      this._setHoverCursor('');
-    }
-    this._updateTargetPanel(this._state());
-    this._drawAim(me, now);
-  }
-
-  // ───────────────────────── aim previews ─────────────────────────
-  /** My pet's displayed position (null if I have none / it's down). */
-  _petPos() {
-    const v = this._myPetId ? this.views.units.get(this._myPetId) : null;
-    return v && v.alive && !v.removed ? { x: v.x, y: v.y } : null;
-  }
-
-  /** Enemy champions + displaceable enemy units (no pets / epics / structures), for knockback previews. */
-  _knockables(fn) {
-    for (const v of this.views.champs.values()) if (!v.dead && v.team !== this.myTeam) fn(v, CHAMP_RADIUS);
-    for (const v of this.views.units.values()) {
-      if (!v.alive || v.kind === 'pet' || v.team === this.myTeam || R.EPICS[v.kind]) continue;
-      fn(v, MINION_RADIUS);
-    }
-  }
-
-  /** First enemy (champion or unit, never a pet) whose center is within r of the segment, by distance from (x0,y0). */
-  _firstEnemyOnSeg(x0, y0, x1, y1, r) {
-    let best = null, bt = Infinity;
-    const L = Math.hypot(x1 - x0, y1 - y0) || 1, ux = (x1 - x0) / L, uy = (y1 - y0) / L;
-    this._knockables((v, vr) => {
-      if (distToSeg(v.x, v.y, x0, y0, x1, y1) > r + vr) return;
-      const t = (v.x - x0) * ux + (v.y - y0) * uy;
-      if (t > 0 && t < bt) { bt = t; best = v; }
-    });
-    return best;
-  }
-
-  /** Knockback arrow from (x,y) along (ux,uy) for `dist`, clipped by walls like the server (nav.clipMove). */
-  _knockArrow(g, x, y, ux, uy, dist, r, wallStun, col, a) {
-    const tx = x + ux * dist, ty = y + uy * dist;
-    const end = this.world.nav.clipMove(x, y, tx, ty, r);
-    const len = Math.hypot(end.x - x, end.y - y);
-    g.lineStyle(5, col, 0.85 * a); g.lineBetween(x, y, end.x, end.y);
-    const nx = -uy, ny = ux, L = Math.min(24, len * 0.6 + 8);
-    const hx = end.x - ux * L, hy = end.y - uy * L;
-    g.fillStyle(col, 0.95 * a); g.fillTriangle(end.x + ux * 4, end.y + uy * 4, hx + nx * 13, hy + ny * 13, hx - nx * 13, hy - ny * 13);
-    if (end.hit) {
-      g.lineStyle(2, col, 0.25 * a); g.lineBetween(end.x, end.y, tx, ty);
-      if (wallStun) {
-        g.lineStyle(5, 0xffd23f, a);
-        for (let i = 0; i < 4; i++) {
-          const an = (i / 4) * Math.PI + 0.4;
-          g.lineBetween(end.x - Math.cos(an) * 20, end.y - Math.sin(an) * 20, end.x + Math.cos(an) * 20, end.y + Math.sin(an) * 20);
-        }
-        if (!this._aimTxt.visible) this._aimTxt.setText(`💫 WALL STUN ${(wallStun / 1000).toFixed(1)}s`).setPosition(end.x, end.y - 26).setVisible(true);
-      }
-    }
-    return end;
-  }
-
-  /** Arrows for every knockable enemy inside a circle (pushed away from its center). */
-  _knockArrowsInCircle(g, cx, cy, radius, sk, col, a) {
-    let n = 0;
-    this._knockables((v, vr) => {
-      if (n >= 8) return;
-      const dx = v.x - cx, dy = v.y - cy, d = Math.hypot(dx, dy);
-      if (d > radius + vr) return;
-      n++;
-      const ux = d > 1 ? dx / d : 1, uy = d > 1 ? dy / d : 0;
-      this._knockArrow(g, v.x, v.y, ux, uy, sk.knockback.dist, vr, sk.wallStun?.ms || 0, col, a);
-    });
-  }
-
-  /** Faint dotted path from the last move click (fades after ~0.6 s). */
-  _drawPathPreview(g, now) {
-    const pp = this._pathPrev;
-    if (!pp) return;
-    const k = (now - pp.t0) / 600;
-    if (k >= 1) { this._pathPrev = null; return; }
-    const a = 0.5 * (1 - k * k);
-    g.fillStyle(0x7ed957, a);
-    let ax = pp.x0, ay = pp.y0, dots = 0;
-    for (const q of pp.pts) {
-      const len = Math.hypot(q.x - ax, q.y - ay), n = Math.floor(len / 26);
-      for (let i = 1; i <= n && dots < 160; i++, dots++) {
-        const t = i / (n + 1);
-        g.fillRect(ax + (q.x - ax) * t - 3, ay + (q.y - ay) * t - 3, 6, 6);
-      }
-      ax = q.x; ay = q.y;
-    }
-    if (pp.pts.length > 1) { // waypoint corners
-      g.fillStyle(0xb6ff8a, a);
-      for (let i = 0; i < pp.pts.length - 1; i++) g.fillRect(pp.pts[i].x - 5, pp.pts[i].y - 5, 10, 10);
-    }
-  }
-
-  /** Skill range / shape preview: while hovering a HUD skill, and briefly after a cast. */
-  _drawAim(me, now) {
-    const g = this._aimG;
-    g.clear();
-    if (this._aimTxt.visible) this._aimTxt.setVisible(false);
-    if (!me || me.dead || !this._pred) return;
-    this._drawPathPreview(g, now);
-    const flash = this._aimFlash && now < this._aimFlash.until ? this._aimFlash : null;
-    const slot = this._hoverSlot || flash?.slot;
-    if (slot === 'd' || slot === 'f') {
-      const sp = this._spellOf(me, slot);
-      if (!sp) return;
-      const fl = flash && flash.slot === slot && !this._hoverSlot ? flash : null;
-      this._drawSpellAim(g, me, sp, this._pred, fl, fl ? Math.max(0, (fl.until - now) / 260) : 1);
-      return;
-    }
-    const sk = slot && CHAMPIONS[me.champ]?.skills?.[slot];
-    if (!sk) return;
-    const p = this._pred, col = sk.color ?? 0xffffff;
-    const a = flash && !this._hoverSlot ? Math.max(0, (flash.until - now) / 260) : 1;
-    const kb = sk.knockback && sk.knockback.dist > 0;
-    if (sk.at === 'pet') {
-      // Centered on the pet (`range` ignored).
-      const pet = this._petPos(), c = pet || p, pa = pet ? a : a * 0.35;
-      g.fillStyle(col, 0.12 * pa); g.fillCircle(c.x, c.y, sk.radius || 300);
-      g.lineStyle(3, col, 0.85 * pa); g.strokeCircle(c.x, c.y, sk.radius || 300);
-      g.lineStyle(2, col, 0.4 * pa); g.strokeCircle(c.x, c.y, (sk.radius || 300) * 0.55);
-      if (pet) { g.lineStyle(2, col, 0.5 * a); g.lineBetween(p.x, p.y - 30, pet.x, pet.y - 20); }
-      else if (!this._aimTxt.visible) this._aimTxt.setText(`🤖 ${CHAMPIONS[me.champ]?.pet?.name || 'pet'} is offline`).setPosition(p.x, p.y - 140).setVisible(true);
-      if (kb) this._knockArrowsInCircle(g, c.x, c.y, sk.radius, sk, col, pa);
-      return;
-    }
-    if (sk.range) { g.lineStyle(3, col, 0.55 * a); g.strokeCircle(p.x, p.y, sk.range); }
-    const selfArea = sk.type === 'self' || sk.type === 'allies' || ((sk.type === 'circle' || sk.type === 'zone') && !sk.range);
-    if (selfArea && sk.radius) {
-      g.fillStyle(col, 0.1 * a); g.fillCircle(p.x, p.y, sk.radius);
-      g.lineStyle(3, col, 0.75 * a); g.strokeCircle(p.x, p.y, sk.radius);
-      if (sk.type === 'zone') { g.lineStyle(2, 0xffffff, 0.35 * a); g.strokeCircle(p.x, p.y, sk.radius * 0.7); }
-      if (kb) this._knockArrowsInCircle(g, p.x, p.y, sk.radius, sk, col, a);
-      return;
-    }
-    let aim = flash || this._mouseWorld;
-    let autoT = null;
-    if (!flash && (this._hoverSlot || this._autoAimWanted(p))) {
-      // A HUD-slot click / cursor-on-yourself cast auto-aims: preview exactly that.
-      const aa = this._autoAim(sk, p);
-      if (!aa) { if (!this._aimTxt.visible) this._aimTxt.setText('🎯 no target in range').setPosition(p.x, p.y - 140).setVisible(true); return; }
-      aim = aa; autoT = aa.id ? this._viewOf(aa.id) : null;
-    } else if (flash?.id) autoT = this._viewOf(flash.id);
-    if (!aim || (this._isTouch && !flash)) return;
-    if (autoT && !autoT.dead && autoT.alive !== false) {
-      g.lineStyle(3, 0xffd23f, 0.9 * a); g.strokeCircle(autoT.x, autoT.y, 46);
-      g.lineStyle(2, 0xffd23f, 0.5 * a); g.strokeCircle(autoT.x, autoT.y, 56);
-      if (!this._aimTxt.visible && sk.type !== 'target') this._aimTxt.setText('🎯 AUTO').setPosition(autoT.x + 70, autoT.y - 40).setVisible(true);
-    }
-    const dx = aim.x - p.x, dy = aim.y - p.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
-    if (sk.type === 'projectile') {
-      const L = sk.range, hw = (sk.width || 70) / 2;
-      const count = Math.max(1, Math.min(12, sk.count | 0 || 1));
-      const spread = count > 1 ? ((sk.spread || 0) * Math.PI) / 180 : 0;
-      const base = Math.atan2(uy, ux);
-      const fa = count > 1 ? 0.08 : 0.16;
-      for (let i = 0; i < count; i++) {
-        const an = base + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0);
-        const vx = Math.cos(an), vy = Math.sin(an), nx = -vy * hw, ny = vx * hw;
-        const pts = [
-          { x: p.x + nx, y: p.y + ny }, { x: p.x + vx * L + nx, y: p.y + vy * L + ny },
-          { x: p.x + vx * L - nx, y: p.y + vy * L - ny }, { x: p.x - nx, y: p.y - ny },
-        ];
-        g.fillStyle(col, fa * a); g.fillPoints(pts, true);
-        g.lineStyle(2, col, (count > 1 ? 0.5 : 0.75) * a); g.strokePoints(pts, true);
-      }
-      if (count > 1) { // fan outline: edges + arc at max range
-        g.lineStyle(3, col, 0.8 * a);
-        g.beginPath(); g.arc(p.x, p.y, L, base - spread / 2, base + spread / 2); g.strokePath();
-      }
-      if (kb) {
-        if (sk.pierce) {
-          let n = 0;
-          this._knockables((v, vr) => {
-            if (n >= 8 || distToSeg(v.x, v.y, p.x, p.y, p.x + ux * L, p.y + uy * L) > hw + vr) return;
-            const ex = v.x - p.x, ey = v.y - p.y, ed = Math.hypot(ex, ey) || 1;
-            if (ex * ux + ey * uy <= 0) return;
-            n++;
-            this._knockArrow(g, v.x, v.y, ex / ed, ey / ed, sk.knockback.dist, vr, sk.wallStun?.ms || 0, col, a);
-          });
+      /** Local prediction: walk toward the order destination at `ms`, reconcile with the server. */
+      _predict(c, v, dt, srvNow) {
+        if (c.dead) { this._pred = { x: c.x, y: c.y }; this._moveDest = null; v.setDisplayPos(c.x, c.y); return; }
+        if (!this._pred) this._pred = { x: c.x, y: c.y };
+        const p = this._pred, now = this.time.now;
+        const err = Math.hypot(c.x - p.x, c.y - p.y);
+        if (now < this._dashUntil) {
+          const k = approach(dt, 18); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k;
+        } else if (err > PRED_SNAP_PX) {
+          p.x = c.x; p.y = c.y;
+          if (err > 400) this._moveDest = null;
         } else {
-          const v = this._firstEnemyOnSeg(p.x, p.y, p.x + ux * L, p.y + uy * L, hw);
-          if (v) { const ex = v.x - p.x, ey = v.y - p.y, ed = Math.hypot(ex, ey) || 1; this._knockArrow(g, v.x, v.y, ex / ed, ey / ed, sk.knockback.dist, CHAMP_RADIUS, sk.wallStun?.ms || 0, col, a); }
+          const canMove = !((c.stunnedUntil || 0) > srvNow) && !((c.rootedUntil || 0) > srvNow) && !((c.recallUntil || 0) > srvNow);
+          if (this._moveDest && canMove && this._replan) {
+            this._replan = false;
+            const path = this.world.nav.findPath(p.x, p.y, this._moveDest.x, this._moveDest.y, CHAMP_RADIUS);
+            this._movePath = path.length ? path : null;
+          }
+          if (this._moveDest && canMove) {
+            const slow = (c.slowUntil || 0) > srvNow ? 1 - Math.min(90, c.slowPct || 0) / 100 : 1;
+            let step = Math.max(0, (c.ms || 330) * slow) * dt;
+            // Walk the nav path (waypoints around walls), carrying leftover step to the next waypoint.
+            for (let guard = 0; guard < 4 && this._moveDest && step > 0; guard++) {
+              const path = this._movePath;
+              const wp = path && path.length ? path[0] : this._moveDest;
+              const dx = wp.x - p.x, dy = wp.y - p.y, d = Math.hypot(dx, dy);
+              if (d <= step) {
+                p.x = wp.x; p.y = wp.y; step -= d;
+                if (path && path.length) path.shift();
+                if (!path || !path.length) { this._moveDest = null; this._movePath = null; }
+              } else { p.x += (dx / d) * step; p.y += (dy / d) * step; step = 0; }
+            }
+            if (err > 60) { const k = approach(dt, 2); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k; }
+          } else {
+            const k = approach(dt, 9); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k;
+          }
+          // Never show yourself inside furniture (reconcile blending can cut a corner).
+          if (this.world.nav.isBlocked(p.x, p.y, CHAMP_RADIUS - 4)) { const q = this.world.nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
+        }
+        v.setDisplayPos(p.x, p.y);
+      }
+
+      _updateLocal(me, dt, now, srvNow) {
+        // Death → desaturate the world camera (HUD stays in color).
+        const dead = !!me?.dead && this._phase === 'playing';
+        if (dead !== this._meDead) {
+          this._meDead = dead;
+          this._setGray(dead);
+          if (dead) { this.shop?.close?.(); this._moveDest = null; }
+          else this.hud.setDeathTitle(null);
+        }
+        // Camera follows the predicted position (slightly below center: the HUD covers the bottom).
+        const tgt = this._pred || me;
+        if (tgt) {
+          if (!this._camInit) { this._camInit = true; this._camX = tgt.x; this._camY = tgt.y + 40; this._camFreeX = this._camX; this._camFreeY = this._camY; }
+          // Pass 2 RP-08: follow when locked (and not peeking via the minimap) or while Z is held.
+          const follow = this._centerHeld || (this._camLocked && !this._camPeek);
+          if (follow) {
+            const k = approach(dt, this._centerHeld ? 14 : 7);
+            this._camX += (tgt.x - this._camX) * k; this._camY += (tgt.y + 40 - this._camY) * k;
+            this._camFreeX = this._camX; this._camFreeY = this._camY;
+          } else {
+            this._edgePan(dt);
+            const k = approach(dt, 16);
+            this._camX += (this._camFreeX - this._camX) * k; this._camY += (this._camFreeY - this._camY) * k;
+          }
+          this.cameras.main.centerOn(this._camX, this._camY);
+        }
+        // Joystick / arrow keys → move orders toward a point ahead.
+        let dir = this._stickDir;
+        if (!dir && this._cursors && !this._chatActive) {
+          const c = this._cursors;
+          const x = (c.right.isDown ? 1 : 0) - (c.left.isDown ? 1 : 0), y = (c.down.isDown ? 1 : 0) - (c.up.isDown ? 1 : 0);
+          if (x || y) { const l = Math.hypot(x, y); dir = { x: x / l, y: y / l }; }
+        }
+        if (dir && me && this._canAct()) {
+          this._sticking = true;
+          if (now - this._stickSentAt > STICK_ORDER_MS) {
+            this._stickSentAt = now;
+            const p = this._pred || me;
+            this._moveOrder(p.x + dir.x * 260, p.y + dir.y * 260, false);
+          }
+        } else if (this._sticking) {
+          this._sticking = false;
+          if (this._canAct()) this._order({ type: 'stop' });
+          this._moveDest = null;
+        }
+        // Attack target + hover marks.
+        const tv = me && !me.dead ? this._viewOf(me.targetId) : null;
+        if (tv && (tv.alive !== false) && !tv.dead) this._targetMark.setVisible(true).setPosition(tv.x, tv.y + 2);
+        else if (this._targetMark.visible) this._targetMark.setVisible(false);
+        if (!this._isTouch && this._mouseWorld && now >= this._hoverPickAt) {
+          this._hoverPickAt = now + 50;
+          const uiBlocking = this.hud.modalOpen || this.shop?.isOpen || this._sbOpen || this._chatActive || this._pointerOut;
+          const canPick = this._phase === 'playing' && !uiBlocking;
+          this._hoverEntity = canPick ? this._pickEntityAt(this._mouseWorld.x, this._mouseWorld.y) : null;
+          this._hoverEnemy = this._hoverEntity && this._hoverEntity.team !== this.myTeam ? this._hoverEntity : null;
+        }
+        const hv = this._hoverEntity;
+        const hvAlive = !!(hv && (hv.alive !== false) && !hv.dead && !hv.removed);
+        if (hvAlive) {
+          const rel = this._entityRel(hv);
+          const col = rel === 'enemy' ? 0xff4a4a : (rel === 'neutral' ? 0xffd23f : 0x39c2ff);
+          const rw = hv instanceof StructureView ? (hv.kind === 'core' ? 196 : 128) : (hv instanceof UnitView ? Math.max(60, (hv.size || 44) * 1.5) : 90);
+          this._hoverMark.setVisible(hv !== tv).setPosition(hv.x, hv.y + 4).setSize(rw, Math.round(rw * 0.36)).setStrokeStyle(2.5, col, 0.9);
+          this._setHoverOutline(hv, rel);
+          this._setHoverCursor(rel);
+        } else {
+          if (this._hoverMark.visible) this._hoverMark.setVisible(false);
+          this._setHoverOutline(null, '');
+          this._setHoverCursor('');
+        }
+        this._updateTargetPanel(this._state());
+        this._drawAim(me, now);
+      }
+
+      // ───────────────────────── aim previews ─────────────────────────
+      /** My pet's displayed position (null if I have none / it's down). */
+      _petPos() {
+        const v = this._myPetId ? this.views.units.get(this._myPetId) : null;
+        return v && v.alive && !v.removed ? { x: v.x, y: v.y } : null;
+      }
+
+      /** Enemy champions + displaceable enemy units (no pets / epics / structures), for knockback previews. */
+      _knockables(fn) {
+        for (const v of this.views.champs.values()) if (!v.dead && v.team !== this.myTeam) fn(v, CHAMP_RADIUS);
+        for (const v of this.views.units.values()) {
+          if (!v.alive || v.kind === 'pet' || v.team === this.myTeam || R.EPICS[v.kind]) continue;
+          fn(v, MINION_RADIUS);
         }
       }
-    } else if (sk.type === 'circle' || sk.type === 'zone') {
-      const r = Math.min(d, sk.range), cx = p.x + ux * r, cy = p.y + uy * r;
-      g.fillStyle(col, (sk.type === 'zone' ? 0.2 : 0.16) * a); g.fillCircle(cx, cy, sk.radius);
-      g.lineStyle(3, col, 0.85 * a); g.strokeCircle(cx, cy, sk.radius);
-      if (sk.type === 'zone') { // persistent: concentric "puddle" rings
-        g.lineStyle(2, 0xffffff, 0.35 * a); g.strokeCircle(cx, cy, sk.radius * 0.7);
-        g.lineStyle(2, 0xffffff, 0.2 * a); g.strokeCircle(cx, cy, sk.radius * 0.4);
+
+      /** First enemy (champion or unit, never a pet) whose center is within r of the segment, by distance from (x0,y0). */
+      _firstEnemyOnSeg(x0, y0, x1, y1, r) {
+        let best = null, bt = Infinity;
+        const L = Math.hypot(x1 - x0, y1 - y0) || 1, ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+        this._knockables((v, vr) => {
+          if (distToSeg(v.x, v.y, x0, y0, x1, y1) > r + vr) return;
+          const t = (v.x - x0) * ux + (v.y - y0) * uy;
+          if (t > 0 && t < bt) { bt = t; best = v; }
+        });
+        return best;
       }
-      if (kb) this._knockArrowsInCircle(g, cx, cy, sk.radius, sk, col, a);
-    } else if (sk.type === 'dash') {
-      const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
-      const end = this.world.nav.clipMove(p.x, p.y, tx, ty, CHAMP_RADIUS);
-      g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, end.x, end.y);
-      g.strokeCircle(end.x, end.y, 28);
-      if (end.hit) { // stopped by furniture
-        g.lineStyle(2, col, 0.25 * a); g.lineBetween(end.x, end.y, tx, ty);
-        g.lineStyle(6, 0xff8a3c, 0.95 * a);
-        g.lineBetween(end.x + ux * 32 - uy * 24, end.y + uy * 32 + ux * 24, end.x + ux * 32 + uy * 24, end.y + uy * 32 - ux * 24);
+
+      /** Knockback arrow from (x,y) along (ux,uy) for `dist`, clipped by walls like the server (nav.clipMove). */
+      _knockArrow(g, x, y, ux, uy, dist, r, wallStun, col, a) {
+        const tx = x + ux * dist, ty = y + uy * dist;
+        const end = this.world.nav.clipMove(x, y, tx, ty, r);
+        const len = Math.hypot(end.x - x, end.y - y);
+        g.lineStyle(5, col, 0.85 * a); g.lineBetween(x, y, end.x, end.y);
+        const nx = -uy, ny = ux, L = Math.min(24, len * 0.6 + 8);
+        const hx = end.x - ux * L, hy = end.y - uy * L;
+        g.fillStyle(col, 0.95 * a); g.fillTriangle(end.x + ux * 4, end.y + uy * 4, hx + nx * 13, hy + ny * 13, hx - nx * 13, hy - ny * 13);
+        if (end.hit) {
+          g.lineStyle(2, col, 0.25 * a); g.lineBetween(end.x, end.y, tx, ty);
+          if (wallStun) {
+            g.lineStyle(5, 0xffd23f, a);
+            for (let i = 0; i < 4; i++) {
+              const an = (i / 4) * Math.PI + 0.4;
+              g.lineBetween(end.x - Math.cos(an) * 20, end.y - Math.sin(an) * 20, end.x + Math.cos(an) * 20, end.y + Math.sin(an) * 20);
+            }
+            if (!this._aimTxt.visible) this._aimTxt.setText(`💫 WALL STUN ${(wallStun / 1000).toFixed(1)}s`).setPosition(end.x, end.y - 26).setVisible(true);
+          }
+        }
+        return end;
       }
-      if (kb) {
-        const v = this._firstEnemyOnSeg(p.x, p.y, end.x, end.y, sk.hitRadius || 60);
-        if (v) { const ex = v.x - p.x, ey = v.y - p.y, ed = Math.hypot(ex, ey) || 1; this._knockArrow(g, v.x, v.y, ex / ed, ey / ed, sk.knockback.dist, CHAMP_RADIUS, sk.wallStun?.ms || 0, col, a); }
+
+      /** Arrows for every knockable enemy inside a circle (pushed away from its center). */
+      _knockArrowsInCircle(g, cx, cy, radius, sk, col, a) {
+        let n = 0;
+        this._knockables((v, vr) => {
+          if (n >= 8) return;
+          const dx = v.x - cx, dy = v.y - cy, d = Math.hypot(dx, dy);
+          if (d > radius + vr) return;
+          n++;
+          const ux = d > 1 ? dx / d : 1, uy = d > 1 ? dy / d : 0;
+          this._knockArrow(g, v.x, v.y, ux, uy, sk.knockback.dist, vr, sk.wallStun?.ms || 0, col, a);
+        });
       }
-    } else if (sk.type === 'blink') {
-      const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
-      const land = this.world.nav.nearestFree(tx, ty, CHAMP_RADIUS);
-      g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, land.x, land.y);
-      g.strokeCircle(land.x, land.y, 28);
-      if (Math.hypot(land.x - tx, land.y - ty) > 6) { // aimed into a wall → lands on the nearest free spot
-        g.lineStyle(2, col, 0.35 * a); g.strokeCircle(tx, ty, 20); g.lineBetween(tx, ty, land.x, land.y);
-      }
-    } else if (sk.type === 'target') {
-      const tv = autoT || this._targetNear(aim.x, aim.y, this._champOnly(sk));
-      if (tv) {
-        const inRange = Math.hypot(tv.x - p.x, tv.y - p.y) <= sk.range + 90;
-        const tc = inRange ? col : 0xff4a4a;
-        g.lineStyle(3, tc, 0.6 * a); g.lineBetween(p.x, p.y, tv.x, tv.y); g.strokeCircle(tv.x, tv.y, 44);
-        if (kb && inRange && !R.EPICS[tv.kind]) {
-          const ex = tv.x - p.x, ey = tv.y - p.y, ed = Math.hypot(ex, ey) || 1;
-          this._knockArrow(g, tv.x, tv.y, ex / ed, ey / ed, sk.knockback.dist, tv.def ? CHAMP_RADIUS : MINION_RADIUS, sk.wallStun?.ms || 0, col, a);
+
+      /** Faint dotted path from the last move click (fades after ~0.6 s). */
+      _drawPathPreview(g, now) {
+        const pp = this._pathPrev;
+        if (!pp) return;
+        const k = (now - pp.t0) / 600;
+        if (k >= 1) { this._pathPrev = null; return; }
+        const a = 0.5 * (1 - k * k);
+        g.fillStyle(0x7ed957, a);
+        let ax = pp.x0, ay = pp.y0, dots = 0;
+        for (const q of pp.pts) {
+          const len = Math.hypot(q.x - ax, q.y - ay), n = Math.floor(len / 26);
+          for (let i = 1; i <= n && dots < 160; i++, dots++) {
+            const t = i / (n + 1);
+            g.fillRect(ax + (q.x - ax) * t - 3, ay + (q.y - ay) * t - 3, 6, 6);
+          }
+          ax = q.x; ay = q.y;
+        }
+        if (pp.pts.length > 1) { // waypoint corners
+          g.fillStyle(0xb6ff8a, a);
+          for (let i = 0; i < pp.pts.length - 1; i++) g.fillRect(pp.pts[i].x - 5, pp.pts[i].y - 5, 10, 10);
         }
       }
-    }
-  }
 
-  // ───────────────────────── end of match ─────────────────────────
-  _onEnded(st) {
-    if (this._ended) return;
-    this._ended = true;
-    if (this.room?.roomId) clearMatch(this.room.roomId); // Pass 2: nothing left to REJOIN
-    this.shop?.close?.(); this.scoreboard?.hide?.(); this._sbOpen = false; this.info?.close?.();
-    this.hud.closeModal();
-    this._setGray(false);
-    const rows = [];
-    // v4 §3.2b: `scores` is never view-filtered (hidden enemies are absent from `champions`);
-    // offline / older servers fall back to the champions map. Gold isn't in TeamScore.
-    const src = st.scores && st.scores.size > 0 ? st.scores : st.champions;
-    src.forEach((c, id) => rows.push({
-      sid: id, team: c.team, name: c.name, champ: c.champ, level: c.level | 0, kills: c.kills | 0, deaths: c.deaths | 0,
-      assists: c.assists | 0, cs: c.cs | 0, gold: (c.gold ?? st.champions.get?.(id)?.gold) | 0, items: toArr(c.items),
-      isBot: !!c.isBot, isMe: id === this.localId,
-    }));
-    rows.sort((a, b) => (a.team === b.team ? b.kills - a.kills || a.deaths - b.deaths : (a.team === this.myTeam ? -1 : 1)));
-    // state + localSid let EndScreen fill any player missing from rows from state.scores (v4 §3.5).
-    // EP-09: practice never touches the W/L record; winReason → rollback subtitle; first blood +
-    // duration feed the "YOUR SHIFT" highlights and the copied result.
-    const durationMs = st.startedAt ? Math.max(0, this._srvNow() - st.startedAt) : 0;
-    const payload = {
-      winner: st.winner, myTeam: this.myTeam, rows, state: st, localSid: this.localId,
-      practice: !!this._sim, winReason: String(st.winReason || ''), firstBlood: this._firstBlood || '', durationMs,
-    };
-    try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
-    this._reconn = null;
-    this._vote = null; this.hud.showVote(null); this.hud.setRollbackVisible(false); this.hud.setBuyNudge(null);
-    // EP-10: coaching retires after COACH_MATCHES finished matches.
-    if (this._coach && this._gamesPlayed + 1 >= COACH_MATCHES) { try { SaveManager.setFlag?.('tipsSiege', true); } catch (_) { /* old save */ } }
-    if (st.winner && st.winner === this.myTeam) AudioManager.victory?.(); else AudioManager.failure?.();
-    // Let the victory banner + core explosion play before the end screen covers them.
-    this.time.delayedCall(2200, () => {
-      if (this._shuttingDown) return;
-      if (this.endScreen) this._showEndScreen(payload); else this._endPending = payload;
-    });
-  }
-
-  _showEndScreen(payload) {
-    try { this.hud.clearTransient(); this.fx.clearNumbers(); } catch (_) { /* cosmetic */ }
-    try { this.endScreen.show(payload); } catch (e) {
-      console.warn('[TeamMode] EndScreen.show failed, using fallback:', e?.message);
-      new FallbackEndScreen(this, { onPlayAgain: () => this._playAgain(), onMenu: () => this._goMenu() }).show(payload);
-    }
-  }
-
-  // ───────────────────────── chat (DOM input for IME + mobile keyboards) ─────────────────────────
-  _buildChatInput() {
-    const el = document.createElement('input');
-    el.type = 'text'; el.maxLength = 140; el.autocomplete = 'off';
-    el.placeholder = 'say something… (Enter to send, Esc to cancel)';
-    Object.assign(el.style, {
-      position: 'fixed', left: '50%', bottom: '32%', transform: 'translateX(-50%)', width: 'min(70vw, 440px)',
-      padding: '8px 10px', font: '14px Consolas, monospace', color: '#fff', background: 'rgba(5,8,15,0.96)',
-      border: '2px solid #39c2ff', borderRadius: '6px', zIndex: '9999', display: 'none', outline: 'none',
-    });
-    el.addEventListener('keydown', (ev) => {
-      ev.stopPropagation();
-      if (ev.isComposing) return;
-      if (ev.key === 'Enter') { ev.preventDefault(); this._closeChat(true); }
-      else if (ev.key === 'Escape') { ev.preventDefault(); this._closeChat(false); }
-    });
-    el.addEventListener('blur', () => { if (this._chatActive) this._closeChat(false); });
-    document.body.appendChild(el);
-    this._chatEl = el;
-  }
-
-  _openChat() {
-    if (this._chatActive || !this._chatEl || this.hud.modalOpen || this._shuttingDown) return;
-    this._chatActive = true;
-    this.input.keyboard.resetKeys?.(); // don't leave a held arrow stuck down
-    this.input.keyboard.enabled = false;
-    this.input.keyboard.clearCaptures();
-    this._chatEl.value = '';
-    this._chatEl.style.display = 'block';
-    setTimeout(() => this._chatEl?.focus(), 0);
-  }
-
-  _closeChat(send) {
-    if (!this._chatActive) return;
-    const text = (this._chatEl?.value || '').trim();
-    const now = Date.now();
-    if (send && /^\/(rollback|ff|surrender)$/i.test(text)) this._rollback(); // EP-08 chat shortcut
-    else if (send && /^\/(yes|no)$/i.test(text)) this._castVote(/yes/i.test(text));
-    else if (send && text && now - this._lastChatAt >= 600) { this._lastChatAt = now; this._send('chat', { text: text.slice(0, 140) }); }
-    this._chatActive = false;
-    if (this._chatEl) { this._chatEl.value = ''; this._chatEl.style.display = 'none'; this._chatEl.blur(); }
-    if (this.input?.keyboard) {
-      this.input.keyboard.enabled = true;
-      this.input.keyboard.addCapture(KEY_CAPTURES);
-    }
-  }
-
-  // ───────────────────────── leaving ─────────────────────────
-  _goMenu() {
-    // Pass 2: leaving on purpose frees the seat for good (the bot keeps it) → no REJOIN offer.
-    if (this.room?.roomId) clearMatch(this.room.roomId);
-    this._cleanup(); this.scene.start('MenuScene');
-  }
-  // Custom-room players go back to the rooms screen (keep the group together); quick play → lobby.
-  // Round 2: an online quick match re-queues straight away (TeamLobbyScene { autoQueue }).
-  _playAgain() {
-    const custom = !!(this._state()?.custom || this._wasCustom);
-    const online = !this._sim;
-    this._cleanup();
-    if (custom) this.scene.start('TeamCustomScene', { name: this.playerName });
-    else this.scene.start('TeamLobbyScene', online ? { autoQueue: true } : undefined);
-  }
-
-  _cleanup() {
-    if (this._cleanedVisit === this._visit) return;
-    this._cleanedVisit = this._visit;
-    this._setHoverOutline?.(null, '');
-    this._setHoverCursor?.('');
-    if (this._relicViews) { for (const rv of this._relicViews.values()) rv.c.destroy(); this._relicViews.clear(); }
-    // Flag first so Colyseus callbacks firing during room.leave() become no-ops.
-    this._shuttingDown = true;
-    this._applyHoverCursor('');
-    try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
-    this._reconn = null; this._vote = null;
-    document.removeEventListener('visibilitychange', this._onVis);
-    this.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, this._onAdded);
-    this.events.off(Phaser.Scenes.Events.PRE_RENDER, this._classifyCams, this);
-    this._camQ.length = 0;
-    for (const u of this._unsubs || []) { try { u(); } catch (_) { /* ignore */ } }
-    this._unsubs = [];
-    try { this.room?.leave(); } catch (_) { /* ignore */ }
-    this.room = null;
-    this._sim = null;
-    if (this._chatEl) { this._chatEl.remove(); this._chatEl = null; }
-    this._chatActive = false;
-    if (this.input?.keyboard) {
-      this.input.keyboard.enabled = true;
-      this.input.keyboard.removeCapture?.(KEY_CAPTURES); // don't swallow TAB/SPACE/arrows in other scenes
-    }
-    this._grayFx = null;
-    this.views.champs.clear(); this.views.units.clear(); this.views.structs.clear();
-    this.shop = this.scoreboard = this.endScreen = null;
-    this.info = null; this._trailAt?.clear();
-  }
-
-  // ───────────────────────── v3: summoner spells (D / F) ─────────────────────────
-  _spellOf(me, slot) { return me ? SPELLS[me['spell' + slot.toUpperCase()]] || null : null; }
-
-  /** D / F. Desktop aims at the cursor; touch / HUD clicks auto-aim (Flash: stick / facing direction). */
-  _trySpell(slot, viaButton) {
-    const me = this._me();
-    if (!me || this._blocked()) return;
-    const K = slot.toUpperCase(), sp = this._spellOf(me, slot);
-    if (!sp) return this._deny(slot, '❔ No summoner spell in that slot');
-    const srvNow = this._srvNow();
-    if (me.dead) return this._deny(slot, '💀 You are respawning');
-    const left = (me['cd' + K] || 0) - srvNow;
-    if (left > 0) return this._deny(slot, `${sp.icon} ${sp.name} ready in ${left >= 10000 ? fmtTime(left) : `${(left / 1000).toFixed(1)}s`}`);
-    if ((me.stunnedUntil || 0) > srvNow) return this._deny(slot, '💫 Stunned!');
-    if (sp.kind === 'blink' && (me.rootedUntil || 0) > srvNow) return this._deny(slot, `🌿 Rooted — can't ${sp.name}`);
-    if (sp.kind === 'blink' && this.time.now < this._dashUntil) return this._deny(slot, `💨 Can't ${sp.name} while displaced`);
-    const pos = this._pred || me;
-    const auto = viaButton || this._autoAimWanted(pos);
-    const aim = this._spellAim(sp, pos, auto);
-    if (aim.err) return this._deny(slot, aim.err);
-    const msg = { slot, x: Math.round(aim.x), y: Math.round(aim.y) };
-    if (aim.id) msg.id = aim.id;
-    this._castSend(msg, 'spell');
-    if (aim.id) this._markMine(aim.id);
-    if (sp.kind === 'blink') this._moveDest = null;
-    this._aimFlash = { slot, until: this.time.now + 260, x: aim.x, y: aim.y };
-    this.hud.flashSlot(slot, false);
-  }
-
-  /** Aim for a summoner spell → { x, y, id?, target?, err? } (also used by the preview). */
-  _spellAim(sp, pos, auto) {
-    const mouse = this._mouseWorld;
-    switch (sp.kind) {
-      case 'blink': {
-        let tx, ty;
-        if (auto || !mouse) {
-          const v = this.views.champs.get(this.localId);
-          const dir = this._stickDir || this._lastMoveDir || { x: v?.facing || 1, y: 0 };
-          tx = pos.x + dir.x * sp.range; ty = pos.y + dir.y * sp.range;
-        } else { tx = mouse.x; ty = mouse.y; }
-        const dx = tx - pos.x, dy = ty - pos.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, sp.range);
-        const c = this.world.clampToMap(pos.x + (dx / d) * r, pos.y + (dy / d) * r);
-        return { x: c.x, y: c.y };
-      }
-      case 'dot': {
-        const t = this._spellTarget(sp, pos, auto);
-        if (!t) return { x: pos.x, y: pos.y, err: '🎯 No enemy champion in range' };
-        if (Math.hypot(t.x - pos.x, t.y - pos.y) > sp.range + CHAMP_RADIUS + 20) return { x: t.x, y: t.y, target: t, err: '📏 Out of range' };
-        return { x: t.x, y: t.y, id: t.id, target: t };
-      }
-      case 'smite': {
-        const t = this._spellTarget(sp, pos, auto);
-        if (!t) return { x: pos.x, y: pos.y, err: '🎯 No monster / enemy minion in range' };
-        if (Math.hypot(t.x - pos.x, t.y - pos.y) > sp.range + (t.size || 44) * 0.5 + 20) return { x: t.x, y: t.y, target: t, err: '📏 Out of range' };
-        return { x: t.x, y: t.y, id: t.id, target: t };
-      }
-      default: return { x: pos.x, y: pos.y };
-    }
-  }
-
-  /** Smite: monster (camp / epic) or enemy minion — never a pet / champion. Ignite: enemy champion. */
-  _smiteable(v) {
-    if (!v || !v.alive || v.removed || v.isPet || v.kind === 'pet') return false;
-    if (v.team === this.myTeam) return false;
-    return !!v.campId || !!R.EPICS[v.kind] || !!R.MINIONS[v.kind];
-  }
-
-  _spellTarget(sp, pos, auto) {
-    const mouse = this._mouseWorld;
-    if (sp.kind === 'dot') {
-      if (!auto && mouse) {
-        const h = this._pickEnemyAt(mouse.x, mouse.y);
-        if (h instanceof ChampionView) return h;
-        const n = this._nearestEnemyTo(mouse.x, mouse.y, 200, true);
-        if (n) return n;
-      }
-      return this._nearestEnemyTo(pos.x, pos.y, sp.range + 150, true);
-    }
-    // smite
-    if (!auto && mouse) {
-      let best = null, bd = 200;
-      for (const v of this.views.units.values()) {
-        if (!this._smiteable(v)) continue;
-        if (v.hitTest(mouse.x, mouse.y)) return v;
-        const d = Math.hypot(v.x - mouse.x, v.y - mouse.y);
-        if (d < bd) { bd = d; best = v; }
-      }
-      if (best) return best;
-    }
-    // Auto: epic › camp monster (biggest) › enemy minion, nearest within reach.
-    let best = null, bScore = -Infinity;
-    for (const v of this.views.units.values()) {
-      if (!this._smiteable(v)) continue;
-      const d = Math.hypot(v.x - pos.x, v.y - pos.y);
-      if (d > sp.range + 120) continue;
-      const cls = R.EPICS[v.kind] ? 3 : v.campId ? 2 : 1;
-      const score = cls * 10000 + (v.campId || R.EPICS[v.kind] ? v.maxHp : 0) - d;
-      if (score > bScore) { bScore = score; best = v; }
-    }
-    return best;
-  }
-
-  /** Spell aim preview (hovering a D / F slot, and briefly after the cast). */
-  _drawSpellAim(g, me, sp, p, flash, a) {
-    const col = sp.color ?? 0xffffff;
-    const auto = !!this._hoverSlot || this._autoAimWanted(p); // a HUD-slot click auto-aims too
-    const aim = flash ? { x: flash.x, y: flash.y } : this._spellAim(sp, p, auto);
-    if (sp.kind === 'blink') {
-      g.lineStyle(3, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.range);
-      const land = this.world.nav.nearestFree(aim.x, aim.y, CHAMP_RADIUS);
-      const over = !this.world.nav.segmentClear(p.x, p.y, land.x, land.y, 4);
-      g.lineStyle(4, col, (over ? 0.35 : 0.6) * a); g.lineBetween(p.x, p.y, land.x, land.y);
-      g.fillStyle(col, 0.18 * a); g.fillCircle(land.x, land.y, CHAMP_RADIUS + 4);
-      g.lineStyle(3, col, 0.95 * a); g.strokeCircle(land.x, land.y, CHAMP_RADIUS + 4);
-      if (Math.hypot(land.x - aim.x, land.y - aim.y) > 6) { // aimed into a wall → nearest free spot
-        g.lineStyle(2, col, 0.4 * a); g.strokeCircle(aim.x, aim.y, 18); g.lineBetween(aim.x, aim.y, land.x, land.y);
-      }
-      if (over && !this._aimTxt.visible) this._aimTxt.setText('⚡ over the wall').setPosition(land.x, land.y - 40).setVisible(true);
-      return;
-    }
-    if (sp.kind === 'dot' || sp.kind === 'smite') {
-      g.lineStyle(3, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.range);
-      const r = flash ? null : aim;
-      const t = r?.target || null;
-      if (t) {
-        const tc = r.err ? 0xff4a4a : col;
-        g.lineStyle(3, tc, 0.65 * a); g.lineBetween(p.x, p.y - 30, t.x, t.y - 30);
-        g.lineStyle(4, tc, 0.95 * a); g.strokeCircle(t.x, t.y, Math.max(40, (t.size || 60) * 0.7));
-        g.lineStyle(2, 0xffffff, 0.5 * a); g.strokeCircle(t.x, t.y, Math.max(48, (t.size || 60) * 0.7) + 8);
-        if (sp.kind === 'smite' && !r.err && !this._aimTxt.visible) {
-          const dmg = Math.round(R.scaledAmount(sp.dmg, me.level || 1, 0, 0));
-          const v = this._viewOf(t.id), kill = v && v.hp <= dmg;
-          this._aimTxt.setText(kill ? `💀 ${dmg} — KILL` : `💀 ${dmg}`).setPosition(t.x, t.y - (t.size || 60) - 30).setVisible(true);
+      /** Skill range / shape preview: while hovering a HUD skill, and briefly after a cast. */
+      _drawAim(me, now) {
+        const g = this._aimG;
+        g.clear();
+        if (this._aimTxt.visible) this._aimTxt.setVisible(false);
+        if (!me || me.dead || !this._pred) return;
+        this._drawPathPreview(g, now);
+        const flash = this._aimFlash && now < this._aimFlash.until ? this._aimFlash : null;
+        const slot = this._hoverSlot || flash?.slot;
+        if (slot === 'd' || slot === 'f') {
+          const sp = this._spellOf(me, slot);
+          if (!sp) return;
+          const fl = flash && flash.slot === slot && !this._hoverSlot ? flash : null;
+          this._drawSpellAim(g, me, sp, this._pred, fl, fl ? Math.max(0, (fl.until - now) / 260) : 1);
+          return;
         }
-      } else if (flash) {
-        g.lineStyle(4, col, 0.9 * a); g.strokeCircle(flash.x, flash.y, 46);
+        const sk = slot && CHAMPIONS[me.champ]?.skills?.[slot];
+        if (!sk) return;
+        const p = this._pred, col = sk.color ?? 0xffffff;
+        const a = flash && !this._hoverSlot ? Math.max(0, (flash.until - now) / 260) : 1;
+        const kb = sk.knockback && sk.knockback.dist > 0;
+        if (sk.at === 'pet') {
+          // Centered on the pet (`range` ignored).
+          const pet = this._petPos(), c = pet || p, pa = pet ? a : a * 0.35;
+          g.fillStyle(col, 0.12 * pa); g.fillCircle(c.x, c.y, sk.radius || 300);
+          g.lineStyle(3, col, 0.85 * pa); g.strokeCircle(c.x, c.y, sk.radius || 300);
+          g.lineStyle(2, col, 0.4 * pa); g.strokeCircle(c.x, c.y, (sk.radius || 300) * 0.55);
+          if (pet) { g.lineStyle(2, col, 0.5 * a); g.lineBetween(p.x, p.y - 30, pet.x, pet.y - 20); }
+          else if (!this._aimTxt.visible) this._aimTxt.setText(`🤖 ${CHAMPIONS[me.champ]?.pet?.name || 'pet'} is offline`).setPosition(p.x, p.y - 140).setVisible(true);
+          if (kb) this._knockArrowsInCircle(g, c.x, c.y, sk.radius, sk, col, pa);
+          return;
+        }
+        if (sk.range) { g.lineStyle(3, col, 0.55 * a); g.strokeCircle(p.x, p.y, sk.range); }
+        const selfArea = sk.type === 'self' || sk.type === 'allies' || ((sk.type === 'circle' || sk.type === 'zone') && !sk.range);
+        if (selfArea && sk.radius) {
+          g.fillStyle(col, 0.1 * a); g.fillCircle(p.x, p.y, sk.radius);
+          g.lineStyle(3, col, 0.75 * a); g.strokeCircle(p.x, p.y, sk.radius);
+          if (sk.type === 'zone') { g.lineStyle(2, 0xffffff, 0.35 * a); g.strokeCircle(p.x, p.y, sk.radius * 0.7); }
+          if (kb) this._knockArrowsInCircle(g, p.x, p.y, sk.radius, sk, col, a);
+          return;
+        }
+        let aim = flash || this._mouseWorld;
+        let autoT = null;
+        if (!flash && (this._hoverSlot || this._autoAimWanted(p))) {
+          // A HUD-slot click / cursor-on-yourself cast auto-aims: preview exactly that.
+          const aa = this._autoAim(sk, p);
+          if (!aa) { if (!this._aimTxt.visible) this._aimTxt.setText('🎯 no target in range').setPosition(p.x, p.y - 140).setVisible(true); return; }
+          aim = aa; autoT = aa.id ? this._viewOf(aa.id) : null;
+        } else if (flash?.id) autoT = this._viewOf(flash.id);
+        if (!aim || (this._isTouch && !flash)) return;
+        if (autoT && !autoT.dead && autoT.alive !== false) {
+          g.lineStyle(3, 0xffd23f, 0.9 * a); g.strokeCircle(autoT.x, autoT.y, 46);
+          g.lineStyle(2, 0xffd23f, 0.5 * a); g.strokeCircle(autoT.x, autoT.y, 56);
+          if (!this._aimTxt.visible && sk.type !== 'target') this._aimTxt.setText('🎯 AUTO').setPosition(autoT.x + 70, autoT.y - 40).setVisible(true);
+        }
+        const dx = aim.x - p.x, dy = aim.y - p.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+        if (sk.type === 'projectile') {
+          const L = sk.range, hw = (sk.width || 70) / 2;
+          const count = Math.max(1, Math.min(12, sk.count | 0 || 1));
+          const spread = count > 1 ? ((sk.spread || 0) * Math.PI) / 180 : 0;
+          const base = Math.atan2(uy, ux);
+          const fa = count > 1 ? 0.08 : 0.16;
+          for (let i = 0; i < count; i++) {
+            const an = base + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0);
+            const vx = Math.cos(an), vy = Math.sin(an), nx = -vy * hw, ny = vx * hw;
+            const pts = [
+              { x: p.x + nx, y: p.y + ny }, { x: p.x + vx * L + nx, y: p.y + vy * L + ny },
+              { x: p.x + vx * L - nx, y: p.y + vy * L - ny }, { x: p.x - nx, y: p.y - ny },
+            ];
+            g.fillStyle(col, fa * a); g.fillPoints(pts, true);
+            g.lineStyle(2, col, (count > 1 ? 0.5 : 0.75) * a); g.strokePoints(pts, true);
+          }
+          if (count > 1) { // fan outline: edges + arc at max range
+            g.lineStyle(3, col, 0.8 * a);
+            g.beginPath(); g.arc(p.x, p.y, L, base - spread / 2, base + spread / 2); g.strokePath();
+          }
+          if (kb) {
+            if (sk.pierce) {
+              let n = 0;
+              this._knockables((v, vr) => {
+                if (n >= 8 || distToSeg(v.x, v.y, p.x, p.y, p.x + ux * L, p.y + uy * L) > hw + vr) return;
+                const ex = v.x - p.x, ey = v.y - p.y, ed = Math.hypot(ex, ey) || 1;
+                if (ex * ux + ey * uy <= 0) return;
+                n++;
+                this._knockArrow(g, v.x, v.y, ex / ed, ey / ed, sk.knockback.dist, vr, sk.wallStun?.ms || 0, col, a);
+              });
+            } else {
+              const v = this._firstEnemyOnSeg(p.x, p.y, p.x + ux * L, p.y + uy * L, hw);
+              if (v) { const ex = v.x - p.x, ey = v.y - p.y, ed = Math.hypot(ex, ey) || 1; this._knockArrow(g, v.x, v.y, ex / ed, ey / ed, sk.knockback.dist, CHAMP_RADIUS, sk.wallStun?.ms || 0, col, a); }
+            }
+          }
+        } else if (sk.type === 'circle' || sk.type === 'zone') {
+          const r = Math.min(d, sk.range), cx = p.x + ux * r, cy = p.y + uy * r;
+          g.fillStyle(col, (sk.type === 'zone' ? 0.2 : 0.16) * a); g.fillCircle(cx, cy, sk.radius);
+          g.lineStyle(3, col, 0.85 * a); g.strokeCircle(cx, cy, sk.radius);
+          if (sk.type === 'zone') { // persistent: concentric "puddle" rings
+            g.lineStyle(2, 0xffffff, 0.35 * a); g.strokeCircle(cx, cy, sk.radius * 0.7);
+            g.lineStyle(2, 0xffffff, 0.2 * a); g.strokeCircle(cx, cy, sk.radius * 0.4);
+          }
+          if (kb) this._knockArrowsInCircle(g, cx, cy, sk.radius, sk, col, a);
+        } else if (sk.type === 'dash') {
+          const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
+          const end = this.world.nav.clipMove(p.x, p.y, tx, ty, CHAMP_RADIUS);
+          g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, end.x, end.y);
+          g.strokeCircle(end.x, end.y, 28);
+          if (end.hit) { // stopped by furniture
+            g.lineStyle(2, col, 0.25 * a); g.lineBetween(end.x, end.y, tx, ty);
+            g.lineStyle(6, 0xff8a3c, 0.95 * a);
+            g.lineBetween(end.x + ux * 32 - uy * 24, end.y + uy * 32 + ux * 24, end.x + ux * 32 + uy * 24, end.y + uy * 32 - ux * 24);
+          }
+          if (kb) {
+            const v = this._firstEnemyOnSeg(p.x, p.y, end.x, end.y, sk.hitRadius || 60);
+            if (v) { const ex = v.x - p.x, ey = v.y - p.y, ed = Math.hypot(ex, ey) || 1; this._knockArrow(g, v.x, v.y, ex / ed, ey / ed, sk.knockback.dist, CHAMP_RADIUS, sk.wallStun?.ms || 0, col, a); }
+          }
+        } else if (sk.type === 'blink') {
+          const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
+          const land = this.world.nav.nearestFree(tx, ty, CHAMP_RADIUS);
+          g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, land.x, land.y);
+          g.strokeCircle(land.x, land.y, 28);
+          if (Math.hypot(land.x - tx, land.y - ty) > 6) { // aimed into a wall → lands on the nearest free spot
+            g.lineStyle(2, col, 0.35 * a); g.strokeCircle(tx, ty, 20); g.lineBetween(tx, ty, land.x, land.y);
+          }
+        } else if (sk.type === 'target') {
+          const tv = autoT || this._targetNear(aim.x, aim.y, this._champOnly(sk));
+          if (tv) {
+            const inRange = Math.hypot(tv.x - p.x, tv.y - p.y) <= sk.range + 90;
+            const tc = inRange ? col : 0xff4a4a;
+            g.lineStyle(3, tc, 0.6 * a); g.lineBetween(p.x, p.y, tv.x, tv.y); g.strokeCircle(tv.x, tv.y, 44);
+            if (kb && inRange && !R.EPICS[tv.kind]) {
+              const ex = tv.x - p.x, ey = tv.y - p.y, ed = Math.hypot(ex, ey) || 1;
+              this._knockArrow(g, tv.x, tv.y, ex / ed, ey / ed, sk.knockback.dist, tv.def ? CHAMP_RADIUS : MINION_RADIUS, sk.wallStun?.ms || 0, col, a);
+            }
+          }
+        }
       }
-      return;
-    }
-    if (sp.kind === 'heal') {
-      g.fillStyle(col, 0.05 * a); g.fillCircle(p.x, p.y, sp.radius);
-      g.lineStyle(2, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.radius);
-      let best = null, worst = 1;
-      for (const v of this.views.champs.values()) {
-        if (v.dead || v.team !== this.myTeam || v.id === this.localId) continue;
-        if (Math.hypot(v.x - p.x, v.y - p.y) > sp.radius) continue;
-        const f = v.hp / Math.max(1, v.maxHp);
-        if (f < worst) { worst = f; best = v; }
+
+      // ───────────────────────── end of match ─────────────────────────
+      _onEnded(st) {
+        if (this._ended) return;
+        this._ended = true;
+        if (this.room?.roomId) clearMatch(this.room.roomId); // Pass 2: nothing left to REJOIN
+        this.shop?.close?.(); this.scoreboard?.hide?.(); this._sbOpen = false; this.info?.close?.();
+        this.hud.closeModal();
+        this._setGray(false);
+        const rows = [];
+        // v4 §3.2b: `scores` is never view-filtered (hidden enemies are absent from `champions`);
+        // offline / older servers fall back to the champions map. Gold isn't in TeamScore.
+        const src = st.scores && st.scores.size > 0 ? st.scores : st.champions;
+        src.forEach((c, id) => rows.push({
+          sid: id, team: c.team, name: c.name, champ: c.champ, level: c.level | 0, kills: c.kills | 0, deaths: c.deaths | 0,
+          assists: c.assists | 0, cs: c.cs | 0, gold: (c.gold ?? st.champions.get?.(id)?.gold) | 0, items: toArr(c.items),
+          isBot: !!c.isBot, isMe: id === this.localId,
+        }));
+        rows.sort((a, b) => (a.team === b.team ? b.kills - a.kills || a.deaths - b.deaths : (a.team === this.myTeam ? -1 : 1)));
+        // state + localSid let EndScreen fill any player missing from rows from state.scores (v4 §3.5).
+        // EP-09: practice never touches the W/L record; winReason → rollback subtitle; first blood +
+        // duration feed the "YOUR SHIFT" highlights and the copied result.
+        const durationMs = st.startedAt ? Math.max(0, this._srvNow() - st.startedAt) : 0;
+        const payload = {
+          winner: st.winner, myTeam: this.myTeam, rows, state: st, localSid: this.localId,
+          practice: !!this._sim, winReason: String(st.winReason || ''), firstBlood: this._firstBlood || '', durationMs,
+        };
+        try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
+        this._reconn = null;
+        this._vote = null; this.hud.showVote(null); this.hud.setRollbackVisible(false); this.hud.setBuyNudge(null);
+        // EP-10: coaching retires after COACH_MATCHES finished matches.
+        if (this._coach && this._gamesPlayed + 1 >= COACH_MATCHES) { try { SaveManager.setFlag?.('tipsSiege', true); } catch (_) { /* old save */ } }
+        if (st.winner && st.winner === this.myTeam) AudioManager.victory?.(); else AudioManager.failure?.();
+        // Let the victory banner + core explosion play before the end screen covers them.
+        this.time.delayedCall(2200, () => {
+          if (this._shuttingDown) return;
+          if (this.endScreen) this._showEndScreen(payload); else this._endPending = payload;
+        });
       }
-      if (best) { g.lineStyle(3, col, 0.85 * a); g.strokeCircle(best.x, best.y, 44); g.lineBetween(p.x, p.y - 30, best.x, best.y - 30); }
+
+      _showEndScreen(payload) {
+        try { this.hud.clearTransient(); this.fx.clearNumbers(); } catch (_) { /* cosmetic */ }
+        try { this.endScreen.show(payload); } catch (e) {
+          console.warn('[TeamMode] EndScreen.show failed, using fallback:', e?.message);
+          new FallbackEndScreen(this, { onPlayAgain: () => this._playAgain(), onMenu: () => this._goMenu() }).show(payload);
+        }
+      }
+
+      // ───────────────────────── chat (DOM input for IME + mobile keyboards) ─────────────────────────
+      _buildChatInput() {
+        const el = document.createElement('input');
+        el.type = 'text'; el.maxLength = 140; el.autocomplete = 'off';
+        el.placeholder = 'say something… (Enter to send, Esc to cancel)';
+        Object.assign(el.style, {
+          position: 'fixed', left: '50%', bottom: '32%', transform: 'translateX(-50%)', width: 'min(70vw, 440px)',
+          padding: '8px 10px', font: '14px Consolas, monospace', color: '#fff', background: 'rgba(5,8,15,0.96)',
+          border: '2px solid #39c2ff', borderRadius: '6px', zIndex: '9999', display: 'none', outline: 'none',
+        });
+        el.addEventListener('keydown', (ev) => {
+          ev.stopPropagation();
+          if (ev.isComposing) return;
+          if (ev.key === 'Enter') { ev.preventDefault(); this._closeChat(true); }
+          else if (ev.key === 'Escape') { ev.preventDefault(); this._closeChat(false); }
+        });
+        el.addEventListener('blur', () => { if (this._chatActive) this._closeChat(false); });
+        document.body.appendChild(el);
+        this._chatEl = el;
+      }
+
+      _openChat() {
+        if (this._chatActive || !this._chatEl || this.hud.modalOpen || this._shuttingDown) return;
+        this._chatActive = true;
+        this.input.keyboard.resetKeys?.(); // don't leave a held arrow stuck down
+        this.input.keyboard.enabled = false;
+        this.input.keyboard.clearCaptures();
+        this._chatEl.value = '';
+        this._chatEl.style.display = 'block';
+        setTimeout(() => this._chatEl?.focus(), 0);
+      }
+
+      _closeChat(send) {
+        if (!this._chatActive) return;
+        const text = (this._chatEl?.value || '').trim();
+        const now = Date.now();
+        if (send && /^\/(rollback|ff|surrender)$/i.test(text)) this._rollback(); // EP-08 chat shortcut
+        else if (send && /^\/(yes|no)$/i.test(text)) this._castVote(/yes/i.test(text));
+        else if (send && text && now - this._lastChatAt >= 600) { this._lastChatAt = now; this._send('chat', { text: text.slice(0, 140) }); }
+        this._chatActive = false;
+        if (this._chatEl) { this._chatEl.value = ''; this._chatEl.style.display = 'none'; this._chatEl.blur(); }
+        if (this.input?.keyboard) {
+          this.input.keyboard.enabled = true;
+          this.input.keyboard.addCapture(KEY_CAPTURES);
+        }
+      }
+
+      // ───────────────────────── leaving ─────────────────────────
+      _goMenu() {
+        // Pass 2: leaving on purpose frees the seat for good (the bot keeps it) → no REJOIN offer.
+        if (this.room?.roomId) clearMatch(this.room.roomId);
+        this._cleanup(); this.scene.start('MenuScene');
+      }
+      // Custom-room players go back to the rooms screen (keep the group together); quick play → lobby.
+      // Round 2: an online quick match re-queues straight away (TeamLobbyScene { autoQueue }).
+      _playAgain() {
+        const custom = !!(this._state()?.custom || this._wasCustom);
+        const online = !this._sim;
+        this._cleanup();
+        if (custom) this.scene.start('TeamCustomScene', { name: this.playerName });
+        else this.scene.start('TeamLobbyScene', online ? { autoQueue: true } : undefined);
+      }
+
+      _cleanup() {
+        if (this._cleanedVisit === this._visit) return;
+        this._cleanedVisit = this._visit;
+        this._setHoverOutline?.(null, '');
+        this._setHoverCursor?.('');
+        if (this._relicViews) { for (const rv of this._relicViews.values()) rv.c.destroy(); this._relicViews.clear(); }
+        // Flag first so Colyseus callbacks firing during room.leave() become no-ops.
+        this._shuttingDown = true;
+        this._applyHoverCursor('');
+        try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
+        this._reconn = null; this._vote = null;
+        if (this._onBeforeUnload) { window.removeEventListener('beforeunload', this._onBeforeUnload); this._onBeforeUnload = null; }
+        document.removeEventListener('visibilitychange', this._onVis);
+        this.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, this._onAdded);
+        this.events.off(Phaser.Scenes.Events.PRE_RENDER, this._classifyCams, this);
+        this._camQ.length = 0;
+        for (const u of this._unsubs || []) { try { u(); } catch (_) { /* ignore */ } }
+        this._unsubs = [];
+        try { this.room?.leave(); } catch (_) { /* ignore */ }
+        this.room = null;
+        this._sim = null;
+        if (this._chatEl) { this._chatEl.remove(); this._chatEl = null; }
+        this._chatActive = false;
+        if (this.input?.keyboard) {
+          this.input.keyboard.enabled = true;
+          this.input.keyboard.removeCapture?.(KEY_CAPTURES); // don't swallow TAB/SPACE/arrows in other scenes
+        }
+        this._grayFx = null;
+        this.views.champs.clear(); this.views.units.clear(); this.views.structs.clear();
+        this.shop = this.scoreboard = this.endScreen = null;
+        this.info = null; this._trailAt?.clear();
+      }
+
+      // ───────────────────────── v3: summoner spells (D / F) ─────────────────────────
+      _spellOf(me, slot) { return me ? SPELLS[me['spell' + slot.toUpperCase()]] || null : null; }
+
+      /** D / F. Desktop aims at the cursor; touch / HUD clicks auto-aim (Flash: stick / facing direction). */
+      _trySpell(slot, viaButton) {
+        const me = this._me();
+        if (!me || this._blocked()) return;
+        const K = slot.toUpperCase(), sp = this._spellOf(me, slot);
+        if (!sp) return this._deny(slot, '❔ No summoner spell in that slot');
+        const srvNow = this._srvNow();
+        if (me.dead) return this._deny(slot, '💀 You are respawning');
+        const left = (me['cd' + K] || 0) - srvNow;
+        if (left > 0) return this._deny(slot, `${sp.icon} ${sp.name} ready in ${left >= 10000 ? fmtTime(left) : `${(left / 1000).toFixed(1)}s`}`);
+        if ((me.stunnedUntil || 0) > srvNow) return this._deny(slot, '💫 Stunned!');
+        if (sp.kind === 'blink' && (me.rootedUntil || 0) > srvNow) return this._deny(slot, `🌿 Rooted — can't ${sp.name}`);
+        if (sp.kind === 'blink' && this.time.now < this._dashUntil) return this._deny(slot, `💨 Can't ${sp.name} while displaced`);
+        const pos = this._pred || me;
+        const auto = viaButton || this._autoAimWanted(pos);
+        const aim = this._spellAim(sp, pos, auto);
+        if (aim.err) return this._deny(slot, aim.err);
+        const msg = { slot, x: Math.round(aim.x), y: Math.round(aim.y) };
+        if (aim.id) msg.id = aim.id;
+        this._castSend(msg, 'spell');
+        if (aim.id) this._markMine(aim.id);
+        if (sp.kind === 'blink') this._moveDest = null;
+        this._aimFlash = { slot, until: this.time.now + 260, x: aim.x, y: aim.y };
+        this.hud.flashSlot(slot, false);
+      }
+
+      /** Aim for a summoner spell → { x, y, id?, target?, err? } (also used by the preview). */
+      _spellAim(sp, pos, auto) {
+        const mouse = this._mouseWorld;
+        switch (sp.kind) {
+          case 'blink': {
+            let tx, ty;
+            if (auto || !mouse) {
+              const v = this.views.champs.get(this.localId);
+              const dir = this._stickDir || this._lastMoveDir || { x: v?.facing || 1, y: 0 };
+              tx = pos.x + dir.x * sp.range; ty = pos.y + dir.y * sp.range;
+            } else { tx = mouse.x; ty = mouse.y; }
+            const dx = tx - pos.x, dy = ty - pos.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, sp.range);
+            const c = this.world.clampToMap(pos.x + (dx / d) * r, pos.y + (dy / d) * r);
+            return { x: c.x, y: c.y };
+          }
+          case 'dot': {
+            const t = this._spellTarget(sp, pos, auto);
+            if (!t) return { x: pos.x, y: pos.y, err: '🎯 No enemy champion in range' };
+            if (Math.hypot(t.x - pos.x, t.y - pos.y) > sp.range + CHAMP_RADIUS + 20) return { x: t.x, y: t.y, target: t, err: '📏 Out of range' };
+            return { x: t.x, y: t.y, id: t.id, target: t };
+          }
+          case 'smite': {
+            const t = this._spellTarget(sp, pos, auto);
+            if (!t) return { x: pos.x, y: pos.y, err: '🎯 No monster / enemy minion in range' };
+            if (Math.hypot(t.x - pos.x, t.y - pos.y) > sp.range + (t.size || 44) * 0.5 + 20) return { x: t.x, y: t.y, target: t, err: '📏 Out of range' };
+            return { x: t.x, y: t.y, id: t.id, target: t };
+          }
+          default: return { x: pos.x, y: pos.y };
+        }
+      }
+
+      /** Smite: monster (camp / epic) or enemy minion — never a pet / champion. Ignite: enemy champion. */
+      _smiteable(v) {
+        if (!v || !v.alive || v.removed || v.isPet || v.kind === 'pet') return false;
+        if (v.team === this.myTeam) return false;
+        return !!v.campId || !!R.EPICS[v.kind] || !!R.MINIONS[v.kind];
+      }
+
+      _spellTarget(sp, pos, auto) {
+        const mouse = this._mouseWorld;
+        if (sp.kind === 'dot') {
+          if (!auto && mouse) {
+            const h = this._pickEnemyAt(mouse.x, mouse.y);
+            if (h instanceof ChampionView) return h;
+            const n = this._nearestEnemyTo(mouse.x, mouse.y, 200, true);
+            if (n) return n;
+          }
+          return this._nearestEnemyTo(pos.x, pos.y, sp.range + 150, true);
+        }
+        // smite
+        if (!auto && mouse) {
+          let best = null, bd = 200;
+          for (const v of this.views.units.values()) {
+            if (!this._smiteable(v)) continue;
+            if (v.hitTest(mouse.x, mouse.y)) return v;
+            const d = Math.hypot(v.x - mouse.x, v.y - mouse.y);
+            if (d < bd) { bd = d; best = v; }
+          }
+          if (best) return best;
+        }
+        // Auto: epic › camp monster (biggest) › enemy minion, nearest within reach.
+        let best = null, bScore = -Infinity;
+        for (const v of this.views.units.values()) {
+          if (!this._smiteable(v)) continue;
+          const d = Math.hypot(v.x - pos.x, v.y - pos.y);
+          if (d > sp.range + 120) continue;
+          const cls = R.EPICS[v.kind] ? 3 : v.campId ? 2 : 1;
+          const score = cls * 10000 + (v.campId || R.EPICS[v.kind] ? v.maxHp : 0) - d;
+          if (score > bScore) { bScore = score; best = v; }
+        }
+        return best;
+      }
+
+      /** Spell aim preview (hovering a D / F slot, and briefly after the cast). */
+      _drawSpellAim(g, me, sp, p, flash, a) {
+        const col = sp.color ?? 0xffffff;
+        const auto = !!this._hoverSlot || this._autoAimWanted(p); // a HUD-slot click auto-aims too
+        const aim = flash ? { x: flash.x, y: flash.y } : this._spellAim(sp, p, auto);
+        if (sp.kind === 'blink') {
+          g.lineStyle(3, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.range);
+          const land = this.world.nav.nearestFree(aim.x, aim.y, CHAMP_RADIUS);
+          const over = !this.world.nav.segmentClear(p.x, p.y, land.x, land.y, 4);
+          g.lineStyle(4, col, (over ? 0.35 : 0.6) * a); g.lineBetween(p.x, p.y, land.x, land.y);
+          g.fillStyle(col, 0.18 * a); g.fillCircle(land.x, land.y, CHAMP_RADIUS + 4);
+          g.lineStyle(3, col, 0.95 * a); g.strokeCircle(land.x, land.y, CHAMP_RADIUS + 4);
+          if (Math.hypot(land.x - aim.x, land.y - aim.y) > 6) { // aimed into a wall → nearest free spot
+            g.lineStyle(2, col, 0.4 * a); g.strokeCircle(aim.x, aim.y, 18); g.lineBetween(aim.x, aim.y, land.x, land.y);
+          }
+          if (over && !this._aimTxt.visible) this._aimTxt.setText('⚡ over the wall').setPosition(land.x, land.y - 40).setVisible(true);
+          return;
+        }
+        if (sp.kind === 'dot' || sp.kind === 'smite') {
+          g.lineStyle(3, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.range);
+          const r = flash ? null : aim;
+          const t = r?.target || null;
+          if (t) {
+            const tc = r.err ? 0xff4a4a : col;
+            g.lineStyle(3, tc, 0.65 * a); g.lineBetween(p.x, p.y - 30, t.x, t.y - 30);
+            g.lineStyle(4, tc, 0.95 * a); g.strokeCircle(t.x, t.y, Math.max(40, (t.size || 60) * 0.7));
+            g.lineStyle(2, 0xffffff, 0.5 * a); g.strokeCircle(t.x, t.y, Math.max(48, (t.size || 60) * 0.7) + 8);
+            if (sp.kind === 'smite' && !r.err && !this._aimTxt.visible) {
+              const dmg = Math.round(R.scaledAmount(sp.dmg, me.level || 1, 0, 0));
+              const v = this._viewOf(t.id), kill = v && v.hp <= dmg;
+              this._aimTxt.setText(kill ? `💀 ${dmg} — KILL` : `💀 ${dmg}`).setPosition(t.x, t.y - (t.size || 60) - 30).setVisible(true);
+            }
+          } else if (flash) {
+            g.lineStyle(4, col, 0.9 * a); g.strokeCircle(flash.x, flash.y, 46);
+          }
+          return;
+        }
+        if (sp.kind === 'heal') {
+          g.fillStyle(col, 0.05 * a); g.fillCircle(p.x, p.y, sp.radius);
+          g.lineStyle(2, col, 0.5 * a); g.strokeCircle(p.x, p.y, sp.radius);
+          let best = null, worst = 1;
+          for (const v of this.views.champs.values()) {
+            if (v.dead || v.team !== this.myTeam || v.id === this.localId) continue;
+            if (Math.hypot(v.x - p.x, v.y - p.y) > sp.radius) continue;
+            const f = v.hp / Math.max(1, v.maxHp);
+            if (f < worst) { worst = f; best = v; }
+          }
+          if (best) { g.lineStyle(3, col, 0.85 * a); g.strokeCircle(best.x, best.y, 44); g.lineBetween(p.x, p.y - 30, best.x, best.y - 30); }
+        }
+        g.lineStyle(4, col, 0.85 * a); g.strokeEllipse(p.x, p.y, 110, 40);
+      }
+
+      /** Ongoing spell visuals from buff tags: Overtime trail (ghost) + Escalate flames (ignited). */
+      _spellTrails(id, v, c, now) {
+        const b = c.buffs;
+        if (!b || v.dead) return;
+        const ghost = b.includes('ghost'), ign = b.includes('ignited');
+        if (!ghost && !ign) return;
+        let t = this._trailAt.get(id);
+        if (!t) { t = { g: 0, i: 0 }; this._trailAt.set(id, t); }
+        if (ghost && now >= t.g && (b === 'ghost' || /(^|,)ghost(,|$)/.test(b))) { t.g = now + 70; this.fx.ghostTrail(v.x, v.y, SPELLS.ghost.color); }
+        if (ign && now >= t.i && /(^|,)ignited(,|$)/.test(b)) { t.i = now + 110; this.fx.flames(v.x + (Math.random() - 0.5) * 40, v.y - 20 - Math.random() * 60, SPELLS.ignite.color); }
+      }
+
+      _toggleInfo() {
+        if (!this.info || this._ended) return;
+        if (!this.info.isOpen && !CHAMPIONS[this._me()?.champ]) return;
+        this.info.toggle(this.localId);
+        if (this.info.isOpen) this._updateInfo(true);
+        AudioManager.uiClick?.();
+      }
+
+      _updateInfo(force) {
+        if (!this.info?.isOpen) return;
+        const now = this.time.now;
+        if (!force && now < (this._infoAt || 0)) return;
+        this._infoAt = now + 250;
+        const st = this._state(), c = st?.champions?.get?.(this.info.sid || this.localId);
+        if (!c) { this.info.close(); return; }
+        const srvNow = this._srvNow(), tm = c.team === 'blue' ? 'Blue' : 'Red';
+        const buffPct = st[`buff${tm}`] === 'deadline' && (st[`buff${tm}Until`] || 0) > srvNow ? (R.EPICS.deadline.buff?.dmgPct || 0) : 0;
+        try { this.info.update({ c, srvNow, buffPct }); } catch (e) { console.warn('[TeamMode] InfoPanel update failed:', e?.message); this.info.close(); }
+      }
+
+      // ───────────────────────── v4: effects quality (auto / high / low) ─────────────────────────
+      _initQuality() {
+        let pref = 'auto';
+        try { pref = window.localStorage?.getItem(FX_PREF_KEY) || 'auto'; } catch (_) { /* storage blocked */ }
+        const q = new URLSearchParams(window.location.search).get('fx');
+        if (q === 'auto' || q === 'high' || q === 'low') pref = q;
+        if (pref !== 'high' && pref !== 'low') pref = 'auto';
+        this._fxPref = pref; this._lowFx = false; this._fpsBadSince = 0; this._fpsCheckAt = 0;
+        this._applyQuality(pref === 'low', true);
+      }
+
+      /** Auto: FPS < LOW_FPS for LOW_FPS_MS while playing → low effects (one-way for this match). */
+      _tickQuality(now) {
+        if (now < this._fpsCheckAt) return;
+        this._fpsCheckAt = now + 500;
+        if (this._fxPref !== 'auto' || this._lowFx || this._phase !== 'playing' || document.hidden
+          || now - this._playingAt < FPS_WARMUP_MS) { this._fpsBadSince = 0; return; }
+        const fps = this.game.loop.actualFps;
+        if (fps >= LOW_FPS) { this._fpsBadSince = 0; return; }
+        if (!this._fpsBadSince) { this._fpsBadSince = now; return; }
+        if (now - this._fpsBadSince >= LOW_FPS_MS) {
+          this._applyQuality(true);
+          this.hud.toast(`⚙ Low effects on (${Math.round(fps)} FPS) — ✨ under the minimap to change`, '#9fdcff');
+        }
+      }
+
+      _cycleFxPref() {
+        const next = { auto: 'high', high: 'low', low: 'auto' }[this._fxPref] || 'auto';
+        this._fxPref = next;
+        try { window.localStorage?.setItem(FX_PREF_KEY, next); } catch (_) { /* storage blocked */ }
+        this._fpsBadSince = 0;
+        this._applyQuality(next === 'low');
+        this.hud.toast(`✨ Effects: ${next.toUpperCase()}${next === 'auto' ? ' (drops to low below 45 FPS)' : ''}`, '#9fdcff');
+        AudioManager.uiClick?.();
+      }
+
+      _applyQuality(low, init = false) {
+        low = !!low;
+        const changed = low !== this._lowFx;
+        this._lowFx = low;
+        this.fx.setQuality?.(low);
+        this.map.setQuality?.(low);
+        this.hud.setFxMode?.(this._fxPref, low);
+        if (!changed && !init) return;
+        for (const v of this.views.champs.values()) v.light?.setVisible(!low);
+        for (const v of this.views.units.values()) v.glow?.setVisible(!low);
+        if (low && this._grayFx) {
+          try { this.cameras.main.postFX.remove(this._grayFx); } catch (_) { /* camera gone */ }
+          this._grayFx = null;
+        } else if (!low && this._meDead && !this._grayFx) this._setGray(true);
+      }
     }
-    g.lineStyle(4, col, 0.85 * a); g.strokeEllipse(p.x, p.y, 110, 40);
-  }
-
-  /** Ongoing spell visuals from buff tags: Overtime trail (ghost) + Escalate flames (ignited). */
-  _spellTrails(id, v, c, now) {
-    const b = c.buffs;
-    if (!b || v.dead) return;
-    const ghost = b.includes('ghost'), ign = b.includes('ignited');
-    if (!ghost && !ign) return;
-    let t = this._trailAt.get(id);
-    if (!t) { t = { g: 0, i: 0 }; this._trailAt.set(id, t); }
-    if (ghost && now >= t.g && (b === 'ghost' || /(^|,)ghost(,|$)/.test(b))) { t.g = now + 70; this.fx.ghostTrail(v.x, v.y, SPELLS.ghost.color); }
-    if (ign && now >= t.i && /(^|,)ignited(,|$)/.test(b)) { t.i = now + 110; this.fx.flames(v.x + (Math.random() - 0.5) * 40, v.y - 20 - Math.random() * 60, SPELLS.ignite.color); }
-  }
-
-  _toggleInfo() {
-    if (!this.info || this._ended) return;
-    if (!this.info.isOpen && !CHAMPIONS[this._me()?.champ]) return;
-    this.info.toggle(this.localId);
-    if (this.info.isOpen) this._updateInfo(true);
-    AudioManager.uiClick?.();
-  }
-
-  _updateInfo(force) {
-    if (!this.info?.isOpen) return;
-    const now = this.time.now;
-    if (!force && now < (this._infoAt || 0)) return;
-    this._infoAt = now + 250;
-    const st = this._state(), c = st?.champions?.get?.(this.info.sid || this.localId);
-    if (!c) { this.info.close(); return; }
-    const srvNow = this._srvNow(), tm = c.team === 'blue' ? 'Blue' : 'Red';
-    const buffPct = st[`buff${tm}`] === 'deadline' && (st[`buff${tm}Until`] || 0) > srvNow ? (R.EPICS.deadline.buff?.dmgPct || 0) : 0;
-    try { this.info.update({ c, srvNow, buffPct }); } catch (e) { console.warn('[TeamMode] InfoPanel update failed:', e?.message); this.info.close(); }
-  }
-
-  // ───────────────────────── v4: effects quality (auto / high / low) ─────────────────────────
-  _initQuality() {
-    let pref = 'auto';
-    try { pref = window.localStorage?.getItem(FX_PREF_KEY) || 'auto'; } catch (_) { /* storage blocked */ }
-    const q = new URLSearchParams(window.location.search).get('fx');
-    if (q === 'auto' || q === 'high' || q === 'low') pref = q;
-    if (pref !== 'high' && pref !== 'low') pref = 'auto';
-    this._fxPref = pref; this._lowFx = false; this._fpsBadSince = 0; this._fpsCheckAt = 0;
-    this._applyQuality(pref === 'low', true);
-  }
-
-  /** Auto: FPS < LOW_FPS for LOW_FPS_MS while playing → low effects (one-way for this match). */
-  _tickQuality(now) {
-    if (now < this._fpsCheckAt) return;
-    this._fpsCheckAt = now + 500;
-    if (this._fxPref !== 'auto' || this._lowFx || this._phase !== 'playing' || document.hidden
-      || now - this._playingAt < FPS_WARMUP_MS) { this._fpsBadSince = 0; return; }
-    const fps = this.game.loop.actualFps;
-    if (fps >= LOW_FPS) { this._fpsBadSince = 0; return; }
-    if (!this._fpsBadSince) { this._fpsBadSince = now; return; }
-    if (now - this._fpsBadSince >= LOW_FPS_MS) {
-      this._applyQuality(true);
-      this.hud.toast(`⚙ Low effects on (${Math.round(fps)} FPS) — ✨ under the minimap to change`, '#9fdcff');
-    }
-  }
-
-  _cycleFxPref() {
-    const next = { auto: 'high', high: 'low', low: 'auto' }[this._fxPref] || 'auto';
-    this._fxPref = next;
-    try { window.localStorage?.setItem(FX_PREF_KEY, next); } catch (_) { /* storage blocked */ }
-    this._fpsBadSince = 0;
-    this._applyQuality(next === 'low');
-    this.hud.toast(`✨ Effects: ${next.toUpperCase()}${next === 'auto' ? ' (drops to low below 45 FPS)' : ''}`, '#9fdcff');
-    AudioManager.uiClick?.();
-  }
-
-  _applyQuality(low, init = false) {
-    low = !!low;
-    const changed = low !== this._lowFx;
-    this._lowFx = low;
-    this.fx.setQuality?.(low);
-    this.map.setQuality?.(low);
-    this.hud.setFxMode?.(this._fxPref, low);
-    if (!changed && !init) return;
-    for (const v of this.views.champs.values()) v.light?.setVisible(!low);
-    for (const v of this.views.units.values()) v.glow?.setVisible(!low);
-    if (low && this._grayFx) {
-      try { this.cameras.main.postFX.remove(this._grayFx); } catch (_) { /* camera gone */ }
-      this._grayFx = null;
-    } else if (!low && this._meDead && !this._grayFx) this._setGray(true);
-  }
-}

@@ -259,10 +259,11 @@ export class MobaHud {
       this.spellSlots[slot] = { c, frame, icon, dim, pie, cd, flash, x, y, id: null };
     });
 
-    // Small - / + HUD scale controls (left-click only, flush on top-right border of bottom HUD)
-    const mkScaleBtn = (dx, label, delta) => {
-      const bg = s.add.rectangle(PANEL_W / 2 + dx, T - 7, 18, 16, 0x111a28, 0.95).setStrokeStyle(1, 0x39c2ff, 0.85);
-      const txt = s.add.text(PANEL_W / 2 + dx, T - 7, label, { fontFamily: FONT, fontSize: 12, color: '#9fdcff' }).setOrigin(0.5);
+    // Small - / + HUD scale controls (stacked cleanly on the right edge of bottom HUD)
+    const mkScaleBtn = (dy, label, delta) => {
+      const bx = PANEL_W / 2 + 16, by = T + dy;
+      const bg = s.add.rectangle(bx, by, 20, 18, 0x111a28, 0.85).setStrokeStyle(1, 0x39c2ff, 0.75);
+      const txt = s.add.text(bx, by, label, { fontFamily: FONT, fontSize: 12, color: '#9fdcff' }).setOrigin(0.5);
       bg.setInteractive({ useHandCursor: true });
       bg.on('pointerdown', (p, lx, ly, ev) => {
         if (p.rightButtonDown?.()) return;
@@ -271,8 +272,8 @@ export class MobaHud {
       });
       root.add([bg, txt]);
     };
-    mkScaleBtn(-30, '-', -0.1);
-    mkScaleBtn(-10, '+', 0.1);
+    mkScaleBtn(16, '+', 0.1);
+    mkScaleBtn(38, '-', -0.1);
     this._shopLocalX = rx;
     root.setScale(this._hudScale);
   }
@@ -392,12 +393,12 @@ export class MobaHud {
   // ───────────────────────── top center ─────────────────────────
   _buildTop() {
     const s = this.s, cx = this.W / 2;
-    this._r(cx, 35, 340, 62, 0x0a0f18, 0.88).setStrokeStyle(2, 0x2c3a55, 1).setDepth(48);
-    this.blueK = this._t(cx - 92, 26, `${TEAM_INFO.blue.emoji} 0`, { fontSize: 22, color: TEAM_INFO.blue.css, stroke: '#000', strokeThickness: 4 }).setDepth(49);
-    this.redK = this._t(cx + 92, 26, `0 ${TEAM_INFO.red.emoji}`, { fontSize: 22, color: TEAM_INFO.red.css, stroke: '#000', strokeThickness: 4 }).setDepth(49);
-    this.clock = this._t(cx, 25, '0:00', { fontSize: 17, color: '#ffffff', stroke: '#000', strokeThickness: 3 }).setDepth(49);
-    this.epicT = this._t(cx, 52, '', { fontFamily: MONO, fontSize: 12, color: '#c9d3e6' }).setDepth(49);
-    this.buffT = this._t(cx, 80, '', { fontSize: 13, stroke: '#000', strokeThickness: 4 }).setDepth(49);
+    this._r(cx, 26, 236, 44, 0x0a0f18, 0.55).setStrokeStyle(1.5, 0x2c3a55, 0.55).setDepth(48);
+    this.blueK = this._t(cx - 66, 19, `${TEAM_INFO.blue.emoji} 0`, { fontSize: 16, color: TEAM_INFO.blue.css, stroke: '#000', strokeThickness: 3 }).setAlpha(0.82).setDepth(49);
+    this.redK = this._t(cx + 66, 19, `0 ${TEAM_INFO.red.emoji}`, { fontSize: 16, color: TEAM_INFO.red.css, stroke: '#000', strokeThickness: 3 }).setAlpha(0.82).setDepth(49);
+    this.clock = this._t(cx, 18, '0:00', { fontSize: 13, color: '#ffffff', stroke: '#000', strokeThickness: 2.5 }).setAlpha(0.82).setDepth(49);
+    this.epicT = this._t(cx, 37, '', { fontFamily: MONO, fontSize: 10, color: '#c9d3e6' }).setAlpha(0.75).setDepth(49);
+    this.buffT = this._t(cx, 58, '', { fontSize: 11, stroke: '#000', strokeThickness: 3 }).setAlpha(0.85).setDepth(49);
   }
 
   // ───────────────────────── minimap ─────────────────────────

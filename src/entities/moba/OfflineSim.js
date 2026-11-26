@@ -153,9 +153,9 @@ export class OfflineSim {
     const f = this.world.fountain[team];
     const c = {
       id, x: f.x + (Math.random() - 0.5) * 160, y: f.y + (Math.random() - 0.5) * 160, team, champ: champId, name, isBot,
-      level: 1, xp: 0, gold: R.START_GOLD, hp: 1, maxHp: 1, mana: 1, maxMana: 1, ad: 0, ap: 0, armor: 0, mr: 0, ms: 0, range: 0, as: 0,
+      level: 3, xp: R.XP_TABLE[2], gold: R.START_GOLD, hp: 1, maxHp: 1, mana: 1, maxMana: 1, ad: 0, ap: 0, armor: 0, mr: 0, ms: 0, range: 0, as: 0,
       dead: false, respawnAt: 0, kills: 0, deaths: 0, assists: 0, cs: 0, items: ['', '', '', '', '', ''],
-      cdQ: 0, cdW: 0, cdE: 0, cdR: 0, skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
+      cdQ: 0, cdW: 0, cdE: 0, cdR: 0, skillPoints: 0, ranks: { q: 1, w: 1, e: 1, r: 0 },
       locked: true, spellD: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[0],
       spellF: (ROLE_SPELLS[role || def.lane] || DEFAULT_SPELLS)[1], cdD: 0, cdF: 0, stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, shield: 0, buffs: '',
       recallUntil: 0, action: 'idle', action_seq: 0, targetId: '', hat: '',

@@ -33,6 +33,8 @@ const GRID_W = COLS * TILE_W + (COLS - 1) * COL_GAP;
 const RX = GRID_X + GRID_W + 16, RW = 264;   // right column: detail, inventory, recommended
 const PW = RX + RW + 16, PH = 682;           // 39 items (1 + 10 + 28 → 9 rows of 5) → 1174 × 682
 const DETAIL_H = 252;
+const RECIPE_W = 650, RECIPE_H = 350;
+const MAX_RECIPE_COMPONENTS = Math.max(0, ...Object.values(ITEMS).map((it) => it.recipe?.length || 0));
 const DOUBLE_CLICK_MS = 380;
 const TIERS = [
   { id: 'consumable', label: 'CONSUMABLES · used instantly', color: 0x7ed957 },
@@ -84,6 +86,7 @@ export class ShopPanel {
     this._buildDetail();
     this._buildInventory();
     this._buildRecommended();
+    this._buildRecipeOverlay();
     pin(this.root);
 
     this._onEsc = () => { if (this._open) scene.time.delayedCall(0, () => this.close()); };
@@ -109,6 +112,8 @@ export class ShopPanel {
   close() {
     if (!this._open) return;
     this._open = false;
+    this._recipeOpen = false;
+    this._recipeOverlay.setVisible(false);
     this._hover = null;
     const r = this.root;
     if (!r.scene) return;
@@ -286,7 +291,12 @@ export class ShopPanel {
     this._dReason = s.add.text(x + RW / 2, y + 198, '', {
       fontFamily: FONT_MONO, fontSize: 12, fontStyle: 'bold', color: '#ff8a8a', padding: { y: 2 },
     }).setOrigin(0.5);
+    this._recipeReason = s.add.text(x + 14, y + 198, '', {
+      fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#7ed957',
+      wordWrap: { width: 140, useAdvancedWrap: true }, align: 'left',
+    }).setOrigin(0, 0.5).setVisible(false);
     B.add([this._detailG, this._dEmoji, this._dName, this._dMeta, this._dStats, this._dDesc, this._dReason]);
+    B.add(this._recipeReason);
     this._buyBtn = makeButton(s, {
       x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'BUY', color: NEON.green, fontSize: 16,
       onClick: () => { if (this._open) this._tryBuy(this._sel); },
@@ -295,8 +305,137 @@ export class ShopPanel {
       x: x + RW / 2, y: y + 228, w: RW - 24, h: 40, label: 'SELL', color: NEON.orange, fontSize: 16,
       onClick: () => { if (this._open && this._selSlot != null) this._trySell(this._selSlot); },
     });
+    this._recipeBtn = makeButton(s, {
+      x: x + RW - 54, y: y + 198, w: 100, h: 36, label: '🧩 RECIPE TREE',
+      color: NEON.cyan, fontSize: 9,
+      onClick: () => this._openRecipeTree(),
+    });
     this._sellBtn.root.setVisible(false);
-    B.add([this._buyBtn.root, this._sellBtn.root]);
+    this._recipeBtn.root.setVisible(false);
+    B.add([this._buyBtn.root, this._sellBtn.root, this._recipeBtn.root]);
+  }
+
+  _buildRecipeOverlay() {
+    const s = this.scene;
+    const overlay = this._recipeOverlay = s.add.container(0, 0).setVisible(false);
+    const dim = s.add.rectangle(0, 0, PW, PH, 0x02050a, 0.78).setInteractive();
+    dim.on('pointerdown', swallow);
+    dim.on('pointerup', (p, x, y, ev) => { ev?.stopPropagation?.(); this._closeRecipeTree(); });
+    const panelHit = s.add.rectangle(0, 0, RECIPE_W, RECIPE_H, 0xffffff, 0).setInteractive();
+    panelHit.on('pointerdown', swallow);
+    panelHit.on('pointerup', swallow);
+    const panel = s.add.graphics();
+    drawPanel(panel, -RECIPE_W / 2, -RECIPE_H / 2, RECIPE_W, RECIPE_H, {
+      color: NEON.cyan, radius: 18, halo: 0.16, fill: 0x070b16, fillAlpha: 1,
+    });
+    const title = s.add.text(-RECIPE_W / 2 + 22, -RECIPE_H / 2 + 25, '🧩 RECIPE TREE', {
+      fontFamily: FONT_TITLE, fontSize: 18, color: '#ffffff', stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0, 0.5);
+    this._recipeItemTitle = s.add.text(0, -RECIPE_H / 2 + 25, '', {
+      fontFamily: FONT_MONO, fontSize: 11, color: '#8fd0ff',
+    }).setOrigin(0.5);
+    const hint = s.add.text(0, RECIPE_H / 2 - 20, 'Owned components are marked ✓ · BUY auto-combines them', {
+      fontFamily: FONT_MONO, fontSize: 10, color: '#9fb3c8',
+    }).setOrigin(0.5);
+    const closeBtn = makeButton(s, {
+      x: RECIPE_W / 2 - 44, y: -RECIPE_H / 2 + 25, w: 72, h: 32, label: 'CLOSE',
+      color: NEON.red, fontSize: 10, onClick: () => this._closeRecipeTree(),
+    });
+    this._recipeTreeG = s.add.graphics();
+    this._recipeRootNode = this._makeRecipeNode(0, -53, 300, 66, true);
+    this._recipeNodes = [];
+    for (let i = 0; i < MAX_RECIPE_COMPONENTS; i++) this._recipeNodes.push(this._makeRecipeNode(0, 52, 190, 72, false));
+    overlay.add([dim, panelHit, panel, this._recipeTreeG, this._recipeItemTitle, title, hint,
+      this._recipeRootNode.container, ...this._recipeNodes.map((n) => n.container), closeBtn.root]);
+    this.root.add(overlay);
+  }
+
+  _makeRecipeNode(x, y, w, h, root) {
+    const s = this.scene;
+    const container = s.add.container(x, y);
+    const bg = s.add.graphics();
+    const icon = s.add.text(-w / 2 + 19, 0, '', { fontSize: root ? 26 : 20, padding: { y: 3 } }).setOrigin(0.5);
+    const textX = -w / 2 + 38;
+    const name = s.add.text(textX, root ? -12 : -13, '', {
+      fontFamily: FONT_UI, fontSize: root ? 12 : 10, fontStyle: 'bold', color: '#ffffff',
+      wordWrap: { width: w - 48, useAdvancedWrap: true },
+    }).setOrigin(0, 0.5);
+    const detail = s.add.text(textX, root ? 16 : 17, '', {
+      fontFamily: FONT_MONO, fontSize: root ? 10 : 9, color: '#9fb3c8',
+    }).setOrigin(0, 0.5);
+    container.add([bg, icon, name, detail]);
+    return { container, bg, icon, name, detail, w, h };
+  }
+
+  _openRecipeTree() {
+    const id = this._hover || this._sel;
+    if (!this._open || !ITEMS[id]?.recipe?.length) return;
+    this._recipeOpen = true;
+    this._renderRecipeTree();
+    this._recipeOverlay.setVisible(true);
+    AudioManager.uiClick();
+  }
+
+  _closeRecipeTree() {
+    if (!this._recipeOpen) return;
+    this._recipeOpen = false;
+    this._recipeOverlay.setVisible(false);
+    AudioManager.uiClick();
+  }
+
+  _renderRecipeTree() {
+    const id = this._hover || this._sel;
+    const it = id ? ITEMS[id] : null;
+    if (!it?.recipe?.length) return;
+    const plan = recipePlan(this._slots, id);
+    const root = this._recipeRootNode;
+    this._paintRecipeNode(root, it, `${fmtGold(plan.cost)}g to combine · ${fmtGold(plan.baseCost)}g total`, NEON.yellow);
+    this._recipeItemTitle.setText(it.name);
+    this._recipeTreeG.clear();
+
+    const counts = {};
+    for (const owned of this._slots) if (owned) counts[owned] = (counts[owned] || 0) + 1;
+    const n = plan.components.length;
+    const gap = 20;
+    const nodeW = Math.min(190, (RECIPE_W - 60 - gap * Math.max(0, n - 1)) / Math.max(1, n));
+    const startX = -((n - 1) * (nodeW + gap)) / 2;
+    const centers = [];
+    for (let i = 0; i < this._recipeNodes.length; i++) {
+      const node = this._recipeNodes[i];
+      const componentId = plan.components[i];
+      const component = componentId ? ITEMS[componentId] : null;
+      node.container.setVisible(!!component);
+      if (!component) continue;
+      const x = startX + i * (nodeW + gap);
+      node.container.setPosition(x, 52);
+      node.w = nodeW;
+      centers.push(x);
+      const owned = (counts[componentId] || 0) > 0;
+      if (owned) counts[componentId]--;
+      this._paintRecipeNode(node, component, `${fmtGold(component.cost)}g · ${owned ? '✓ OWNED' : 'NEED'}`,
+        owned ? NEON.green : NEON.blue);
+    }
+
+    if (centers.length) {
+      const branchY = -8;
+      this._recipeTreeG.lineStyle(2, NEON.cyan, 0.8);
+      this._recipeTreeG.lineBetween(0, -20, 0, branchY);
+      this._recipeTreeG.lineBetween(centers[0], branchY, centers[centers.length - 1], branchY);
+      for (const x of centers) this._recipeTreeG.lineBetween(x, branchY, x, 16);
+    }
+  }
+
+  _paintRecipeNode(node, it, detail, color) {
+    const { w, h, bg, icon, name, container } = node;
+    bg.clear();
+    bg.fillStyle(0x0d1728, 0.98);
+    fillRR(bg, -w / 2, -h / 2, w, h, 9);
+    bg.lineStyle(2, color, 0.95);
+    strokeRR(bg, -w / 2, -h / 2, w, h, 9);
+    icon.setText(it.emoji);
+    name.setText(it.name);
+    node.detail.setText(detail).setColor(hex(color));
+    container.setVisible(true);
   }
 
   _buildInventory() {
@@ -572,6 +711,8 @@ export class ShopPanel {
     g.lineStyle(1.5, col, 0.75);
     strokeRR(g, RX, GRID_Y, RW, DETAIL_H, 12);
     if (!it) {
+      this._recipeBtn.root.setVisible(false);
+      this._recipeReason.setVisible(false);
       this._dEmoji.setText('🛒');
       this._dName.setText('Pick an item');
       this._dMeta.setText('');
@@ -605,6 +746,12 @@ export class ShopPanel {
     }
     this._dDesc.setText(descText).setY(this._dStats.y + this._dStats.height + 6);
     const why = this._whyNot(id);
+    const recipeVisible = plan.components.length > 0;
+    this._recipeBtn.root.setVisible(recipeVisible && this._selSlot == null);
+    this._recipeReason.setVisible(recipeVisible && this._selSlot == null);
+    this._dReason.setVisible(!recipeVisible || this._selSlot != null);
+    this._recipeReason.setText(why || `✓ ${plan.components.length} component${plan.components.length === 1 ? '' : 's'} · ${fmtGold(payCost)}g to combine`)
+      .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
     this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : (plan.discount > 0 ? `⚒️ combines owned components` : '✓ ready to buy')))
       .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
     // Pass 2 RP-07: an owned item picked from the inventory → SELL instead of BUY.
@@ -619,5 +766,6 @@ export class ShopPanel {
       return;
     }
     this._buyBtn.setLabel(`${plan.discount > 0 ? 'UPGRADE' : 'BUY'} · ${fmtGold(payCost)}g`).setDimmed(!!why);
+    if (this._recipeOpen) this._renderRecipeTree();
   }
 }

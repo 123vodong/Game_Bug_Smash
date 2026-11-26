@@ -105,8 +105,8 @@ export class Scoreboard {
       s.add.text(PW - 18, 32, 'hold TAB', { fontFamily: FONT_MONO, fontSize: 11, color: '#6f86a6' }).setOrigin(1, 0.5),
       s.add.text(PW / 2, PH - 14,
         '🤖 = AI coworker · 💀 = respawning · K / D / A = kills / deaths / assists · CS = bugs last-hit', {
-          fontFamily: FONT_MONO, fontSize: 10, color: '#4f6380', padding: { y: 2 },
-        }).setOrigin(0.5),
+        fontFamily: FONT_MONO, fontSize: 10, color: '#4f6380', padding: { y: 2 },
+      }).setOrigin(0.5),
     ]);
   }
 
@@ -189,12 +189,14 @@ export class Scoreboard {
           if (!sc || !teams[sc.team]) return;
           const live = champs?.get?.(key);
           if (live && Number.isFinite(live.gold)) goldSeen.set(key, live.gold);   // gold is not in scores
-          teams[sc.team].push({ key, ch: {
-            team: sc.team, champ: sc.champ, name: sc.name, isBot: sc.isBot, level: sc.level, kills: sc.kills,
-            deaths: sc.deaths, assists: sc.assists, cs: sc.cs, items: sc.items, dead: sc.dead,
-            spellD: sc.spellD, spellF: sc.spellF, gold: goldSeen.has(key) ? goldSeen.get(key) : null, rank: sc.rank || '',
-            augments: sc.augments,
-          } });
+          teams[sc.team].push({
+            key, ch: {
+              team: sc.team, champ: sc.champ, name: sc.name, isBot: sc.isBot, level: sc.level, kills: sc.kills,
+              deaths: sc.deaths, assists: sc.assists, cs: sc.cs, items: sc.items, dead: sc.dead,
+              spellD: sc.spellD, spellF: sc.spellF, gold: goldSeen.has(key) ? goldSeen.get(key) : null, rank: sc.rank || '',
+              augments: typeof sc.augmentsCsv === 'string' ? (sc.augmentsCsv ? sc.augmentsCsv.split(',') : []) : sc.augments,
+            }
+          });
         });
       } else {
         champs?.forEach?.((ch, key) => { if (ch && teams[ch.team]) teams[ch.team].push({ key, ch }); });
@@ -254,22 +256,25 @@ export class Scoreboard {
     // Pass 2 RP-13: rank badge (humans) after the champion line
     const rk = !ch.isBot && ch.rank ? `  ·  ${ch.rank}` : '';
     let augStr = '';
-    if (ch.augments && ch.augments.length) {
-      const icons = [];
-      for (let i = 0; i < ch.augments.length; i++) {
-        const a = AUGMENTS[ch.augments[i]];
-        if (a?.icon) icons.push(a.icon);
+      const augList = Array.isArray(ch.augments)
+        ? ch.augments
+        : (typeof ch.augmentsCsv === 'string' && ch.augmentsCsv ? ch.augmentsCsv.split(',') : null);
+      if (augList && augList.length) {
+        const icons = [];
+          for (let i = 0; i < augList.length; i++) {
+            const a = AUGMENTS[augList[i]];
+            if (a?.icon) icons.push(a.icon);
+          }
+          if (icons.length) augStr = `  ·  ⚡${icons.join('')}`;
+        }
+        r.sub.setText((info ? `${info.name} · ${info.role}` : String(ch.champ || '')) + (sp ? `  ${sp}` : '') + rk + augStr);
+        r.lv.setText(String(ch.level | 0));
+        r.kda.setText(`${ch.kills | 0} / ${ch.deaths | 0} / ${ch.assists | 0}`);
+        r.cs.setText(String(ch.cs | 0));
+        r.gold.setText(ch.gold == null ? '—' : fmtGold(ch.gold));   // null = never seen (hidden enemy)
+        for (let k = 0; k < INVENTORY_SLOTS; k++) {
+          const it = ITEMS[slotAt(ch.items, k)];
+          r.items[k].setText(it ? it.emoji : '');
+        }
       }
-      if (icons.length) augStr = `  ·  ⚡${icons.join('')}`;
     }
-    r.sub.setText((info ? `${info.name} · ${info.role}` : String(ch.champ || '')) + (sp ? `  ${sp}` : '') + rk + augStr);
-    r.lv.setText(String(ch.level | 0));
-    r.kda.setText(`${ch.kills | 0} / ${ch.deaths | 0} / ${ch.assists | 0}`);
-    r.cs.setText(String(ch.cs | 0));
-    r.gold.setText(ch.gold == null ? '—' : fmtGold(ch.gold));   // null = never seen (hidden enemy)
-    for (let k = 0; k < INVENTORY_SLOTS; k++) {
-      const it = ITEMS[slotAt(ch.items, k)];
-      r.items[k].setText(it ? it.emoji : '');
-    }
-  }
-}
