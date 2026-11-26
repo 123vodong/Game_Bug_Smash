@@ -2141,7 +2141,11 @@ export default class TeamModeScene extends Phaser.Scene {
           const rel = this._entityRel(hv);
           const col = rel === 'enemy' ? 0xff4a4a : (rel === 'neutral' ? 0xffd23f : 0x39c2ff);
           const rw = hv instanceof StructureView ? (hv.kind === 'core' ? 196 : 128) : (hv instanceof UnitView ? Math.max(60, (hv.size || 44) * 1.5) : 90);
-          this._hoverMark.setVisible(hv !== tv).setPosition(hv.x, hv.y + 4).setSize(rw, Math.round(rw * 0.36)).setStrokeStyle(2.5, col, 0.9);
+          const showMark = hv !== tv;
+          if (this._hoverMark.visible !== showMark) this._hoverMark.setVisible(showMark);
+          this._hoverMark.setPosition(hv.x, hv.y + 4);
+          if (this._hoverMarkRw !== rw) { this._hoverMarkRw = rw; this._hoverMark.setSize(rw, Math.round(rw * 0.36)); }
+          if (this._hoverMarkCol !== col) { this._hoverMarkCol = col; this._hoverMark.setStrokeStyle(2.5, col, 0.9); }
           this._setHoverOutline(hv, rel);
           this._setHoverCursor(rel);
         } else {
@@ -2149,7 +2153,10 @@ export default class TeamModeScene extends Phaser.Scene {
           this._setHoverOutline(null, '');
           this._setHoverCursor('');
         }
-        this._updateTargetPanel(this._state());
+        if (this._selectedId && now >= (this._targetPanelAt || 0)) {
+          this._targetPanelAt = now + 100;
+          this._updateTargetPanel(this._state());
+        }
         this._drawAim(me, now);
       }
 

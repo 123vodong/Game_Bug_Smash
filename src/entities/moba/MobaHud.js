@@ -537,30 +537,51 @@ export class MobaHud {
     this.targetPanel = { c, bg, title, sub, hpBg, hpFill, hpTxt, mpBg, mpFill, mpTxt, stats, bw: w - 20 };
   }
 
-  /** Show or hide the selected target's live stats next to the minimap. */
+  /** Show or hide the selected target's live stats next to the minimap (dirty-checked: 0 text uploads when unchanged). */
   setTarget(info) {
     const tp = this.targetPanel;
     if (!tp) return;
     if (!info) {
       if (tp.c.visible) tp.c.setVisible(false);
+      tp._sig = '';
       return;
     }
+    const hp = Math.max(0, Math.round(info.hp || 0));
+    const maxHp = Math.round(info.maxHp || 1);
+    const mp = Math.max(0, Math.round(info.mana || 0));
+    const maxMp = Math.round(info.maxMana || 0);
+    const sig = `${info.rel}|${info.name}|${info.sub}|${hp}/${maxHp}|${mp}/${maxMp}|${info.stats}`;
+    if (sig === tp._sig && tp.c.visible) return;
+    tp._sig = sig;
     const col = info.rel === 'enemy' ? 0xff5e5e : (info.rel === 'neutral' ? 0xffd23f : 0x39c2ff);
-    tp.bg.setStrokeStyle(2, col, 0.92);
-    tp.title.setText(info.name || 'Target').setColor(css(col));
-    tp.sub.setText(info.sub || '');
+    if (tp._col !== col) {
+      tp._col = col;
+      tp.bg.setStrokeStyle(2, col, 0.92);
+      tp.title.setColor(css(col));
+      tp.hpFill.setFillStyle(info.rel === 'enemy' ? 0xe04848 : (info.rel === 'neutral' ? 0xe0a838 : 0x5fbf3a), 1);
+    }
+    const nameStr = info.name || 'Target';
+    if (tp._name !== nameStr) { tp._name = nameStr; tp.title.setText(nameStr); }
+    const subStr = info.sub || '';
+    if (tp._sub !== subStr) { tp._sub = subStr; tp.sub.setText(subStr); }
     const hpP = Math.max(0, Math.min(1, (info.hp || 0) / Math.max(1, info.maxHp || 1)));
     tp.hpFill.width = tp.bw * hpP;
-    tp.hpFill.setFillStyle(info.rel === 'enemy' ? 0xe04848 : (info.rel === 'neutral' ? 0xe0a838 : 0x5fbf3a), 1);
-    tp.hpTxt.setText(`HP ${Math.max(0, Math.round(info.hp || 0))} / ${Math.round(info.maxHp || 1)}`);
-    const hasMp = (info.maxMana || 0) > 0;
-    tp.mpBg.setVisible(hasMp); tp.mpFill.setVisible(hasMp); tp.mpTxt.setVisible(hasMp);
-    if (hasMp) {
-      const mpP = Math.max(0, Math.min(1, (info.mana || 0) / Math.max(1, info.maxMana)));
-      tp.mpFill.width = tp.bw * mpP;
-      tp.mpTxt.setText(`MP ${Math.max(0, Math.round(info.mana || 0))} / ${Math.round(info.maxMana)}`);
+    const hpStr = `HP ${hp} / ${maxHp}`;
+    if (tp._hpStr !== hpStr) { tp._hpStr = hpStr; tp.hpTxt.setText(hpStr); }
+    const hasMp = maxMp > 0;
+    if (tp._hasMp !== hasMp) {
+      tp._hasMp = hasMp;
+      tp.mpBg.setVisible(hasMp); tp.mpFill.setVisible(hasMp); tp.mpTxt.setVisible(hasMp);
+      tp.stats.setY(hasMp ? 72 : 56);
     }
-    tp.stats.setY(hasMp ? 72 : 56).setText(info.stats || '');
+    if (hasMp) {
+      const mpP = Math.max(0, Math.min(1, (info.mana || 0) / Math.max(1, maxMp)));
+      tp.mpFill.width = tp.bw * mpP;
+      const mpStr = `MP ${mp} / ${maxMp}`;
+      if (tp._mpStr !== mpStr) { tp._mpStr = mpStr; tp.mpTxt.setText(mpStr); }
+    }
+    const statsStr = info.stats || '';
+    if (tp._statsStr !== statsStr) { tp._statsStr = statsStr; tp.stats.setText(statsStr); }
     if (!tp.c.visible) tp.c.setVisible(true);
   }
 
