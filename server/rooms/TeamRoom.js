@@ -48,7 +48,7 @@ import {
   CAMPS as CAMP_TYPES, CAMP_LEASH_RADIUS, EPICS, statAt, MAX_HASTE_PCT, cooldownMs, skillCooldownMs,
   KNOCKBACK_MS, PET_SPEED_MUL, PET_LEASH, PET_OWNER_HIT_MEMORY_MS, scaledAmount,
   BUSH_REVEAL_MS, AUTO_AIM_SLACK, ROOM_NAME_MAX, ROOM_MAX_HUMANS,
-  ROLLBACK_FROM_MS, ROLLBACK_VOTE_MS, ROLLBACK_COOLDOWN_MS, ROLLBACK_NEED,
+  ROLLBACK_FROM_MS, ROLLBACK_VOTE_MS, ROLLBACK_COOLDOWN_MS, ROLLBACK_NEED, WARD,
 } from '../../shared/moba/rules.js';
 import { clipMove } from '../../shared/moba/nav.js';
 import {
@@ -56,7 +56,7 @@ import {
   CHAMP_RADIUS, MINION_RADIUS, clampToMap,
 } from '../../shared/moba/map.js';
 import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, ROLE_PICKS, isChampionId, autoAimsAtEnemy, autoAimReach, championPassive } from '../../shared/moba/champions.js';
-import { ITEMS, isItemId, itemStats, itemPassives, buyBlocker, recipePlan, applyBuy } from '../../shared/moba/items.js';
+import { ITEMS, isItemId, itemStats, itemPassives, ownedActiveItem, buyBlocker, recipePlan, applyBuy } from '../../shared/moba/items.js';
 import { AUGMENTS, AUGMENT_LEVELS, rollAugmentChoices } from '../../shared/moba/augments.js';
 import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, isSpellId, validSpellPair } from '../../shared/moba/spells.js';
 import { TeamState, TeamChamp, TeamUnit, TeamStructure, TeamScore } from '../game/moba/schema.js';
@@ -219,6 +219,8 @@ export class TeamRoom extends Room {
     this.onMessage('augmentPick', (client, msg) => this._doAugmentPick(client.sessionId, msg));
     this.onMessage('augmentReroll', (client) => this._doAugmentReroll(client.sessionId));
     this.onMessage('upgrade', (client, msg) => this._doUpgrade(client.sessionId, msg));
+    this.onMessage('useActive', (client) => this._doUseActive(client.sessionId));
+    this.onMessage('ward', (client, msg) => this._doWard(client.sessionId, msg));
     // Answered ONCE per Client object (each reply carries the chat history). EP-03: a reconnect
     // is a new Client (userData is copied over), so it is keyed by the object, not userData.
     this.onMessage('hello', (client) => {
@@ -644,6 +646,7 @@ export class TeamRoom extends Room {
       _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
       augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
       skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
+      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0,
       shields: [], buffs: [], regens: [],
       recallUntil: 0, order: null, atkTarget: '', atkReadyAt: 0,
       lastDamagedAt: 0, damagers: new Map(), aggroAt: 0, aggroVictim: '',
@@ -788,34 +791,13 @@ export class TeamRoom extends Room {
     ch._grievousUntil = 0; ch._auditUntil = 0; ch._tankStacks = 0; ch._tankUntil = 0; ch._lifelineCd = 0;
     ch.augments = []; ch.augmentOffer = null; ch._augNextIdx = 0; ch._augVer = (ch._augVer || 0) + 1;
     ch.skillPoints = 1; ch.ranks = { q: 0, w: 0, e: 0, r: 0 };
+    ch._activeCd = 0; ch._stasisUntil = 0; ch._stealthUntil = 0; ch._wardCd = 0;
     if (ch.isBot) this._autoSpendSkills(ch);
     ch.shields.length = 0; ch.buffs.length = 0; ch.regens.length = 0;
     ch.recallUntil = 0; ch.order = null; ch.atkTarget = ''; ch.atkReadyAt = 0;
     ch.damagers.clear(); ch.lastDamagedAt = 0;
     ch.nav = null; ch.knock = null; ch.lastChampHitId = ''; ch.lastChampHitAt = 0;
     ch.maxHp = 0; ch.maxMana = 0;
-    const augs = ch.augments || [];
-    if (augs.includes('efficient_farming')) {
-      if (!ch._farmTickAt) ch._farmTickAt = now + 10000;
-      else if (now >= ch._farmTickAt) { ch._farmTickAt = now + 10000; ch.gold += 18; }
-    }
-    if (ch.bush && !ch._wasInBush && augs.includes('bush_hacker')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.bush_hacker || 0) <= now) {
-        ch._augCd.bush_hacker = now + 12000;
-        for (const foe of this.champs.values()) {
-          if (!foe.dead && foe.team !== ch.team && dist(foe, ch) <= 750) foe.revealUntil = Math.max(foe.revealUntil || 0, now + 2000);
-        }
-      }
-    }
-    if (!ch.bush && ch._wasInBush && augs.includes('bush_hacker') && augs.includes('ghost_protocol')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.shadow_ops || 0) <= now) {
-        ch._augCd.shadow_ops = now + 8000;
-        this._addBuff(ch, 'shadow_ops', { msPct: 0.2 }, now + 2000, true);
-      }
-    }
-    ch._wasInBush = !!ch.bush;
     this._recalc(ch, now);
     ch.hp = ch.maxHp; ch.mana = ch.maxMana;
     const spot = this._fountainSpot(ch.team, ch.slot);
@@ -1183,28 +1165,6 @@ export class TeamRoom extends Room {
       ch.gold -= res.cost;
     }
     ch.lastBuyAt = now;
-    const augs = ch.augments || [];
-    if (augs.includes('efficient_farming')) {
-      if (!ch._farmTickAt) ch._farmTickAt = now + 10000;
-      else if (now >= ch._farmTickAt) { ch._farmTickAt = now + 10000; ch.gold += 18; }
-    }
-    if (ch.bush && !ch._wasInBush && augs.includes('bush_hacker')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.bush_hacker || 0) <= now) {
-        ch._augCd.bush_hacker = now + 12000;
-        for (const foe of this.champs.values()) {
-          if (!foe.dead && foe.team !== ch.team && dist(foe, ch) <= 750) foe.revealUntil = Math.max(foe.revealUntil || 0, now + 2000);
-        }
-      }
-    }
-    if (!ch.bush && ch._wasInBush && augs.includes('bush_hacker') && augs.includes('ghost_protocol')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.shadow_ops || 0) <= now) {
-        ch._augCd.shadow_ops = now + 8000;
-        this._addBuff(ch, 'shadow_ops', { msPct: 0.2 }, now + 2000, true);
-      }
-    }
-    ch._wasInBush = !!ch.bush;
     this._recalc(ch, now);
     return true;
   }
@@ -1227,28 +1187,6 @@ export class TeamRoom extends Room {
     ch.itemsVer = (ch.itemsVer || 0) + 1;
     ch.gold += refund;
     ch.lastBuyAt = now;
-    const augs = ch.augments || [];
-    if (augs.includes('efficient_farming')) {
-      if (!ch._farmTickAt) ch._farmTickAt = now + 10000;
-      else if (now >= ch._farmTickAt) { ch._farmTickAt = now + 10000; ch.gold += 18; }
-    }
-    if (ch.bush && !ch._wasInBush && augs.includes('bush_hacker')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.bush_hacker || 0) <= now) {
-        ch._augCd.bush_hacker = now + 12000;
-        for (const foe of this.champs.values()) {
-          if (!foe.dead && foe.team !== ch.team && dist(foe, ch) <= 750) foe.revealUntil = Math.max(foe.revealUntil || 0, now + 2000);
-        }
-      }
-    }
-    if (!ch.bush && ch._wasInBush && augs.includes('bush_hacker') && augs.includes('ghost_protocol')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.shadow_ops || 0) <= now) {
-        ch._augCd.shadow_ops = now + 8000;
-        this._addBuff(ch, 'shadow_ops', { msPct: 0.2 }, now + 2000, true);
-      }
-    }
-    ch._wasInBush = !!ch.bush;
     this._recalc(ch, now);
     return true;
   }
@@ -1960,28 +1898,6 @@ export class TeamRoom extends Room {
     ch.nav = null; ch.knock = null; ch.burns = [];
     ch.action = 'idle';
     ch.actionSeq++;
-    const augs = ch.augments || [];
-    if (augs.includes('efficient_farming')) {
-      if (!ch._farmTickAt) ch._farmTickAt = now + 10000;
-      else if (now >= ch._farmTickAt) { ch._farmTickAt = now + 10000; ch.gold += 18; }
-    }
-    if (ch.bush && !ch._wasInBush && augs.includes('bush_hacker')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.bush_hacker || 0) <= now) {
-        ch._augCd.bush_hacker = now + 12000;
-        for (const foe of this.champs.values()) {
-          if (!foe.dead && foe.team !== ch.team && dist(foe, ch) <= 750) foe.revealUntil = Math.max(foe.revealUntil || 0, now + 2000);
-        }
-      }
-    }
-    if (!ch.bush && ch._wasInBush && augs.includes('bush_hacker') && augs.includes('ghost_protocol')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.shadow_ops || 0) <= now) {
-        ch._augCd.shadow_ops = now + 8000;
-        this._addBuff(ch, 'shadow_ops', { msPct: 0.2 }, now + 2000, true);
-      }
-    }
-    ch._wasInBush = !!ch.bush;
     this._recalc(ch, now);
     ch.hp = ch.maxHp;
     ch.mana = ch.maxMana;
@@ -2018,24 +1934,6 @@ export class TeamRoom extends Room {
     ch.mana = Math.min(ch.mana, maxMana);
     ch.ad = (statAt(b.ad, g.ad, lv) + (it.ad || 0)) * (1 + adPct);
     ch.ap = (statAt(b.ap || 0, g.ap, lv) + (it.ap || 0)) * (1 + apPct);
-    const augs = ch.augments || [];
-    ch._castCount = (ch._castCount || 0) + 1;
-    ch._overloadCast = augs.includes('overload') && ch._castCount % 4 === 0;
-    if (augs.includes('evo_dev_cleave')) ch._cleaveReady = true;
-    if (augs.includes('evo_sprint_surge') && (spec.type === 'dash' || spec.type === 'blink')) {
-      this._addBuff(ch, 'aug_ms', { msPct: 0.25 }, now + 2000, true);
-    }
-    if (slot === 'r' && augs.includes('evo_stack_lock')) this._addShield(ch, 140, now + 3500);
-    if (slot === 'r' && augs.includes('evo_tester_barrage')) {
-      ch.cd.r = Math.max(now, now + Math.round(Math.max(0, (ch.cd.r || 0) - now) * 0.65));
-    }
-    if (slot === 'r' && augs.includes('evo_volt_overdrive')) ch._servoOverdriveUntil = now + 4000;
-    if ((spec.heal || spec.shield || spec.type === 'allies') && augs.includes('shared_resources')) this._heal(ch, 40);
-    if ((spec.heal || spec.type === 'allies') && augs.includes('evo_ops_field')) {
-      for (const al of this.champs.values()) {
-        if (al.team === ch.team && !al.dead && dist(al, ch) <= 450) this._heal(al, 70);
-      }
-    }
     const roleP = championPassive(ch.def)?.id;
     const tankArmor = (roleP === 'failover' && (ch._tankUntil || 0) > now) ? (ch._tankStacks || 0) * 3 : 0;
     const furyLs = (roleP === 'hotfix_fury' && maxHp > 0 && ch.hp / maxHp < 0.5) ? 0.12 : 0;
@@ -2113,7 +2011,8 @@ export class TeamRoom extends Room {
       _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
       _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
       augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
-      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 }, hitSeq: 0, removeAt: 0,
+      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
+      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0, hitSeq: 0, removeAt: 0,
       nav: null, knock: null,
     };
     s.team = team; s.kind = kind; s.campId = '';
@@ -2268,7 +2167,8 @@ export class TeamRoom extends Room {
       _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
       _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
       augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
-      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 }, hitSeq: 0, removeAt: 0,
+      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
+      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0, hitSeq: 0, removeAt: 0,
       nav: null, knock: null,
     };
     s.team = 'neutral'; s.kind = kind; s.campId = campId;
@@ -2664,7 +2564,8 @@ export class TeamRoom extends Room {
       _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
       _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
       augments: [], augmentOffer: null, _augNextIdx: 0, _augVer: 0,
-      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 }, nav: null, knock: null,
+      skillPoints: 1, ranks: { q: 0, w: 0, e: 0, r: 0 },
+      _activeCd: 0, _stasisUntil: 0, _stealthUntil: 0, _wardCd: 0, nav: null, knock: null,
     };
     s.team = ch.team; s.kind = 'pet'; s.campId = ''; s.owner = ch.id;
     this.units.set(id, u);
@@ -2763,6 +2664,7 @@ export class TeamRoom extends Room {
   _dealDamage(src, t, raw, { kind = 'atk', trueDmg = false, dmgType = 'physical' } = {}) {
     if (this.state.phase !== 'playing' || !this._isAlive(t) || !(raw > 0)) return 0;
     if (t.utype === 'pet') return 0; // pets are invulnerable
+    if (t.etype === 'champ' && (t._stasisUntil || 0) > Date.now()) return 0;
     if (t.etype === 'struct' && t.invulnerable) return 0;
     if (t.etype === 'unit' && t.resetting) return 0;
     const now = Date.now();
@@ -3015,29 +2917,7 @@ export class TeamRoom extends Room {
       ch.level = lv;
       ch.skillPoints = (ch.skillPoints || 0) + (lv - before);
       if (ch.isBot) this._autoSpendSkills(ch);
-      const augs = ch.augments || [];
-    if (augs.includes('efficient_farming')) {
-      if (!ch._farmTickAt) ch._farmTickAt = now + 10000;
-      else if (now >= ch._farmTickAt) { ch._farmTickAt = now + 10000; ch.gold += 18; }
-    }
-    if (ch.bush && !ch._wasInBush && augs.includes('bush_hacker')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.bush_hacker || 0) <= now) {
-        ch._augCd.bush_hacker = now + 12000;
-        for (const foe of this.champs.values()) {
-          if (!foe.dead && foe.team !== ch.team && dist(foe, ch) <= 750) foe.revealUntil = Math.max(foe.revealUntil || 0, now + 2000);
-        }
-      }
-    }
-    if (!ch.bush && ch._wasInBush && augs.includes('bush_hacker') && augs.includes('ghost_protocol')) {
-      ch._augCd = ch._augCd || {};
-      if ((ch._augCd.shadow_ops || 0) <= now) {
-        ch._augCd.shadow_ops = now + 8000;
-        this._addBuff(ch, 'shadow_ops', { msPct: 0.2 }, now + 2000, true);
-      }
-    }
-    ch._wasInBush = !!ch.bush;
-    this._recalc(ch, now);
+      this._recalc(ch, now);
       if (before < ULT_UNLOCK_LEVEL && lv >= ULT_UNLOCK_LEVEL && !ch.isBot) {
         this._sendTo(ch.id, 'announce', { title: '⭐ ULTIMATE UNLOCKED', sub: `${ch.def.skills.r.name} is ready (R)`, color: '#ffd23f' });
       }
@@ -3096,6 +2976,58 @@ export class TeamRoom extends Room {
     if (cur >= maxR) return false;
     ch.ranks[slot] = cur + 1;
     ch.skillPoints--;
+    return true;
+  }
+
+  _doUseActive(sid) {
+    if (this.state.phase !== 'playing') return false;
+    const ch = this.champs.get(sid);
+    if (!ch || ch.dead) return false;
+    const now = Date.now();
+    const it = ownedActiveItem(ch.items);
+    if (!it || !it.active || (ch._activeCd || 0) > now) return false;
+    const act = it.active;
+    if (now < ch.stunnedUntil && !act.usableWhileStunned) return false;
+    ch._activeCd = now + act.cd * 1000;
+    if (act.id === 'stasis') {
+      ch._stasisUntil = now + act.ms;
+      ch.stunnedUntil = Math.max(ch.stunnedUntil || 0, now + act.ms);
+      ch.order = null;
+      this._fx({ k: 'buff', sid: ch.id, color: 0xffd23f });
+    } else if (act.id === 'cleanse') {
+      ch.stunnedUntil = 0; ch.rootedUntil = 0; ch.slowUntil = 0; ch.slowPct = 0;
+      this._addBuff(ch, 'cleanse_ms', { msPct: 0.35 }, now + act.ms, true);
+      this._fx({ k: 'buff', sid: ch.id, color: 0x39ff14 });
+    } else if (act.id === 'veil') {
+      this._addShield(ch, act.shield || 240, now + 3000);
+      this._addBuff(ch, 'veil_ms', { msPct: 0.3 }, now + act.ms, true);
+      ch._stealthUntil = now + act.ms;
+      this._fx({ k: 'buff', sid: ch.id, color: 0xb084ff });
+    }
+    return true;
+  }
+
+  _doWard(sid, msg) {
+    if (this.state.phase !== 'playing' || !msg || typeof msg !== 'object') return false;
+    const ch = this.champs.get(sid);
+    const now = Date.now();
+    if (!ch || ch.dead || (ch._wardCd || 0) > now) return false;
+    let active = 0;
+    for (const u of this.units.values()) if (u.alive && u.utype === 'ward' && u.owner === ch.id) active++;
+    if (active >= WARD.maxActivePerPlayer) return false;
+    const ax = Number.isFinite(msg.x) ? msg.x : ch.x, ay = Number.isFinite(msg.y) ? msg.y : ch.y;
+    const d = Math.hypot(ax - ch.x, ay - ch.y);
+    const ratio = d > WARD.castRange ? WARD.castRange / d : 1;
+    const pos = clampToMap(ch.x + (ax - ch.x) * ratio, ch.y + (ay - ch.y) * ratio, 16);
+    ch._wardCd = now + WARD.cdMs;
+    const id = `w_${++this._uid}`;
+    const rec = {
+      id, etype: 'unit', utype: 'ward', team: ch.team, owner: ch.id,
+      x: pos.x, y: pos.y, radius: 14, hp: 3, maxHp: 3, armor: 0, alive: true,
+      expiresAt: now + WARD.durationMs, sightRadius: WARD.sightRadius,
+      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, hitSeq: 0, removeAt: 0,
+    };
+    this.units.set(id, rec);
     return true;
   }
 

@@ -1111,8 +1111,8 @@ export class MobaHud {
         if (left > 0) this.cdTotal[slot] = Math.max(left, 300);
       }
       const locked = slot === 'r' && lv < ULT_UNLOCK_LEVEL;
-      const hasRanks = !!me.ranks;
-      const rank = hasRanks ? (me.ranks[slot] || 0) : (locked ? 0 : 1);
+      const hasRanks = !!me.ranks || Number.isFinite(me.rankQ);
+      const rank = me.ranks ? (me.ranks[slot] || 0) : (Number.isFinite(me.rankQ) ? (me[`rank${slot.toUpperCase()}`] || 0) : (locked ? 0 : 1));
       const maxR = slot === 'r' ? 3 : 5;
       const canUp = (me.skillPoints || 0) > 0 && !locked && rank < maxR;
       if (sl.upBg) { sl.upBg.setVisible(canUp); sl.upTxt.setVisible(canUp); }

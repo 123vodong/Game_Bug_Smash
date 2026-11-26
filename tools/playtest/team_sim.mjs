@@ -2,6 +2,7 @@
 // watches (or autopilots) a match, logging state + server messages.
 //
 // Usage:  node team_sim.mjs [seconds=120] [--start] [--auto] [--every=10] [--until-end] [--champ=pixel] [--name=Watcher]
+//          [--movement]  verify an authoritative human move order changes the synced champion position
 //         node team_sim.mjs --exploits           # malicious-message regression for order/cast/buy/recall/chat
 //                                                 # + v2 walls/pets/knockback checks (need BUG_SMASH_DEBUG=1)
 //                                                 # + v3 champion select (pick/lock/spells) + summoner spell checks
@@ -47,6 +48,7 @@ const CHAMP = flag('champ', 'pixel');
 const NAME = flag('name', 'Watcher');
 const DEBUG_CMDS = String(flag('debug', '') || '').split(',').filter(Boolean);
 const EXPLOITS = !!flag('exploits', false);
+const MOVEMENT_TEST = !!flag('movement', false);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const client = new Client(SERVER);
@@ -127,9 +129,10 @@ if (flag('start', false)) { room.send('startNow'); console.log(`${ts()} >>> star
 let pickSent = false;
 let autoSent = false, debugSent = false, lastPhase = '';
 let lastSummary = 0;
+let movementStartedAt = 0, movementStart = null, movementResult = null;
 const deadline = t0 + SECS * 1000;
 const untilEnd = !!flag('until-end', false);
-while (!left && (Date.now() < deadline || (untilEnd && room.state.phase !== 'ended'))) {
+while (!left && (Date.now() < deadline || (untilEnd && room.state.phase !== 'ended') || (MOVEMENT_TEST && movementStartedAt && movementResult === null))) {
   const st = room.state;
   if (st.phase !== lastPhase) {
     lastPhase = st.phase;
@@ -154,6 +157,21 @@ while (!left && (Date.now() < deadline || (untilEnd && room.state.phase !== 'end
     }
   }
   if (st.phase === 'playing') {
+    if (MOVEMENT_TEST && !movementStartedAt) {
+      const me = st.champions.get(room.sessionId);
+      if (me) {
+        movementStart = { x: me.x, y: me.y };
+        const x = Math.max(100, Math.min(MAP_W - 100, me.x + (me.team === 'blue' ? 400 : -400)));
+        room.send('order', { type: 'move', x, y: me.y });
+        movementStartedAt = Date.now();
+        console.log(`${ts()} >>> movement check ${Math.round(me.x)},${Math.round(me.y)} → ${Math.round(x)},${Math.round(me.y)}`);
+      }
+    } else if (MOVEMENT_TEST && movementStartedAt && movementResult === null && Date.now() - movementStartedAt >= 2000) {
+      const me = st.champions.get(room.sessionId);
+      const moved = me && movementStart ? Math.hypot(me.x - movementStart.x, me.y - movementStart.y) : 0;
+      movementResult = moved > 80;
+      console.log(`${movementResult ? 'PASS' : 'FAIL'}  online move order changes synced position (${Math.round(moved)} px)`);
+    }
     if (flag('auto', false) && !autoSent) { autoSent = true; room.send('debug', { cmd: 'autopilot' }); console.log(`${ts()} >>> debug autopilot`); }
     if (DEBUG_CMDS.length && !debugSent) {
       debugSent = true;
@@ -168,6 +186,10 @@ while (!left && (Date.now() < deadline || (untilEnd && room.state.phase !== 'end
   if (Date.now() - lastSummary >= EVERY * 1000) { lastSummary = Date.now(); summary(); }
   await sleep(250);
 }
+if (MOVEMENT_TEST && movementResult === null) {
+  movementResult = false;
+  console.log('FAIL  online movement test did not reach a playing champion');
+}
 summary();
 if (room.state.phase === 'ended' && !left) {
   console.log(`${ts()} match ended (winner ${room.state.winner}); waiting for the server to close the room…`);
@@ -179,7 +201,7 @@ room.state.champions.forEach((c, sid) => rows.push(`  ${c.team.padEnd(4)} ${c.ch
 console.log(rows.sort().join('\n'));
 console.log('--- message counts:', JSON.stringify(counts));
 if (!left) await room.leave();
-process.exit(0);
+process.exit(MOVEMENT_TEST && !movementResult ? 1 : 0);
 
 // ───────────────────────── exploit regression ─────────────────────────
 async function runExploits() {
