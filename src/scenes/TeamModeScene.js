@@ -1745,7 +1745,30 @@ export default class TeamModeScene extends Phaser.Scene {
         }
         ownedAugs = this._cachedAugs;
       }
-      this.augmentPanel.update(offer, ownedAugs);
+      if (!offer || !Array.isArray(offer.choices) || !offer.choices.length) {
+        this._augCanShow = false;
+        this._augShownLv = 0;
+        this._augNotifiedLv = 0;
+        if (this.augmentPanel.isOpen) this.augmentPanel.hide();
+      } else {
+        if (this._augShownLv && this._augShownLv !== offer.level && !me?.dead) {
+          this._augCanShow = false;
+          this._augShownLv = 0;
+        }
+        if (me?.dead) {
+          this._augCanShow = true;
+          this._augShownLv = offer.level;
+        }
+        if (this._augCanShow) {
+          this.augmentPanel.update(offer, ownedAugs);
+        } else {
+          if (this.augmentPanel.isOpen) this.augmentPanel.hide();
+          if (this._augNotifiedLv !== offer.level) {
+            this._augNotifiedLv = offer.level;
+            this.hud?.toast(t('aug.readyOnDeath', { lv: offer.level }), '#ffd23f');
+          }
+        }
+      }
     }
       this._tickReconnect();
       if (st) this._tickVote(st, srvNow);

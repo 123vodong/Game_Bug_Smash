@@ -117,23 +117,39 @@ export class AugmentPanel {
       card.add([bg, rar, icon, name, desc, synTxt, pickHint]);
       this.root.add(card);
 
-      if ((offer.slotRerolls?.[i] || 0) > 0) {
-        const srr = makeButton(s, {
-          x: cx + cardW / 2, y: cy + cardH + 28, w: 150, h: 32,
-          label: t('aug.reroll'), color: 0x39c2ff, fontSize: 13,
-          onClick: () => this.onReroll?.(i),
+      const canRoll = (offer.slotRerolls?.[i] || 0) > 0;
+      const rrBg = s.add.rectangle(cx + cardW / 2, cy + cardH + 28, 176, 36, canRoll ? 0x102138 : 0x0b101b, 0.96)
+        .setStrokeStyle(2, canRoll ? 0x39c2ff : 0x334155, canRoll ? 0.95 : 0.45);
+      const rrTxt = s.add.text(cx + cardW / 2, cy + cardH + 28, canRoll ? t('aug.reroll') : t('aug.rerolled'), {
+        fontFamily: FONT_TITLE, fontSize: 13, color: canRoll ? '#7ec8ff' : '#64748b', stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0.5);
+      if (canRoll) {
+        rrBg.setInteractive({ useHandCursor: true });
+        rrBg.on('pointerover', () => { rrBg.setFillStyle(0x1a3558, 1).setStrokeStyle(2.5, 0xffffff, 1); rrTxt.setColor('#ffffff'); });
+        rrBg.on('pointerout', () => { rrBg.setFillStyle(0x102138, 0.96).setStrokeStyle(2, 0x39c2ff, 0.95); rrTxt.setColor('#7ec8ff'); });
+        rrBg.on('pointerdown', (p, lx, ly, ev) => {
+          if (p.rightButtonDown?.()) return;
+          ev?.stopPropagation?.();
+          this.onReroll?.(i);
         });
-        this.root.add(srr.root);
       }
+      this.root.add([rrBg, rrTxt]);
     });
 
     if (!Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0) {
-      const rr = makeButton(s, {
-        x: W / 2, y: cy + cardH + 46, w: 220, h: 42,
-        label: t('aug.rerollFree', { n: offer.rerolls }), color: 0x39c2ff,
-        onClick: () => this.onReroll?.(),
+      const rrBg = s.add.rectangle(W / 2, cy + cardH + 46, 220, 42, 0x102138, 0.96)
+        .setStrokeStyle(2, 0x39c2ff, 0.95).setInteractive({ useHandCursor: true });
+      const rrTxt = s.add.text(W / 2, cy + cardH + 46, t('aug.rerollFree', { n: offer.rerolls }), {
+        fontFamily: FONT_TITLE, fontSize: 15, color: '#7ec8ff', stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0.5);
+      rrBg.on('pointerover', () => { rrBg.setFillStyle(0x1a3558, 1).setStrokeStyle(2.5, 0xffffff, 1); rrTxt.setColor('#ffffff'); });
+      rrBg.on('pointerout', () => { rrBg.setFillStyle(0x102138, 0.96).setStrokeStyle(2, 0x39c2ff, 0.95); rrTxt.setColor('#7ec8ff'); });
+      rrBg.on('pointerdown', (p, lx, ly, ev) => {
+        if (p.rightButtonDown?.()) return;
+        ev?.stopPropagation?.();
+        this.onReroll?.();
       });
-      this.root.add(rr.root);
+      this.root.add([rrBg, rrTxt]);
     }
     pin(this.root);
   }

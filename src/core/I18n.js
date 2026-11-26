@@ -52,7 +52,9 @@ const EN = {
   'aug.sub': 'Choose 1 permanent upgrade for the rest of the match',
   'aug.pickHint': '[{n}] CLICK OR PRESS {n}',
   'aug.reroll': 'REROLL',
+  'aug.rerolled': 'REROLLED',
   'aug.rerollFree': 'REROLL ({n} FREE)',
+  'aug.readyOnDeath': 'Augment Lv {lv} ready — opens on next death',
   'aug.synergy': 'SYNERGY: {name}',
   // HUD & Scoreboard
   'hud.base': 'BASE',

@@ -1064,8 +1064,8 @@ export class OfflineSim {
       c.augments.push(choices[0]);
       return;
     }
-    c.augmentOffer = { level: nextLv, choices, rerolls: 1 };
-    if (c.id === this.localId) this.emit('announce', { title: `⚡ CODE AUGMENT (Lv ${nextLv})`, sub: 'Pick 1 of 3 permanent upgrades', color: '#ffd23f' });
+    c.augmentOffer = { level: nextLv, choices, slotRerolls: choices.map(() => 1) };
+    if (c.id === this.localId) this.emit('announce', { title: `⚡ CODE AUGMENT (Lv ${nextLv})`, sub: 'Ready — opens on your next death', color: '#ffd23f' });
   }
 
   _pickAugment(c, id) {
