@@ -290,7 +290,7 @@ export class OfflineSim {
 
   _spawnCamp(camp) {
     const sp = R.CAMPS[camp.type];
-    const sc = R.campScaleAt(this.t - (this._startT || 0), false);
+    const sc = R.campScaleAt(Math.max(0, this.t - (this.state.startedAt || this.t)), false);
     const hp = Math.round(sp.hp * sc.hpMul);
     const dmg = Math.round(sp.dmg * sc.dmgMul);
     const gold = Math.round(sp.gold * sc.rewardMul);
@@ -304,7 +304,7 @@ export class OfflineSim {
 
   _spawnEpic(kind) {
     const sp = R.EPICS[kind], p = EPIC_SPOTS[kind];
-    const sc = R.campScaleAt(this.t - (this._startT || 0), true);
+    const sc = R.campScaleAt(Math.max(0, this.t - (this.state.startedAt || this.t)), true);
     const hp = Math.round(sp.hp * sc.hpMul);
     const dmg = Math.round(sp.dmg * sc.dmgMul);
     this._addUnit({ x: p.x, y: p.y, team: 'neutral', kind, hp, spec: { ...sp, hp, dmg, range: 160, speed: 220 }, home: { ...p } });
@@ -1081,7 +1081,8 @@ export class OfflineSim {
     if (Number.isInteger(slot) && slot >= 0 && slot < c.augmentOffer.choices.length) {
       const srr = c.augmentOffer.slotRerolls || [];
       if (!(srr[slot] > 0)) return;
-      const nextId = rollSingleAugment(c.champ, c.augments, c.augmentOffer.choices);
+      const needEpic = c.augmentOffer.level === 10 && !c.augmentOffer.choices.some((id, idx) => idx !== slot && AUGMENTS[id]?.rarity === 'epic');
+      const nextId = rollSingleAugment(c.champ, c.augments, c.augmentOffer.choices, { guaranteeEpic: needEpic });
       if (!nextId) return;
       const choices = [...c.augmentOffer.choices];
       const slotRerolls = [...srr];

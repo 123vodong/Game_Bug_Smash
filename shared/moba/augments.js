@@ -175,8 +175,9 @@ export function rollAugmentChoices(champId, ownedIds = [], count = 3, opts = {})
   const avail = [...pool];
   if (opts.guaranteeEpic && picked.length < count) {
     const epics = avail.filter((a) => a.rarity === 'epic');
-    if (epics.length > 0) {
-      const chosen = epics[Math.floor(Math.random() * epics.length)];
+    const highTier = epics.length > 0 ? epics : avail.filter((a) => a.rarity === 'rare');
+    if (highTier.length > 0) {
+      const chosen = highTier[Math.floor(Math.random() * highTier.length)];
       picked.push(chosen.id);
       avail.splice(avail.indexOf(chosen), 1);
     }
@@ -200,6 +201,6 @@ export function rollAugmentChoices(champId, ownedIds = [], count = 3, opts = {})
 }
 
 /** Roll 1 replacement augment excluding owned and currently displayed card IDs. */
-export function rollSingleAugment(champId, ownedIds = [], excludeIds = []) {
-  return rollAugmentChoices(champId, ownedIds, 1, { excludeIds })[0] || null;
+export function rollSingleAugment(champId, ownedIds = [], excludeIds = [], opts = {}) {
+  return rollAugmentChoices(champId, ownedIds, 1, { ...opts, excludeIds })[0] || null;
 }
