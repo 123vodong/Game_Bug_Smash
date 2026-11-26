@@ -163,6 +163,15 @@ export default class HuntScene extends Phaser.Scene {
     this._coach = null;
     this._clockHeld = false;
     if (this.levelIndex === 0 && !SaveManager.getFlag?.('coachCampaign')) this._startCoach();
+    this._hoverGlow = null;
+    this._hoverCursorOn = false;
+    this.events.once('shutdown', () => {
+      if (this._hoverGlow?.fx && this._hoverGlow.obj?.postFX) {
+        try { this._hoverGlow.obj.postFX.remove(this._hoverGlow.fx); } catch (_) { /* ignore */ }
+      }
+      this._hoverGlow = null;
+      if (this.game?.canvas) this.game.canvas.style.cursor = '';
+    });
   }
 
   // ============================================================ COACH (1-1)
@@ -302,6 +311,35 @@ export default class HuntScene extends Phaser.Scene {
     this.spawner.update(dtMs, now, { x: this.player.x, y: this.player.y });
     // Skill pickups + timed effects
     this.skills.update(now);
+
+    // Silhouette glow outline + crosshair cursor over hovered bug
+    const ptr = this.input.activePointer;
+    let hit = null;
+    if (ptr && !this._pauseOverlay && !this._helpContainer) {
+      let bd = 46;
+      for (const b of this.spawner?.bugs || []) {
+        if (!b || !b.alive || !b.visible) continue;
+        const d = Math.hypot(b.x - ptr.x, b.y - ptr.y);
+        if (d < bd) { bd = d; hit = b; }
+      }
+    }
+    const prevGlow = this._hoverGlow;
+    if (prevGlow && prevGlow.bug !== hit) {
+      try { if (prevGlow.fx && prevGlow.obj?.postFX) prevGlow.obj.postFX.remove(prevGlow.fx); } catch (_) { /* ignore */ }
+      this._hoverGlow = null;
+    }
+    if (hit) {
+      if (!this._hoverGlow && hit.sprite?.postFX) {
+        try { this._hoverGlow = { bug: hit, obj: hit.sprite, fx: hit.sprite.postFX.addGlow(0xff4a4a, 4.5, 0, false, 0.25, 16) }; } catch (_) { /* ignore */ }
+      }
+      if (!this._hoverCursorOn && this.game?.canvas) {
+        this._hoverCursorOn = true;
+        this.game.canvas.style.cursor = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'><circle cx='14' cy='14' r='9' fill='none' stroke='%23ff4a4a' stroke-width='2.2'/><path d='M14 2v6M14 20v6M2 14h6M20 14h6' stroke='%23ff4a4a' stroke-width='2.2' stroke-linecap='round'/><circle cx='14' cy='14' r='2' fill='%23ff4a4a'/></svg>") 14 14, crosshair`;
+      }
+    } else if (this._hoverCursorOn && this.game?.canvas) {
+      this._hoverCursorOn = false;
+      this.game.canvas.style.cursor = '';
+    }
 
     // Combo timeout
     if (this.combo > 0) {

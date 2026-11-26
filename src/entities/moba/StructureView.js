@@ -32,29 +32,24 @@ export class StructureView {
     const shadow = scene.add.ellipse(0, 6, isCore ? 210 : 116, isCore ? 56 : 36, 0x000000, 0.45);
     const pad = scene.add.ellipse(0, 4, isCore ? 236 : 128, isCore ? 74 : 44, col, 0.22).setStrokeStyle(3, col, 0.7);
     c.add([shadow, pad]);
+    this._baseTint = null;
     if (isCore) {
-      this.body = scene.add.image(0, 8, `moba-core-${s.team}`).setOrigin(0.5, 1);
-      c.add(this.body);
+      this.body = scene.add.image(0, 16, `moba-core-${s.team}`).setOrigin(0.5, 1);
+      this.crystalGlow = scene.add.image(0, -170, 'moba-glow').setTint(col).setDisplaySize(130, 130).setAlpha(0.42).setBlendMode(1);
+      c.add([this.crystalGlow, this.body]);
       this.leds = [];
-      const left = -CORE_TEX_W / 2, top = 8 - CORE_TEX_H;
-      for (let i = 0; i < CORE_BAYS; i++) {
-        for (let j = 0; j < 2; j++) {
-          const led = scene.add.circle(left + CORE_TEX_W - 34 + j * 9, top + CORE_BAY_Y0 + i * CORE_BAY_STEP + 7, 3,
-            LED_COLORS[(i + j) % LED_COLORS.length], 1);
-          led._rate = 0.6 + Math.random() * 1.8; led._phase = Math.random(); led._duty = 0.35 + Math.random() * 0.4;
-          this.leds.push(led);
-          c.add(led);
-        }
-      }
-      this.label = scene.add.text(0, -CORE_TEX_H - 18, `${TEAM_INFO[s.team]?.emoji || ''} PRODUCTION SERVER`, {
+      this.label = scene.add.text(0, -CORE_TEX_H + 8, `${TEAM_INFO[s.team]?.emoji || ''} PRODUCTION SERVER`, {
         fontFamily: FONT, fontSize: 14, color: teamCss(s.team), stroke: '#000', strokeThickness: 4,
       }).setOrigin(0.5);
       c.add(this.label);
     } else {
-      this.body = scene.add.image(0, 10, `moba-tower-${s.team}`).setOrigin(0.5, 1);
-      this.fire = scene.add.text(0, -126, '🔥', { fontSize: 34 }).setOrigin(0.5, 1);
-      c.add([this.body, this.fire]);
+      this.body = scene.add.image(0, 14, `moba-tower-${s.team}`).setOrigin(0.5, 1);
+      this.crystalGlow = scene.add.image(0, -148, 'moba-glow').setTint(col).setDisplaySize(78, 78).setAlpha(0.45).setBlendMode(1);
+      c.add([this.crystalGlow, this.body]);
     }
+    this.laserG = !isCore ? scene.add.graphics().setDepth(D.fx) : null;
+    this.targetPos = null;
+    this.targetIsMe = false;
     // Invulnerability bubble.
     const bubbleY = isCore ? -90 : -62, bubbleR = isCore ? 135 : 86;
     this.bubble = scene.add.image(0, bubbleY, 'moba-ring').setDisplaySize(bubbleR * 2, bubbleR * 2)
@@ -107,7 +102,11 @@ export class StructureView {
   flash() {
     if (!this.alive || !this.body?.scene || !calmPrefs().flashes) return; // EP-10: settings.flashes
     this.body.setTintFill(0xffffff);
-    this.scene.time.delayedCall(70, () => { if (this.body?.scene) this.body.clearTint(); });
+    this.scene.time.delayedCall(70, () => {
+      if (!this.body?.scene) return;
+      if (this._baseTint != null) this.body.setTint(this._baseTint);
+      else this.body.clearTint();
+    });
   }
 
   /** me: { x, y, team, dead } of the local champion (or null). */
@@ -128,6 +127,23 @@ export class StructureView {
         if (led._on !== on) { led._on = on; led.setAlpha(on ? 1 : 0.18); }
       }
     }
+    if (this.crystalGlow) {
+      const g = 0.34 + 0.16 * Math.sin((now + this._phase) / 260);
+      this.crystalGlow.setAlpha(g);
+    }
+    if (this.laserG) {
+      this.laserG.clear();
+      if (this.targetPos && this.alive) {
+        const m = this.muzzle();
+        const col = this.targetIsMe ? 0xff2a2a : teamColor(this.team);
+        const w = this.targetIsMe ? 4.5 : 2.2;
+        const a = this.targetIsMe ? (0.72 + 0.25 * Math.sin(now / 70)) : 0.45;
+        this.laserG.lineStyle(w + 4, col, a * 0.25);
+        this.laserG.lineBetween(m.x, m.y, this.targetPos.x, this.targetPos.y);
+        this.laserG.lineStyle(w, col, a);
+        this.laserG.lineBetween(m.x, m.y, this.targetPos.x, this.targetPos.y);
+      }
+    }
     // Tower range ring: only for enemy towers when you're close.
     if (this.kind === 'tower') {
       const near = me && !me.dead && me.team !== this.team
@@ -145,6 +161,7 @@ export class StructureView {
 
   destroy() {
     this.rangeRing?.destroy();
+    this.laserG?.destroy();
     this.c.destroy();
   }
 
@@ -170,9 +187,10 @@ export class StructureView {
     if (this.leds) for (const led of this.leds) { led.setFillStyle(0xff3b3b, 1); led.setAlpha(0.35); }
     const s = this.scene;
     if (this.label) this.label.setText('💀 PRODUCTION IS DOWN').setColor('#ff8a8a');
+    const baseSy = this.body.scaleY || 1;
     const end = this.kind === 'core'
-      ? { scaleY: 0.55, angle: -12 }
-      : { scaleY: 0.32 };
+      ? { scaleY: baseSy * 0.55, angle: -12 }
+      : { scaleY: baseSy * 0.32 };
     if (animate) {
       this.body.setTintFill(0xffffff);
       s.time.delayedCall(90, () => { if (this.body?.scene) this.body.setTint(0x4a4a52); });

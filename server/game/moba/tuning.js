@@ -39,7 +39,7 @@ export const MINION_LANE_CAP = 16;         // per team per lane: skip a wave bey
 export const MINION_TOTAL_CAP = 60;        // synced-entity budget (≤ ~110 total)
 export const WAYPOINT_REACHED = 45;
 export const MINION_CORE_STOP = 160;       // idle this far from the enemy core when it can't be hit yet
-export const DEADLINE_MINION_HP_MUL = 1.5; // waves shipped under THE DEADLINE buff (1 + minionBuffPct)
+export const DEADLINE_MINION_HP_MUL = 1.4; // waves shipped under THE DEADLINE buff (1 + minionBuffPct)
 
 // ── Jungle / epics ──
 export const CAMP_SPAWN_MS = 15000;        // camps appear 0:15 into the match

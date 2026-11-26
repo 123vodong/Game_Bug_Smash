@@ -17,7 +17,7 @@
 // sees true. Pointer events on the panel are stopped (never world move orders).
 // Screen-pinned (scrollFactor 0), depth 86, hidden until open(); safe to
 // construct before connecting.
-import { ITEMS, SHOP_ORDER, buyBlocker } from '../../../shared/moba/items.js';
+import { ITEMS, SHOP_ORDER, buyBlocker, recipePlan } from '../../../shared/moba/items.js';
 import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { INVENTORY_SLOTS, sellValue, SELL_UNDO_MS } from '../../../shared/moba/rules.js';
 import { AudioManager } from '../../core/AudioManager.js';
@@ -27,11 +27,11 @@ import {
 } from './uiKit.js';
 
 const DEPTH = 86;
-const GRID_X = 16, GRID_Y = 88, HEAD_H = 20, SECTION_GAP = 6;
-const TILE_W = 166, TILE_H = 58, COL_GAP = 8, ROW_GAP = 7, COLS = 5;
+const GRID_X = 16, GRID_Y = 72, HEAD_H = 17, SECTION_GAP = 4;
+const TILE_W = 166, TILE_H = 49, COL_GAP = 8, ROW_GAP = 5, COLS = 5;
 const GRID_W = COLS * TILE_W + (COLS - 1) * COL_GAP;
 const RX = GRID_X + GRID_W + 16, RW = 264;   // right column: detail, inventory, recommended
-const PW = RX + RW + 16, PH = 612;           // 31 items (1 + 10 + 20 → 7 rows of 5) → 1174 × 612
+const PW = RX + RW + 16, PH = 682;           // 39 items (1 + 10 + 28 → 9 rows of 5) → 1174 × 682
 const DETAIL_H = 252;
 const DOUBLE_CLICK_MS = 380;
 const TIERS = [
@@ -233,9 +233,9 @@ export class ShopPanel {
     const s = this.scene, it = ITEMS[id];
     const c = s.add.container(x, y);
     const bg = s.add.graphics();
-    const emoji = s.add.text(24, 22, it.emoji, { fontSize: 24, padding: { y: 4 } }).setOrigin(0.5);
-    const cost = s.add.text(24, 47, `${it.cost}g`, {
-      fontFamily: FONT_MONO, fontSize: 11, fontStyle: 'bold', color: '#ffd23f',
+    const emoji = s.add.text(24, 17, it.emoji, { fontSize: 20, padding: { y: 2 } }).setOrigin(0.5);
+    const cost = s.add.text(24, 39, `${it.cost}g`, {
+      fontFamily: FONT_MONO, fontSize: 10, fontStyle: 'bold', color: '#ffd23f',
     }).setOrigin(0.5);
     const name = s.add.text(48, 5, it.name, {
       fontFamily: FONT_UI, fontSize: 12, fontStyle: 'bold', color: '#ffffff', lineSpacing: -2,
@@ -410,7 +410,8 @@ export class ShopPanel {
     if (!this._canShop) return '🏠 Return to base to shop';
     const b = buyBlocker(this._slots, id);
     if (b) return `⛔ ${b.charAt(0).toUpperCase()}${b.slice(1)}`;
-    if (this._gold < it.cost) return `💰 Need ${fmtGold(it.cost - this._gold)} more gold`;
+    const cost = it.consumable ? it.cost : recipePlan(this._slots, id).cost;
+    if (this._gold < cost) return `💰 Need ${fmtGold(cost - this._gold)} more gold`;
     return null;
   }
 
@@ -493,6 +494,8 @@ export class ShopPanel {
     const { it, id } = t;
     const owned = this._ownedCount(id);
     const block = buyBlocker(this._slots, id);       // null for consumables
+    const plan = recipePlan(this._slots, id);
+    const cost = it.consumable ? it.cost : plan.cost;
     const sel = this._sel === id, hov = this._hover === id;
     const col = TIER_COLOR[it.tier] ?? 0x7ec8ff;
     const g = t.bg;
@@ -502,8 +505,8 @@ export class ShopPanel {
     g.lineStyle(sel ? 2.5 : 1.2, sel ? 0xffffff : col, sel ? 0.95 : (hov ? 0.85 : 0.35));
     strokeRR(g, 0, 0, TILE_W, TILE_H, 8);
     t.c.setAlpha(!this._canShop ? 0.5 : (block ? 0.45 : 1));
-    t.cost.setColor(this._gold >= it.cost ? '#ffd23f' : '#ff5e5e');
-    t.badge.setText(owned ? (owned > 1 ? `✓${owned}` : '✓') : (block ? '⛔' : ''));
+    t.cost.setText(`${cost}g`).setColor(this._gold >= cost ? (plan.discount > 0 ? '#7ed957' : '#ffd23f') : '#ff5e5e');
+    t.badge.setText(owned ? (owned > 1 ? `✓${owned}` : '✓') : (block ? '⛔' : (plan.discount > 0 ? '⚒️' : '')));
   }
 
   _renderInventory() {
@@ -546,10 +549,11 @@ export class ShopPanel {
     });
     if (next) {
       const it = ITEMS[next.id];
+      const cost = it.consumable ? it.cost : recipePlan(this._slots, it.id).cost;
       ring.lineStyle(2.5, NEON.yellow, 1);
       strokeRR(ring, next.x - 3, next.y - 3, next.size + 6, next.size + 6, 9);
-      this._recNext.setText(`next: ${it.emoji} ${it.name} · ${it.cost}g`)
-        .setColor(this._gold >= it.cost ? '#ffd23f' : '#9fb3c8');
+      this._recNext.setText(`next: ${it.emoji} ${it.name} · ${cost}g`)
+        .setColor(this._gold >= cost ? '#ffd23f' : '#9fb3c8');
     } else if (this._build.length) {
       this._recNext.setText('build complete — go push! ✓').setColor('#7ed957');
     } else {
@@ -577,15 +581,31 @@ export class ShopPanel {
       this._buyBtn.setLabel('BUY').setDimmed(true);
       return;
     }
+    const plan = recipePlan(this._slots, id);
+    const payCost = it.consumable ? it.cost : plan.cost;
     this._dEmoji.setText(it.emoji);
     this._dName.setText(it.name);
-    this._dMeta.setText(`${it.tier.toUpperCase()} · 💰 ${fmtGold(it.cost)}`)
-      .setColor(this._gold >= it.cost ? '#ffd23f' : '#ff5e5e')
+    this._dMeta.setText(plan.discount > 0
+      ? `${it.tier.toUpperCase()} · 💰 ${fmtGold(payCost)} (-${fmtGold(plan.discount)}g)`
+      : `${it.tier.toUpperCase()} · 💰 ${fmtGold(it.cost)}`)
+      .setColor(this._gold >= payCost ? (plan.discount > 0 ? '#7ed957' : '#ffd23f') : '#ff5e5e')
       .setY(this._dName.y + this._dName.height + 2);
     this._dStats.setText(itemStatLine(it)).setY(Math.max(GRID_Y + 84, this._dMeta.y + this._dMeta.height + 8));
-    this._dDesc.setText(it.desc || '').setY(this._dStats.y + this._dStats.height + 6);
+    let descText = it.desc || '';
+    if (plan.components.length) {
+      const counts = {};
+      for (const s of this._slots) if (s) counts[s] = (counts[s] || 0) + 1;
+      const parts = plan.components.map((cid) => {
+        const comp = ITEMS[cid];
+        const ok = (counts[cid] || 0) > 0;
+        if (ok) counts[cid]--;
+        return `${comp?.emoji || ''}${comp?.name || cid}${ok ? '✓' : ''}`;
+      });
+      descText = `${descText}\nBuilds from: ${parts.join(' + ')}`;
+    }
+    this._dDesc.setText(descText).setY(this._dStats.y + this._dStats.height + 6);
     const why = this._whyNot(id);
-    this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : '✓ ready to buy'))
+    this._dReason.setText(why || (it.consumable ? '☕ used instantly on purchase' : (plan.discount > 0 ? `⚒️ combines owned components` : '✓ ready to buy')))
       .setColor(why ? (this._canShop ? '#ff8a8a' : '#ffcf8a') : '#7ed957');
     // Pass 2 RP-07: an owned item picked from the inventory → SELL instead of BUY.
     const sellSlot = this._selSlot != null && this._slots[this._selSlot] === id && (!this._hover || this._hover === id) ? this._selSlot : null;
@@ -598,6 +618,6 @@ export class ShopPanel {
         .setColor(!this._canShop ? '#ffcf8a' : '#ffb347');
       return;
     }
-    this._buyBtn.setLabel(`BUY · ${fmtGold(it.cost)}g`).setDimmed(!!why);
+    this._buyBtn.setLabel(`${plan.discount > 0 ? 'UPGRADE' : 'BUY'} · ${fmtGold(payCost)}g`).setDimmed(!!why);
   }
 }

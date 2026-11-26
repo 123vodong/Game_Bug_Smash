@@ -20,6 +20,7 @@
 // _addShield, _addBuff, _applyCC) so armor, shields, lifesteal, kill credit
 // and assists stay in one place.
 import { scaledAmount } from '../../../shared/moba/rules.js';
+import { skillDamageType } from '../../../shared/moba/champions.js';
 import { CHAMP_RADIUS, clampToMap, distToSeg } from '../../../shared/moba/map.js';
 import { clipMove, nearestFree } from '../../../shared/moba/nav.js';
 import { MAX_FAN_COUNT, MIN_ZONE_TICK_MS } from './tuning.js';
@@ -83,6 +84,8 @@ export class SkillEngine {
 
   /** Cast `slot` (spec) for champion record `ch` at aim { x, y, id }. True if it went off. */
   cast(ch, slot, spec, aim, now) {
+    ch._lastCastSlot = slot;
+    if (spec && !spec._slot) spec._slot = slot;
     switch (spec.type) {
       case 'projectile': return this._projectile(ch, slot, spec, aim);
       case 'circle': return this._circle(ch, slot, spec, aim, now);
@@ -96,9 +99,10 @@ export class SkillEngine {
     }
   }
 
-  /** Amount of an amount spec for the caster's CURRENT stats. */
-  amount(ch, amountSpec) {
-    return scaledAmount(amountSpec, ch.level, ch.ad, ch.ap, ch.maxHp);
+  /** Amount of an amount spec for the caster's CURRENT stats + skill rank scaling. */
+  amount(ch, amountSpec, slot = ch._lastCastSlot) {
+    const rank = Math.max(1, ch.ranks?.[slot] || 1);
+    return scaledAmount(amountSpec, ch.level, ch.ad, ch.ap, ch.maxHp) * (1 + 0.12 * (rank - 1));
   }
 
   // ───────────────────────── types ─────────────────────────
@@ -271,9 +275,44 @@ export class SkillEngine {
    */
   _applyHit(caster, t, spec, amount, now, ox, oy, fx, fy, quiet = false) {
     if (!this.room._isAlive(t) || t.utype === 'pet') return;
-    let dmg = amount;
+    const slot = spec._slot || caster._lastCastSlot || 'q';
+    let dmg = amount * (caster._overloadCast ? 1.28 : 1);
+    const augs = caster.augments || [];
     if (spec.execute && t.maxHp > 0) dmg += (spec.execute.missingHpPct || 0) * Math.max(0, t.maxHp - t.hp);
-    if (dmg > 0) this.room._dealDamage(caster, t, dmg, { kind: 'skill' });
+    if (dmg > 0) this.room._dealDamage(caster, t, dmg, { kind: 'skill', dmgType: skillDamageType(spec) });
+    if (t.etype === 'champ' && this.room._isAlive(t)) {
+      if (caster.champ === 'pixel' && slot === 'q') {
+        t._pixelMarkUntil = now + 4000;
+        if (augs.includes('evo_pixel_split')) {
+          let n = 0;
+          for (const foe of this.room.champs.values()) {
+            if (n < 2 && foe.id !== t.id && !foe.dead && foe.team !== caster.team && Math.hypot(foe.x - t.x, foe.y - t.y) <= 260) {
+              n++;
+              this.room._dealDamage(caster, foe, dmg * 0.45, { kind: 'skill', dmgType: skillDamageType(spec) });
+            }
+          }
+        }
+      }
+      if (caster.champ === 'model' && slot === 'r' && augs.includes('evo_model_nova')) {
+        this.room._applyCC(t, { slow: { pct: 0.3, ms: 2500 } }, now);
+        t._auditUntil = now + 2500;
+      }
+      if (caster.champ === 'pixel' && slot === 'r' && (t._pixelMarkUntil || 0) > now) {
+        t._pixelMarkUntil = 0;
+        this.room._dealDamage(caster, t, dmg * 0.25, { kind: 'skill', trueDmg: true });
+      }
+      if (caster.champ === 'zero' && slot === 'q') t._vulnUntil = now + 4000;
+      if (caster.champ === 'zero' && slot === 'e' && (t._vulnUntil || 0) > now) {
+        t._vulnUntil = 0;
+        this.room._dealDamage(caster, t, dmg * 0.3, { kind: 'skill', trueDmg: true });
+        caster.cd.q = Math.max(now, (caster.cd.q || 0) - 1500);
+      }
+      if (caster.champ === 'tester' && slot === 'r' && (t._bugUntil || 0) > now && (t._bugStacks || 0) > 0) {
+        const bonus = dmg * 0.12 * t._bugStacks;
+        t._bugStacks = 0;
+        this.room._dealDamage(caster, t, bonus, { kind: 'skill', trueDmg: true });
+      }
+    }
     if (this.room._isAlive(t)) {
       this.room._applyCC(t, spec, now);
       if (spec.knockback && spec.knockback.dist > 0 && Number.isFinite(ox) && Number.isFinite(oy)) {

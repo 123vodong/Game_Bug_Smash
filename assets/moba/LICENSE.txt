@@ -1,0 +1,9 @@
+CC0 1.0 Universal (Public Domain) — Kenney (https://kenney.nl/assets)
+
+Curated sprites copied for Team Mode ("Office Siege"):
+- tower-blue.png, tower-red.png, core-blue.png, core-red.png, crystal.png, beacon.png: Kenney Sci-Fi RTS (CC0 1.0)
+- vfx-magic.png, vfx-slash.png, vfx-spark.png, vfx-flare.png: Kenney Particle Pack (CC0 1.0)
+- plant.png: Kenney Tower Defense Top-Down (CC0 1.0)
+- barricade.png: Kenney Top-Down Tanks Redux (CC0 1.0)
+
+Curated by Duke Nguyen (duc.nguyen@onethesis.com).

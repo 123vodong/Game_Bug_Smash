@@ -45,8 +45,9 @@ import { SPELLS, DEFAULT_SPELLS, validSpellPair } from '../../shared/moba/spells
 import { WORLD_5V5 } from '../entities/moba/world.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
+import { t, getLang, toggleLang } from '../core/I18n.js';
 import { getPid, takeover, joinError, saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
-import { ITEMS, buyBlocker } from '../../shared/moba/items.js';
+import { ITEMS, buyBlocker, recipePlan } from '../../shared/moba/items.js';
 import { ensureMobaTextures, D, teamColor, toArr, approach, setLooks, projectileTex, fmtTime, shakeCam } from '../entities/moba/mobaGfx.js';
 import { MobaMap } from '../entities/moba/MobaMap.js';
 import { ChampionView } from '../entities/moba/ChampionView.js';
@@ -57,6 +58,7 @@ import { MobaHud } from '../entities/moba/MobaHud.js';
 import { OfflineSim } from '../entities/moba/OfflineSim.js';
 import { FallbackShopPanel, FallbackScoreboard, FallbackEndScreen } from '../entities/moba/Fallbacks.js';
 import { InfoPanel } from '../ui/moba/InfoPanel.js';
+import { AugmentPanel } from '../ui/moba/AugmentPanel.js';
 import { reconnectLoop, TEAM_RECONNECT_GRACE_S } from '../ui/moba/uiKit.js';
 
 // looks.js (client-art, contract v2 §3.3) is a hard dependency — ChampionView,
@@ -95,6 +97,24 @@ const VOTE_DENY = {
   active: '🏳 You already voted', phase: '🏳 Not now — the match is not running',
 };
 
+const makeCursorSvg = (stroke) =>
+  `url("data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'>`
+    + `<circle cx='14' cy='14' r='9' fill='none' stroke='#000' stroke-width='3.5'/>`
+    + `<circle cx='14' cy='14' r='9' fill='none' stroke='${stroke}' stroke-width='2'/>`
+    + `<path d='M14 2v5M14 21v5M2 14h5M21 14h5' stroke='#000' stroke-width='3.5' stroke-linecap='round'/>`
+    + `<path d='M14 2v5M14 21v5M2 14h5M21 14h5' stroke='${stroke}' stroke-width='2' stroke-linecap='round'/>`
+    + `<circle cx='14' cy='14' r='2' fill='${stroke}'/>`
+    + `</svg>`
+  )}") 14 14, crosshair`;
+
+const HOVER_CURSORS = {
+  enemy: makeCursorSvg('#ff4a4a'),
+  neutral: makeCursorSvg('#ffd23f'),
+  ally: makeCursorSvg('#39c2ff'),
+};
+const HOVER_COLOR = { enemy: 0xff4a4a, neutral: 0xffd23f, ally: 0x39c2ff };
+
 /** ws URL: same host:port as the page, except the :8000 python dev server → :2567; `?server=` overrides. */
 function serverUrl() {
   const loc = window.location;
@@ -115,6 +135,15 @@ export default class TeamModeScene extends Phaser.Scene {
     }
     for (const id of BUG_SPRITES) if (!this.textures.exists(id)) this.load.image(id, `assets/bugs/${id}.png`);
     if (!this.textures.exists('boss-deadline')) this.load.image('boss-deadline', 'assets/boss/deadline.png');
+    const MOBA_ASSETS = [
+      ['moba-tower-blue-art', 'tower-blue.png'], ['moba-tower-red-art', 'tower-red.png'],
+      ['moba-core-blue-art',  'core-blue.png'],  ['moba-core-red-art',  'core-red.png'],
+      ['moba-vfx-magic', 'vfx-magic.png'], ['moba-vfx-slash', 'vfx-slash.png'],
+      ['moba-vfx-spark', 'vfx-spark.png'], ['moba-vfx-flare', 'vfx-flare.png'],
+      ['moba-prop-plant', 'plant.png'], ['moba-prop-barricade', 'barricade.png'],
+      ['moba-prop-crystal', 'crystal.png'], ['moba-prop-beacon', 'beacon.png'],
+    ];
+    for (const [k, f] of MOBA_ASSETS) if (!this.textures.exists(k)) this.load.image(k, `assets/moba/${f}`);
   }
 
   create() {
@@ -142,7 +171,8 @@ export default class TeamModeScene extends Phaser.Scene {
     this._mine = new Map(); this._myCastAt = -1e9; this._minePrunedAt = 0;
     this._stickDir = null; this._stickSentAt = 0; this._sticking = false;
     this._hoverSlot = null; this._aimFlash = null; this._mouseWorld = null; this._mouseHeld = false; this._dragAt = 0;
-    this._hoverPickAt = 0; this._hoverEnemy = null;
+    this._hoverPickAt = 0; this._hoverEnemy = null; this._hoverEntity = null; this._selectedId = null; this._cursorKind = '';
+    this._hoverGlow = null; this._hoverEntity = null; this._hoverCursor = '';
     this._sbOpen = false; this._chatActive = false; this._lastChatAt = 0;
     this._camInit = false; this._grayFx = null; this._meDead = false; this._hudChamp = null; this._lastPnow = 0;
     // Pass 2 RP-08 camera: locked (follow) or free; a minimap drag "peeks" while locked.
@@ -185,13 +215,14 @@ export default class TeamModeScene extends Phaser.Scene {
     this.fx = new MobaFx(this, (id) => this._aimOf(id));
     this._aimG = this.add.graphics().setDepth(D.ground + 0.8);
     this._targetMark = this.add.ellipse(0, 0, 96, 34).setStrokeStyle(3, 0xff4a4a, 0.95).setDepth(D.ground + 0.9).setVisible(false);
-    this._hoverMark = this.add.ellipse(0, 0, 88, 30).setStrokeStyle(2, 0xff8a8a, 0.8).setDepth(D.ground + 0.9).setVisible(false);
+    this._hoverMark = this.add.ellipse(0, 0, 88, 30).setStrokeStyle(2, 0xff8a8a, 0.85).setDepth(D.ground + 0.9).setVisible(false);
     this._aimTxt = this.add.text(0, 0, '', {
       fontFamily: 'Arial Black, sans-serif', fontSize: 15, color: '#ffd23f', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5, 1).setDepth(D.numbers).setVisible(false);
     this.hud = new MobaHud(this, {
       touch: this._isTouch, map: this.map, world: this.world,
       onSkill: (slot, viaButton) => this._tryCast(slot, viaButton),
+      onUpgrade: (slot) => this._upgradeSkill(slot),
       onSpell: (slot, viaButton) => this._trySpell(slot, viaButton),
       onInfo: () => this._toggleInfo(),
       onSkillHover: (slot) => { this._hoverSlot = slot; },
@@ -213,6 +244,12 @@ export default class TeamModeScene extends Phaser.Scene {
     this._initQuality();
     this.hud.setCamLocked?.(this._camLocked);
     try { this.info = new InfoPanel(this, { onClose: () => {} }); } catch (e) { console.warn('[TeamMode] InfoPanel failed:', e?.message); this.info = null; }
+    try {
+      this.augmentPanel = new AugmentPanel(this, {
+        onPick: (id) => { this._send('augmentPick', { id }); AudioManager.reward?.(); },
+        onReroll: (slot) => { this._send('augmentReroll', Number.isInteger(slot) ? { slot } : {}); AudioManager.uiClick?.(); },
+      });
+    } catch (e) { console.warn('[TeamMode] AugmentPanel failed:', e?.message); this.augmentPanel = null; }
     this._setupInput();
     this._buildChatInput();
     this._loadUiModules();
@@ -645,6 +682,7 @@ export default class TeamModeScene extends Phaser.Scene {
       } else {
         const fp = fv.aimPoint();
         this.fx.slash(fp.x, fp.y, tp.x, tp.y, fv instanceof ChampionView ? fv.def.color : 0xffffff);
+        this.fx.burstTex?.(tp.x, tp.y, 'moba-vfx-spark', 52, fv instanceof ChampionView ? fv.def.color : teamColor(fv.team), 200, 40);
         if (fv instanceof UnitView) fv.lunge(tp.x, tp.y);
       }
     }
@@ -658,16 +696,24 @@ export default class TeamModeScene extends Phaser.Scene {
         const c = this._state()?.champions?.get?.(m.sid);
         const sk = c ? CHAMPIONS[c.champ]?.skills?.[m.slot] : null;
         this.fx.skillshot(m, !!sk?.pierce, c ? projectileTex(this, c.champ, m.slot) : null);
+        this.fx.burstTex?.(m.x, m.y, 'moba-vfx-slash', 88, Number.isFinite(m.color) ? m.color : 0x39c2ff, 260, 100);
         if (m.sid === this.localId) this._myCastAt = this.time.now;
         break;
       }
-      case 'circle': if (Number.isFinite(m.x) && Number.isFinite(m.y)) this.fx.telegraph(m); break;
+      case 'circle':
+        if (Number.isFinite(m.x) && Number.isFinite(m.y)) {
+          this.fx.telegraph(m);
+          this.fx.burstTex?.(m.x, m.y, 'moba-vfx-magic', Math.max(104, (m.r || 80) * 2), Number.isFinite(m.color) ? m.color : 0xffd23f, 460, 90);
+        }
+        break;
       case 'dash':
         this.fx.dash(m);
+        if (Number.isFinite(m.x0) && Number.isFinite(m.y0)) this.fx.burstTex?.(m.x0, m.y0, 'moba-vfx-flare', 100, 0x39ff14, 300, 45);
         if (m.sid === this.localId) { this._moveDest = null; this._dashUntil = this.time.now + 450; }
         break;
       case 'blink':
         this.fx.blink(m);
+        if (Number.isFinite(m.x1) && Number.isFinite(m.y1)) this.fx.burstTex?.(m.x1, m.y1, 'moba-vfx-flare', 110, 0x39ff14, 320, 60);
         if (m.sid === this.localId && this._pred && Number.isFinite(m.x1) && Number.isFinite(m.y1)) {
           this._moveDest = null; this._pred.x = m.x1; this._pred.y = m.y1;
         }
@@ -682,11 +728,13 @@ export default class TeamModeScene extends Phaser.Scene {
         if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
         const c = this._state()?.champions?.get?.(m.sid);
         this.fx.zone(m, c ? CHAMPIONS[c.champ]?.skills?.[m.slot]?.icon : null);
+        this.fx.burstTex?.(m.x, m.y, 'moba-vfx-magic', Math.max(110, (m.r || 80) * 2.1), Number.isFinite(m.color) ? m.color : 0x39c2ff, 500, 90);
         break;
       }
       case 'knock': {
         const mine = !!this.localId && m.id === this.localId;
         this.fx.knock(m, mine);
+        if (Number.isFinite(m.x1) && Number.isFinite(m.y1)) this.fx.burstTex?.(m.x1, m.y1, 'moba-vfx-spark', 92, 0xffd23f, 260, 60);
         if (mine) {
           // The server keeps the move order through a knockback: keep the destination
           // and re-plan from wherever we land once the displacement is over.
@@ -791,6 +839,14 @@ export default class TeamModeScene extends Phaser.Scene {
     if (this.shop?.isOpen && !right) return; // left-clicks belong to the open shop
     const wp = this.cameras.main.getWorldPoint(p.x, p.y);
     this._mouseWorld = { x: wp.x, y: wp.y };
+    if (!this._isTouch && !right) {
+      // Desktop left-click: inspect any visible entity (ally, enemy, neutral) or clear target info on empty ground.
+      const picked = this._pickEntityAt(wp.x, wp.y);
+      this._selectedId = picked ? picked.id : null;
+      this._updateTargetPanel(this._state());
+      this._mouseHeld = false;
+      return;
+    }
     const target = this._pickEnemyAt(wp.x, wp.y);
     if (target) { this._attackOrder(target); this._mouseHeld = false; }
     else { this._moveOrder(wp.x, wp.y, true); this._mouseHeld = !this._isTouch || p === this.input.mousePointer; }
@@ -833,13 +889,25 @@ export default class TeamModeScene extends Phaser.Scene {
     if (code === 'Enter') { this._openChat(); return; }
     if (ev.repeat) return;
     switch (code) {
-      case 'KeyQ': case 'KeyW': case 'KeyE': case 'KeyR': this._tryCast(code[3].toLowerCase(), false); break;
+      case 'KeyQ': case 'KeyW': case 'KeyE': case 'KeyR': {
+        const sl = code[3].toLowerCase();
+        if (ev.ctrlKey) this._upgradeSkill(sl);
+        else this._tryCast(sl, false);
+        break;
+      }
       case 'KeyD': case 'KeyF': this._trySpell(code[3].toLowerCase(), false); break;
       case 'KeyC': this._toggleInfo(); break;
       case 'KeyB': this._recall(); break;
       case 'KeyP': this._toggleShop(); break;
       case 'Space': this._attackNearest(); break;
       case 'KeyS': if (this._canAct()) { this._order({ type: 'stop' }); this._moveDest = null; } break;
+      case 'Digit1': if (this._canAct()) this._send('active', {}); break; // Active item (Stasis / Cleanse / Veil)
+      case 'Digit4': if (this._canAct()) {
+        const p = this.input.activePointer;
+        const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+        this._send('ward', { x: wp.x, y: wp.y });
+      } break;
+      case 'KeyG': this._sendPing(); break; // Tactical ping at cursor
       case 'KeyY': if (this._vote) this._castVote(true); else this._toggleCamLock(); break; // Pass 2: Y = camera lock (LoL)
       case 'KeyZ': this._centerHeld = true; break;                                          // Pass 2: hold Z = look at you
       case 'KeyN': if (this._vote) this._castVote(false); break;
@@ -903,14 +971,46 @@ export default class TeamModeScene extends Phaser.Scene {
     if (this.shop?.isOpen) { this.shop.close(); return; }
     if (this._sbOpen) { this._setScoreboard(false); return; }
     if (this._phase === 'ended' || !WORLD_PHASES.has(this._phase)) { this._goMenu(); return; } // lobby / select / loading
+    const fxLbl = () => `${t('menu.fx')}: ${String(this._fxPref || 'auto').toUpperCase()}${this._fxPref === 'auto' && this._lowFx ? ' (LOW)' : ''}`;
+    const camLbl = () => (this._camLocked ? t('menu.cam.locked') : t('menu.cam.free'));
+    const langLbl = () => `${t('menu.lang')}: ${getLang().toUpperCase()}`;
+    const btns = [
+      { label: fxLbl(), color: 0x9fdcff, fn: (btn) => { this._cycleFxPref(); btn?._label?.setText(fxLbl()); } },
+    ];
+    if (!this._isTouch) {
+      btns.push({ label: camLbl(), color: 0xffd23f, fn: (btn) => { this._toggleCamLock(); btn?._label?.setText(camLbl()); } });
+    }
+    btns.push(
+      {
+        label: langLbl(), color: 0xb084ff,
+        fn: (btn) => {
+          toggleLang();
+          btn?._label?.setText(langLbl());
+          this.hud.modalSet({ title: t('menu.title'), body: t('menu.body') });
+          const mb = this.hud._modal?.btns || [];
+          if (mb[0]) mb[0]._label?.setText(fxLbl());
+          if (!this._isTouch && mb[1]) mb[1]._label?.setText(camLbl());
+          if (mb[mb.length - 2]) mb[mb.length - 2]._label?.setText(t('menu.resume'));
+          if (mb[mb.length - 1]) mb[mb.length - 1]._label?.setText(t('menu.leave'));
+          AudioManager.uiClick?.();
+        },
+      },
+      { label: t('menu.resume'), color: 0x7ed957, fn: () => this.hud.closeModal() },
+      { label: t('menu.leave'), color: 0xff5e5e, fn: () => this._goMenu() },
+    );
     this.hud.modal({
-      title: 'Leave the match?',
-      body: 'Your team plays on without you.',
-      buttons: [
-        { label: 'STAY', color: 0x7ed957, fn: () => this.hud.closeModal() },
-        { label: 'LEAVE', color: 0xff5e5e, fn: () => this._goMenu() },
-      ],
+      title: t('menu.title'),
+      body: t('menu.body'),
+      buttons: btns,
     });
+  }
+
+  _upgradeSkill(slot) {
+    if (!this._canAct() || !['q', 'w', 'e', 'r'].includes(slot)) return;
+    const me = this._me();
+    if (!me || !(me.skillPoints > 0)) return;
+    this._send('upgrade', { slot });
+    AudioManager.uiClick?.();
   }
 
   _setScoreboard(show) {
@@ -977,7 +1077,8 @@ export default class TeamModeScene extends Phaser.Scene {
     let str = null;
     if (me && canShop && this._phase === 'playing' && !this._ended && !this.shop?.isOpen && !this.hud.modalOpen && !this._reconn) {
       const it = this._nextBuy(me);
-      if (it && (me.gold | 0) >= it.cost) str = `🛒 Buy ${it.emoji} ${it.name} ${this._isTouch ? '(tap)' : '(P)'}`;
+      const cost = it ? (it.consumable ? it.cost : recipePlan(toArr(me.items), it.id).cost) : 0;
+      if (it && (me.gold | 0) >= cost) str = `🛒 Buy ${it.emoji} ${it.name} ${this._isTouch ? '(tap)' : '(P)'}`;
     }
     this.hud.setBuyNudge(str);
   }
@@ -1199,6 +1300,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const srvNow = this._srvNow();
     if (me.dead) return this._deny(slot, '💀 You are respawning');
     if (slot === 'r' && (me.level || 1) < R.ULT_UNLOCK_LEVEL) return this._deny(slot, `🔒 ${sk.name} unlocks at level ${R.ULT_UNLOCK_LEVEL}`);
+    if (me.ranks && !(me.ranks[slot] > 0)) return this._deny(slot, t('skill.unlearned'));
     const left = (me[`cd${slot.toUpperCase()}`] || 0) - srvNow;
     if (left > 0) return this._deny(slot, `${sk.icon} ${sk.name} ready in ${(left / 1000).toFixed(1)}s`);
     if ((me.mana || 0) < sk.mana) return this._deny(slot, '💧 Not enough mana');
@@ -1279,6 +1381,215 @@ export default class TeamModeScene extends Phaser.Scene {
     if (best) return best;
     for (const v of this.views.structs.values()) if (v.alive && v.team !== this.myTeam && v.hitTest(x, y)) return v;
     return null;
+  }
+
+  /** Pick ANY visible entity at (x, y) — enemy, neutral, or ally (for hover & left-click inspect). */
+  _pickEntityAt(x, y) {
+    const enemy = this._pickEnemyAt(x, y);
+    if (enemy) return enemy;
+    let best = null, bd = Infinity;
+    const consider = (v) => { const p = v.aimPoint(), d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = v; } };
+    for (const v of this.views.champs.values()) if (!v.dead && v.team === this.myTeam && v.hitTest(x, y)) consider(v);
+    if (best) return best;
+    for (const v of this.views.units.values()) if (v.alive && v.kind !== 'pet' && v.team === this.myTeam && v.hitTest(x, y)) consider(v);
+    if (best) return best;
+    for (const v of this.views.structs.values()) if (v.alive && v.team === this.myTeam && v.hitTest(x, y)) return v;
+    return null;
+  }
+
+  _entityRel(v) {
+    if (!v) return '';
+    if (v.team === this.myTeam) return 'ally';
+    return v.team === 'blue' || v.team === 'red' ? 'enemy' : 'neutral';
+  }
+
+  _setHoverCursor(kind) {
+    if (this._cursorKind === kind) return;
+    this._cursorKind = kind;
+    const canvas = this.game?.canvas;
+    if (!canvas) return;
+    if (!kind) { canvas.style.cursor = ''; return; }
+    const col = kind === 'enemy' ? '%23ff4a4a' : (kind === 'neutral' ? '%23ffd23f' : '%2339c2ff');
+    const svg = kind === 'ally'
+      ? `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'><circle cx='13' cy='13' r='8' fill='none' stroke='${col}' stroke-width='2.2'/><circle cx='13' cy='13' r='2.5' fill='${col}'/></svg>`
+      : `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'><circle cx='14' cy='14' r='9' fill='none' stroke='${col}' stroke-width='2.2'/><path d='M14 2v6M14 20v6M2 14h6M20 14h6' stroke='${col}' stroke-width='2.2' stroke-linecap='round'/><circle cx='14' cy='14' r='2' fill='${col}'/></svg>`;
+    canvas.style.cursor = `url("${svg}") 14 14, crosshair`;
+  }
+
+  /** Apply a pixel-hugging silhouette outline (Phaser 3.70 postFX glow) around the sprite itself, not a hitbox rect. */
+  _setHoverOutline(hv, rel) {
+    const prev = this._hoverGlow;
+    const same = prev && prev.v === hv && prev.rel === rel;
+    if (same) return;
+    // Remove previous outline cleanly
+    if (prev) {
+      try {
+        if (prev.fx && prev.obj?.postFX) prev.obj.postFX.remove(prev.fx);
+        if (prev.v instanceof ChampionView && prev.v.outlines) {
+          for (const o of prev.v.outlines) if (o?.scene) o.setTintFill(prev.v.outlineColor);
+        }
+      } catch (_) { /* destroyed */ }
+      this._hoverGlow = null;
+    }
+    if (!hv || hv.dead || hv.alive === false || hv.removed) return;
+    const col = rel === 'enemy' ? 0xff4a4a : (rel === 'neutral' ? 0xffd23f : 0x39c2ff);
+    const obj = hv instanceof ChampionView ? hv.sprite : hv.body;
+    let fx = null;
+    try {
+      // Skip postFX.addGlow on touch/mobile or lowFx mode to preserve 60 FPS on weak GPUs
+      if (!this._isTouch && !this._lowFx && obj?.postFX) fx = obj.postFX.addGlow(col, 4.5, 0, false, 0.25, 16);
+      if (hv instanceof ChampionView && hv.outlines) {
+        for (const o of hv.outlines) if (o?.scene) o.setTintFill(col);
+      }
+    } catch (_) { /* canvas fallback */ }
+    this._hoverGlow = { v: hv, obj, fx, rel };
+  }
+
+  /** Tactical Ping (G key) at cursor position — expanding neon ring + alert toast. */
+  _sendPing() {
+    if (this._phase !== 'playing' || !this._mouseWorld) return;
+    const now = this.time.now;
+    if (now - (this._lastPingAt || 0) < 900) return;
+    this._lastPingAt = now;
+    const { x, y } = this._mouseWorld;
+    const enemy = this._pickEnemyAt(x, y);
+    const col = enemy ? 0xff4a4a : 0x39c2ff;
+    const label = enemy ? '⚔ ATTACK!' : '📍 ON MY WAY';
+    for (let i = 0; i < 2; i++) {
+      const ring = this.add.image(x, y, 'moba-ring').setTint(col).setDisplaySize(24, 24).setDepth(D.fxTop).setAlpha(0.95);
+      this.tweens.add({ targets: ring, displayWidth: 180, displayHeight: 180, alpha: 0, delay: i * 160, duration: 680, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+    }
+    const txt = this.add.text(x, y - 34, label, { fontFamily: 'Arial Black, sans-serif', fontSize: 13, color: enemy ? '#ff8a8a' : '#7ec8ff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(D.numbers);
+    this.tweens.add({ targets: txt, y: y - 62, alpha: 0, duration: 1100, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    AudioManager.uiClick?.();
+  }
+
+  _updateTargetPanel(st) {
+    if (!this._selectedId || !st) { this.hud.setTarget(null); return; }
+    const id = this._selectedId;
+    const c = st.champions?.get?.(id);
+    if (c) {
+      if (c.dead) { this._selectedId = null; this.hud.setTarget(null); return; }
+      const def = CHAMPIONS[c.champ];
+      const rel = c.team === this.myTeam ? 'ally' : 'enemy';
+      this.hud.setTarget({
+        name: `${c.name || def?.name || 'Champion'}`,
+        sub: `Lv.${c.level || 1} · ${def?.role || ''}`,
+        rel,
+        hp: c.hp, maxHp: c.maxHp, mana: c.mana, maxMana: c.maxMana,
+        stats: `AD ${Math.round(c.ad || 0)} · AP ${Math.round(c.ap || 0)} · ARM ${Math.round(c.armor || 0)} · MS ${Math.round(c.ms || 0)}`,
+      });
+      return;
+    }
+    const u = st.units?.get?.(id);
+    if (u) {
+      if (!u.alive) { this._selectedId = null; this.hud.setTarget(null); return; }
+      const uv = this.views.units.get(id);
+      const rel = u.team === this.myTeam ? 'ally' : (u.team === 'blue' || u.team === 'red' ? 'enemy' : 'neutral');
+      this.hud.setTarget({
+        name: uv?.name || u.kind || 'Unit',
+        sub: rel.toUpperCase(),
+        rel,
+        hp: u.hp, maxHp: u.maxHp, mana: 0, maxMana: 0,
+        stats: `ATK ${Math.round(u.ad || 0)} · ARM ${Math.round(u.armor || 0)} · MS ${Math.round(u.ms || 0)}`,
+      });
+      return;
+    }
+    const s = st.structures?.get?.(id);
+    if (s) {
+      if (!s.alive) { this._selectedId = null; this.hud.setTarget(null); return; }
+      const rel = s.team === this.myTeam ? 'ally' : 'enemy';
+      this.hud.setTarget({
+        name: s.kind === 'core' ? 'Production Server' : 'Firewall Tower',
+        sub: s.invulnerable ? 'INVULNERABLE' : rel.toUpperCase(),
+        rel,
+        hp: s.hp, maxHp: s.maxHp, mana: 0, maxMana: 0,
+        stats: s.kind === 'core' ? 'Core Objective · Destroy to win' : `ATK ${R.TOWER?.ad || 120} · RNG ${R.TOWER?.range || 460}`,
+      });
+      return;
+    }
+    // Target disappeared (left sight or removed) → clear panel!
+    this._selectedId = null;
+    this.hud.setTarget(null);
+  }
+
+  /** Pick any hoverable entity (enemies first, then allies) for cursor + border highlight. */
+  _pickEntityAt(x, y) {
+    const enemy = this._pickEnemyAt(x, y);
+    if (enemy) return enemy;
+    let best = null, bd = Infinity;
+    const consider = (v) => { const p = v.aimPoint(), d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = v; } };
+    for (const v of this.views.champs.values()) if (!v.dead && v.team === this.myTeam && v.hitTest(x, y)) consider(v);
+    if (best) return best;
+    for (const v of this.views.units.values()) if (v.alive && v.kind !== 'pet' && v.team === this.myTeam && v.hitTest(x, y)) consider(v);
+    if (best) return best;
+    for (const v of this.views.structs.values()) if (v.alive && v.team === this.myTeam && v.hitTest(x, y)) return v;
+    return null;
+  }
+
+  _hoverRelation(v) {
+    if (!v) return '';
+    if (v.team === this.myTeam) return 'ally';
+    if (v.team === 'blue' || v.team === 'red') return 'enemy';
+    return 'neutral';
+  }
+
+  _applyHoverCursor(rel) {
+    if (this._hoverCursor === rel) return;
+    this._hoverCursor = rel;
+    const canvas = this.game?.canvas;
+    if (canvas) canvas.style.cursor = HOVER_CURSORS[rel] || '';
+  }
+
+  _drawHoverOutline(v, rel, now) {
+    const g = this._hoverBox;
+    if (!g) return;
+    g.clear();
+    if (!v || !rel) return;
+    const col = HOVER_COLOR[rel] ?? 0xffffff;
+    const pulse = 0.78 + 0.22 * Math.sin(now / 130);
+
+    // Determine visual bounding box around the hovered entity
+    let w = 84, h = 104, cx = v.x, cy = v.y - 46;
+    if (v instanceof StructureView) {
+      const isCore = v.kind === 'core';
+      w = isCore ? 188 : 124;
+      h = isCore ? 192 : 128;
+      cy = v.y - (isCore ? 86 : 54);
+    } else if (v instanceof UnitView) {
+      const sz = v.size || 48;
+      w = Math.max(54, sz * 1.45);
+      h = Math.max(54, sz * 1.45);
+      cy = v.y - sz * 0.22;
+    } else if (v instanceof ChampionView) {
+      w = 88;
+      h = 112;
+      cy = v.y - 48;
+    }
+
+    const x0 = cx - w * 0.5, y0 = cy - h * 0.5;
+    const rad = 10;
+    const brk = Math.min(20, w * 0.24, h * 0.24);
+
+    // Soft outer glow + crisp border
+    g.lineStyle(6, col, 0.22 * pulse);
+    g.strokeRoundedRect(x0 - 2, y0 - 2, w + 4, h + 4, rad + 2);
+    g.lineStyle(2, col, 0.85 * pulse);
+    g.strokeRoundedRect(x0, y0, w, h, rad);
+
+    // Bright tactical corner brackets
+    g.lineStyle(3.5, 0xffffff, 0.9 * pulse);
+    const x1 = x0 + w, y1 = y0 + h;
+    g.beginPath();
+    // top-left
+    g.moveTo(x0, y0 + brk); g.lineTo(x0, y0); g.lineTo(x0 + brk, y0);
+    // top-right
+    g.moveTo(x1 - brk, y0); g.lineTo(x1, y0); g.lineTo(x1, y0 + brk);
+    // bottom-left
+    g.moveTo(x0, y1 - brk); g.lineTo(x0, y1); g.lineTo(x0 + brk, y1);
+    // bottom-right
+    g.moveTo(x1 - brk, y1); g.lineTo(x1, y1); g.lineTo(x1, y1 - brk);
+    g.strokePath();
   }
 
   /** Nearest enemy to a point within `radius`: champions only, or units (+ structures). */
@@ -1363,6 +1674,13 @@ export default class TeamModeScene extends Phaser.Scene {
     const canShop = this._canShop(me);
     this.hud.update({ st, me, myId: this.localId, srvNow, now, mePos: this._pred, view, canShop, phase: this._phase, hidden: this._meHidden });
     if (me && this.shop) this.shop.update({ gold: me.gold | 0, items: toArr(me.items), canShop });
+    if (this.augmentPanel) {
+      let offer = me?.augmentOffer || null;
+      if (!offer && me?.augmentOfferJson) {
+        try { offer = JSON.parse(me.augmentOfferJson); } catch {}
+      }
+      this.augmentPanel.update(offer, me?.augments || []);
+    }
     this._tickReconnect();
     if (st) this._tickVote(st, srvNow);
     if (now >= (this._slowTickAt || 0)) {
@@ -1424,9 +1742,45 @@ export default class TeamModeScene extends Phaser.Scene {
         }
       }
       v._seen = f;
+      if (s.kind === 'tower') {
+        const tv = s.targetId ? this._viewOf(s.targetId) : null;
+        v.targetPos = tv && (tv.alive !== false) && !tv.dead ? tv.aimPoint() : null;
+        v.targetIsMe = !!s.targetId && s.targetId === this.localId;
+      }
       if (this._inCull(v.x, v.y)) v.update(now, mi);
+      else v.laserG?.clear();
     });
     for (const [id, v] of this.views.structs) if (v._seen !== f) { v.destroy(); this.views.structs.delete(id); }
+
+    // AoV Tower Heal Relics (behind Tier-1 towers)
+    if (Array.isArray(st.relics)) {
+      if (!this._relicViews) this._relicViews = new Map();
+      const simNow = this._sim ? this._sim.t : srvNow;
+      for (const rl of st.relics) {
+        let rv = this._relicViews.get(rl.id);
+        if (!rv) {
+          const c = this.add.container(rl.x, rl.y).setDepth(D.ground + 0.5);
+          const glow = this.add.image(0, 0, 'moba-glow').setTint(0x39ff14).setDisplaySize(64, 64).setAlpha(0.45).setBlendMode(1);
+          const disc = this.add.circle(0, 0, 18, 0x0b2916, 0.9).setStrokeStyle(2.5, 0x39ff14, 0.95);
+          const plus = this.add.image(0, 0, 'moba-plus').setTint(0x7ed957).setDisplaySize(20, 20);
+          c.add([glow, disc, plus]);
+          rv = { c, glow };
+          this._relicViews.set(rl.id, rv);
+        }
+        const ready = rl.upAt <= simNow && this._inCull(rl.x, rl.y);
+        rv.c.setVisible(ready);
+        if (ready) rv.glow.setAlpha(0.32 + 0.18 * Math.sin(now / 240));
+      }
+    }
+
+    // Update lightweight 10Hz Fog of War layer (team vision circles)
+    if (this.map?.updateFog) {
+      const watchers = [];
+      st.champions?.forEach((c) => { if (c.team === this.myTeam && !c.dead) watchers.push({ x: c.x, y: c.y, r: 1100 }); });
+      st.structures?.forEach((s) => { if (s.team === this.myTeam && s.alive) watchers.push({ x: s.x, y: s.y, r: 1050 }); });
+      st.units?.forEach((u) => { if (u.team === this.myTeam && u.alive && u.kind !== 'pet') watchers.push({ x: u.x, y: u.y, r: u.kind === 'ward' ? 750 : 680 }); });
+      this.map.updateFog(watchers, now);
+    }
 
     const camps = this._liveCamps;
     camps.clear();
@@ -1561,6 +1915,8 @@ export default class TeamModeScene extends Phaser.Scene {
   /** An entity left our state (died + removed, or hidden by the server): forget every reference. */
   _onVanish(id) {
     if (this._hoverEnemy?.id === id) this._hoverEnemy = null;
+    if (this._hoverEntity?.id === id) this._hoverEntity = null;
+    if (this._selectedId === id) { this._selectedId = null; this.hud.setTarget(null); }
     if (this._pendingOrder?.id === id) this._pendingOrder = null;
     const q = this._castQueue;
     if (q && q.length) {
@@ -1723,12 +2079,27 @@ export default class TeamModeScene extends Phaser.Scene {
     if (tv && (tv.alive !== false) && !tv.dead) this._targetMark.setVisible(true).setPosition(tv.x, tv.y + 2);
     else if (this._targetMark.visible) this._targetMark.setVisible(false);
     if (!this._isTouch && this._mouseWorld && now >= this._hoverPickAt) {
-      this._hoverPickAt = now + 60;
-      this._hoverEnemy = this._phase === 'playing' ? this._pickEnemyAt(this._mouseWorld.x, this._mouseWorld.y) : null;
+      this._hoverPickAt = now + 50;
+      const uiBlocking = this.hud.modalOpen || this.shop?.isOpen || this._sbOpen || this._chatActive || this._pointerOut;
+      const canPick = this._phase === 'playing' && !uiBlocking;
+      this._hoverEntity = canPick ? this._pickEntityAt(this._mouseWorld.x, this._mouseWorld.y) : null;
+      this._hoverEnemy = this._hoverEntity && this._hoverEntity.team !== this.myTeam ? this._hoverEntity : null;
     }
-    const hv = this._hoverEnemy;
-    if (hv && hv !== tv && (hv.alive !== false) && !hv.dead) this._hoverMark.setVisible(true).setPosition(hv.x, hv.y + 2);
-    else if (this._hoverMark.visible) this._hoverMark.setVisible(false);
+    const hv = this._hoverEntity;
+    const hvAlive = !!(hv && (hv.alive !== false) && !hv.dead && !hv.removed);
+    if (hvAlive) {
+      const rel = this._entityRel(hv);
+      const col = rel === 'enemy' ? 0xff4a4a : (rel === 'neutral' ? 0xffd23f : 0x39c2ff);
+      const rw = hv instanceof StructureView ? (hv.kind === 'core' ? 196 : 128) : (hv instanceof UnitView ? Math.max(60, (hv.size || 44) * 1.5) : 90);
+      this._hoverMark.setVisible(hv !== tv).setPosition(hv.x, hv.y + 4).setSize(rw, Math.round(rw * 0.36)).setStrokeStyle(2.5, col, 0.9);
+      this._setHoverOutline(hv, rel);
+      this._setHoverCursor(rel);
+    } else {
+      if (this._hoverMark.visible) this._hoverMark.setVisible(false);
+      this._setHoverOutline(null, '');
+      this._setHoverCursor('');
+    }
+    this._updateTargetPanel(this._state());
     this._drawAim(me, now);
   }
 
@@ -2068,8 +2439,12 @@ export default class TeamModeScene extends Phaser.Scene {
   _cleanup() {
     if (this._cleanedVisit === this._visit) return;
     this._cleanedVisit = this._visit;
+    this._setHoverOutline?.(null, '');
+    this._setHoverCursor?.('');
+    if (this._relicViews) { for (const rv of this._relicViews.values()) rv.c.destroy(); this._relicViews.clear(); }
     // Flag first so Colyseus callbacks firing during room.leave() become no-ops.
     this._shuttingDown = true;
+    this._applyHoverCursor('');
     try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
     this._reconn = null; this._vote = null;
     document.removeEventListener('visibilitychange', this._onVis);

@@ -68,6 +68,13 @@ export class TeamChamp extends Schema {
     // quick-play lobby ready flag (RP-06 START NOW).
     this.rank = '';
     this.ready = false;
+    this.augments = new ArraySchema();
+    this.augmentOfferJson = '';
+    this.skillPoints = 1;
+    this.rankQ = 0;
+    this.rankW = 0;
+    this.rankE = 0;
+    this.rankR = 0;
   }
 }
 // v4 optimisation: positions are integers inside the map (0…6000) → uint16 on the wire
@@ -121,6 +128,13 @@ type('string')(TeamChamp.prototype, 'inBush');   // v4 (appended)
 type('string')(TeamChamp.prototype, 'hat');      // EP-06 (appended)
 type('string')(TeamChamp.prototype, 'rank');     // Pass 2 (appended)
 type('boolean')(TeamChamp.prototype, 'ready');   // Pass 2 (appended)
+type(['string'])(TeamChamp.prototype, 'augments');
+type('string')(TeamChamp.prototype, 'augmentOfferJson');
+type('uint8')(TeamChamp.prototype, 'skillPoints');
+type('uint8')(TeamChamp.prototype, 'rankQ');
+type('uint8')(TeamChamp.prototype, 'rankW');
+type('uint8')(TeamChamp.prototype, 'rankE');
+type('uint8')(TeamChamp.prototype, 'rankR');
 
 /** state.units — key = 'u<n>'. Minions, jungle monsters, river epics and (v2) pets. */
 export class TeamUnit extends Schema {
@@ -199,6 +213,7 @@ export class TeamScore extends Schema {
     this.spellD = '';
     this.spellF = '';
     this.rank = '';            // Pass 2 (appended): rank badge label
+    this.augments = new ArraySchema();
   }
 }
 type('string')(TeamScore.prototype, 'team');
@@ -216,6 +231,7 @@ type('number')(TeamScore.prototype, 'respawnAt');
 type('string')(TeamScore.prototype, 'spellD');
 type('string')(TeamScore.prototype, 'spellF');
 type('string')(TeamScore.prototype, 'rank');   // Pass 2 (appended)
+type(['string'])(TeamScore.prototype, 'augments');
 
 export class TeamState extends Schema {
   constructor() {

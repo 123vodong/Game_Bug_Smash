@@ -110,12 +110,12 @@ const RIVER_S = 400;                   // river-bank walls (s = y − x)
 const MID_M = 5618;                    // mid-lane jungle-side wall (≈270 px from the lane center)
 const TOP_X = 920;                     // top-lane jungle-side wall (≈270 px from the lane center)
 const TOP_JUNGLE_WALLS = [
-  // top-lane edge (x = 920) — entrances at y 2300–2600 and 3300–3600
-  seg('cubicles',  { x: TOP_X, y: 1320 }, { x: TOP_X, y: 2300 }),
+  // top-lane edge (x = 920) — open river corner above y=1620 + entrances at y 2300–2600 and 3300–3600
+  seg('cubicles',  { x: TOP_X, y: 1620 }, { x: TOP_X, y: 2300 }),
   seg('cubicles',  { x: TOP_X, y: 2600 }, { x: TOP_X, y: 3300 }),
   seg('cubicles',  { x: TOP_X, y: 3600 }, { x: TOP_X, y: 3950 }),
-  // river bank (s = 400) — entrances at m 3000–3300 and the epic pit 3900–4300; open at the mid corner
-  seg('glass',     sm(RIVER_S, 2240), sm(RIVER_S, 3000)),
+  // river bank (s = 400) — open top/bot river corner (m < 2560) + entrances at m 3000–3300 and epic pit 3900–4300
+  seg('glass',     sm(RIVER_S, 2560), sm(RIVER_S, 3000)),
   seg('glass',     sm(RIVER_S, 3300), sm(RIVER_S, 3900)),
   seg('glass',     sm(RIVER_S, 4300), sm(RIVER_S, 5250)),
   // mid-lane edge (m = 5618) — entrances at s 1500–1800 and 2800–3100; open at the river corner

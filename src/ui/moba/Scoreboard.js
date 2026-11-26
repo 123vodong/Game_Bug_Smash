@@ -15,6 +15,7 @@ import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { SPELLS } from '../../../shared/moba/spells.js';
 import { portraitKey } from '../../entities/moba/looks.js';
 import { ITEMS } from '../../../shared/moba/items.js';
+import { AUGMENTS } from '../../../shared/moba/augments.js';
 import { TEAM_INFO, TEAM_SIZE, INVENTORY_SLOTS } from '../../../shared/moba/rules.js';
 import {
   FONT_TITLE, FONT_MONO, FONT_UI, pin, drawPanel, fillRR, strokeRR, slotAt, fmtGold, laneRank, clipName,
@@ -192,6 +193,7 @@ export class Scoreboard {
             team: sc.team, champ: sc.champ, name: sc.name, isBot: sc.isBot, level: sc.level, kills: sc.kills,
             deaths: sc.deaths, assists: sc.assists, cs: sc.cs, items: sc.items, dead: sc.dead,
             spellD: sc.spellD, spellF: sc.spellF, gold: goldSeen.has(key) ? goldSeen.get(key) : null, rank: sc.rank || '',
+            augments: sc.augments,
           } });
         });
       } else {
@@ -251,7 +253,16 @@ export class Scoreboard {
     const sp = [ch.spellD, ch.spellF].map((id) => SPELLS[id]?.icon || '').join('');   // v3 summoner spells
     // Pass 2 RP-13: rank badge (humans) after the champion line
     const rk = !ch.isBot && ch.rank ? `  ·  ${ch.rank}` : '';
-    r.sub.setText((info ? `${info.name} · ${info.role}` : String(ch.champ || '')) + (sp ? `  ${sp}` : '') + rk);
+    let augStr = '';
+    if (ch.augments && ch.augments.length) {
+      const icons = [];
+      for (let i = 0; i < ch.augments.length; i++) {
+        const a = AUGMENTS[ch.augments[i]];
+        if (a?.icon) icons.push(a.icon);
+      }
+      if (icons.length) augStr = `  ·  ⚡${icons.join('')}`;
+    }
+    r.sub.setText((info ? `${info.name} · ${info.role}` : String(ch.champ || '')) + (sp ? `  ${sp}` : '') + rk + augStr);
     r.lv.setText(String(ch.level | 0));
     r.kda.setText(`${ch.kills | 0} / ${ch.deaths | 0} / ${ch.assists | 0}`);
     r.cs.setText(String(ch.cs | 0));
