@@ -1753,10 +1753,12 @@ export default class TeamModeScene extends Phaser.Scene {
     for (const [id, v] of this.views.structs) if (v._seen !== f) { v.destroy(); this.views.structs.delete(id); }
 
     // AoV Tower Heal Relics (behind Tier-1 towers)
-    if (Array.isArray(st.relics)) {
+    let relics = Array.isArray(st.relics) ? st.relics : null;
+    if (!relics && st.relicsJson) { try { relics = JSON.parse(st.relicsJson); } catch {} }
+    if (Array.isArray(relics)) {
       if (!this._relicViews) this._relicViews = new Map();
       const simNow = this._sim ? this._sim.t : srvNow;
-      for (const rl of st.relics) {
+      for (const rl of relics) {
         let rv = this._relicViews.get(rl.id);
         if (!rv) {
           const c = this.add.container(rl.x, rl.y).setDepth(D.ground + 0.5);

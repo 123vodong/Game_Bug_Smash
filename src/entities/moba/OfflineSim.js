@@ -784,6 +784,12 @@ export class OfflineSim {
       const tgtP = itemPassives(target.items);
       const tgtRoleP = championPassive(CHAMPIONS[target.champ])?.id;
       if (tgtP.has('fortress')) dmg *= 0.9;
+      if (tgtRoleP === 'brick_wall') {
+        let nearAlly = false;
+        for (const al of this.state.champions.values()) if (al.id !== target.id && al.team === target.team && !al.dead && dist(al, target) <= 450) { nearAlly = true; break; }
+        if (!nearAlly) for (const st of this.state.structures.values()) if (st.alive && st.team === target.team && st.kind === 'tower' && dist(st, target) <= 600) { nearAlly = true; break; }
+        if (nearAlly) dmg *= 0.9;
+      }
       if (tgtRoleP === 'failover') { target._tankStacks = Math.min(5, (target._tankStacks || 0) + 1); target._tankUntil = this.t + 4000; }
       if (tgtP.has('thorns') && src && !isStruct(src) && !byPet && !trueDmg) {
         src.hp = Math.max(1, src.hp - dmg * 0.18);
@@ -916,6 +922,10 @@ export class OfflineSim {
         const jungleBonus = (kAugs.includes('jungle_contract') && (target.kind === 'big' || R.EPICS[target.kind])) ? 35 : 0;
         const totalUnitGold = gold + minionBonus + jungleBonus;
         killer.gold += totalUnitGold; killer.cs++;
+        if (championPassive(CHAMPIONS[killer.champ])?.id === 'clean_sweep' && !killer.dead) {
+          killer.hp = Math.min(killer.maxHp, killer.hp + 25);
+          killer.mana = Math.min(killer.maxMana, killer.mana + 20);
+        }
         if (killer.id === this.localId) this.emit('gold', { n: totalUnitGold, x: Math.round(target.x), y: Math.round(target.y) });
       }
     }
@@ -1166,6 +1176,14 @@ export class OfflineSim {
     }
     if (roleP === 'caffeine_brew' && c._castCount % 2 === 0) {
       c.hp = Math.min(c.maxHp, c.hp + c.maxHp * 0.06);
+      let nearAl = null, nearD = 500;
+      this.state.champions.forEach((al) => {
+        if (al.id !== c.id && al.team === c.team && !al.dead) {
+          const d = dist(al, c);
+          if (d < nearD) { nearD = d; nearAl = al; }
+        }
+      });
+      if (nearAl) nearAl.hp = Math.min(nearAl.maxHp, nearAl.hp + nearAl.maxHp * 0.06);
       this.emit('fx', { k: 'heal', x: Math.round(c.x), y: Math.round(c.y), r: 70 });
     }
     if (roleP === 'gradient_stack') {

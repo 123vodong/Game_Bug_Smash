@@ -86,23 +86,46 @@ export class SkillEngine {
   cast(ch, slot, spec, aim, now) {
     ch._lastCastSlot = slot;
     if (spec && !spec._slot) spec._slot = slot;
-    switch (spec.type) {
-      case 'projectile': return this._projectile(ch, slot, spec, aim);
-      case 'circle': return this._circle(ch, slot, spec, aim, now);
-      case 'target': return this._target(ch, slot, spec, aim, now);
-      case 'dash': return this._dash(ch, slot, spec, aim, now);
-      case 'blink': return this._blink(ch, slot, spec, aim, now);
-      case 'self': return this._self(ch, slot, spec, now);
-      case 'allies': return this._allies(ch, slot, spec, now);
-      case 'zone': return this._zone(ch, slot, spec, aim, now);
-      default: return false;
+    const prevStacks = ch._gradStacks, prevUntil = ch._gradUntil;
+    if (ch.champ === 'model') {
+      if ((ch._gradUntil || 0) > now) ch._gradStacks = Math.min(3, (ch._gradStacks || 0) + 1);
+      else ch._gradStacks = 0;
+      ch._gradUntil = now + 4000;
+      ch._gradMul = 1 + ch._gradStacks * 0.1;
+    } else {
+      ch._gradMul = 1;
     }
+    let ok = false;
+    switch (spec.type) {
+      case 'projectile': ok = this._projectile(ch, slot, spec, aim); break;
+      case 'circle': ok = this._circle(ch, slot, spec, aim, now); break;
+      case 'target': ok = this._target(ch, slot, spec, aim, now); break;
+      case 'dash': ok = this._dash(ch, slot, spec, aim, now); break;
+      case 'blink': ok = this._blink(ch, slot, spec, aim, now); break;
+      case 'self': ok = this._self(ch, slot, spec, now); break;
+      case 'allies': ok = this._allies(ch, slot, spec, now); break;
+      case 'zone': ok = this._zone(ch, slot, spec, aim, now); break;
+      default: ok = false;
+    }
+    if (!ok) {
+      ch._gradStacks = prevStacks;
+      ch._gradUntil = prevUntil;
+      ch._gradMul = 1;
+    }
+    return ok;
   }
 
   /** Amount of an amount spec for the caster's CURRENT stats + skill rank scaling. */
   amount(ch, amountSpec, slot = ch._lastCastSlot) {
     const rank = Math.max(1, ch.ranks?.[slot] || 1);
-    return scaledAmount(amountSpec, ch.level, ch.ad, ch.ap, ch.maxHp) * (1 + 0.12 * (rank - 1));
+    let mul = 1 + 0.12 * (rank - 1);
+    const now = Date.now();
+    if (slot === 'q' || slot === 'r') {
+      if ((ch._empowerUntil || 0) > now) { ch._empowerUntil = 0; mul *= 1.2; }
+      if ((ch._overfitUntil || 0) > now) { ch._overfitUntil = 0; mul *= 1.2; }
+    }
+    if (ch._gradMul && ch._gradMul > 1) mul *= ch._gradMul;
+    return scaledAmount(amountSpec, ch.level, ch.ad, ch.ap, ch.maxHp) * mul;
   }
 
   // ───────────────────────── types ─────────────────────────

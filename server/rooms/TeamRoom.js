@@ -38,7 +38,7 @@ import {
   sellValue, ABANDON_MS, ABANDON_EMPTY_MS,
   SELECT_MS, SELECT_BOT_PICK_MS, SELECT_ALL_LOCKED_MS, LOADING_MS, PICK_RATE_MS,
   MAX_LEVEL, XP_TABLE, ULT_UNLOCK_LEVEL, levelForXp,
-  START_GOLD, PASSIVE_GOLD_PER_SEC, PASSIVE_GOLD_DELAY_MS, KILL_GOLD, ASSIST_GOLD, FIRST_BLOOD_BONUS,
+  START_GOLD, PASSIVE_GOLD_PER_SEC, PASSIVE_GOLD_DELAY_MS, KILL_GOLD, ASSIST_GOLD, FIRST_BLOOD_BONUS, bountyBonus,
   TOWER_GOLD_TEAM, ASSIST_WINDOW_MS, XP_SHARE_RADIUS, KILL_XP_BASE, KILL_XP_PER_VICTIM_LEVEL,
   respawnMs, RECALL_MS, FOUNTAIN_RADIUS, FOUNTAIN_HEAL_PER_SEC, FOUNTAIN_MANA_PER_SEC, FOUNTAIN_LASER_DPS,
   SHOP_ONLY_IN_FOUNTAIN, INVENTORY_SLOTS, damageAfterArmor, damageAfterResist, applyHardCcDuration, OUT_OF_COMBAT_MS, HP_REGEN_PCT_PER_SEC,
@@ -186,6 +186,14 @@ export class TeamRoom extends Room {
     this._helloed = new WeakSet(); // EP-03: Client objects already welcomed (a reconnect is a NEW Client → welcomed again)
     this._away = new Set();        // EP-03: sids inside their reconnect grace (a bot holds the seat)
     this._votes = { blue: null, red: null };   // EP-04: active rollback vote per team (see _startVote)
+    this._relics = [];
+    for (const s of STRUCTURES) {
+      if (s.kind !== 'tower' || s.tier !== 1) continue;
+      const core = STRUCTURES.find((x) => x.team === s.team && x.kind === 'core');
+      const dx = core.x - s.x, dy = core.y - s.y, d = Math.hypot(dx, dy) || 1;
+      this._relics.push({ id: `relic_${s.id}`, team: s.team, x: Math.round(s.x + (dx / d) * 185), y: Math.round(s.y + (dy / d) * 185), upAt: 0 });
+    }
+    this._relicsDirty = true;
     this._voteCd = { blue: 0, red: 0 };        // EP-04: no new vote before this (server ms) after a failed one
     this._lastVoteAt = new Map();              // EP-04: sid -> last processed `vote` (rate limit)
     // Pass 2
@@ -219,7 +227,7 @@ export class TeamRoom extends Room {
     this.onMessage('augmentPick', (client, msg) => this._doAugmentPick(client.sessionId, msg));
     this.onMessage('augmentReroll', (client) => this._doAugmentReroll(client.sessionId));
     this.onMessage('upgrade', (client, msg) => this._doUpgrade(client.sessionId, msg));
-    this.onMessage('useActive', (client) => this._doUseActive(client.sessionId));
+    this.onMessage('active', (client) => this._doUseActive(client.sessionId));
     this.onMessage('ward', (client, msg) => this._doWard(client.sessionId, msg));
     // Answered ONCE per Client object (each reply carries the chat history). EP-03: a reconnect
     // is a new Client (userData is copied over), so it is keyed by the object, not userData.
@@ -1105,10 +1113,11 @@ export class TeamRoom extends Room {
     const prevReveal = ch.revealUntil || 0;
     ch.revealUntil = now + BUSH_REVEAL_MS;
     if (!this.skills.cast(ch, slot, spec, { x: aim.x, y: aim.y, id }, now)) { ch.revealUntil = prevReveal; ch._overloadCast = false; return false; }
+    ch._stealthUntil = 0;
     ch._castCount = nextCastCount;
     ch.lastCastAt = now;
     ch.mana = Math.max(0, ch.mana - spec.mana);
-    ch.cd[slot] = now + skillCooldownMs(spec.cd, ch.haste, rank);
+    ch.cd[slot] = now + skillCooldownMs(spec.cd, ch.haste + ((ch._blueBuffUntil || 0) > now ? 0.15 : 0), rank);
     ch.action = slot;
     ch.actionSeq++;
     this._cancelRecall(ch);
@@ -1130,6 +1139,19 @@ export class TeamRoom extends Room {
     const roleP = championPassive(ch.def)?.id;
     if (roleP === 'swipe_combo') ch._swipeReady = true;
     if (roleP === 'syntax_surge') this._addBuff(ch, 'passive_ms', { msPct: 0.12 }, now + 1500, true);
+    if (roleP === 'caffeine_brew' && ch._castCount % 2 === 0) {
+      this._heal(ch, ch.maxHp * 0.06);
+      let nearAl = null, nearD = 500;
+      for (const al of this.champs.values()) {
+        if (al.id !== ch.id && al.team === ch.team && !al.dead) {
+          const d = dist(al, ch);
+          if (d < nearD) { nearD = d; nearAl = al; }
+        }
+      }
+      if (nearAl) this._heal(nearAl, nearAl.maxHp * 0.06);
+    }
+    if (ch.champ === 'pixel' && slot === 'e') ch._empowerUntil = now + 3500;
+    if (ch.champ === 'model' && slot === 'w') ch._overfitUntil = now + 4500;
     if (roleP === 'uptime_pulse' && (spec.heal || spec.shield || spec.type === 'allies')) {
       ch.cd.r = Math.max(now, (ch.cd.r || 0) - 2000);
       this._addBuff(ch, 'passive_ms', { msPct: 0.15 }, now + 1500, true);
@@ -1701,6 +1723,7 @@ export class TeamRoom extends Room {
       if (!u.alive) continue;
       if (u.utype === 'minion') this._tickMinion(u, dt, now);
       else if (u.utype === 'pet') this._tickPet(u, dt, now);
+      else if (u.utype === 'ward') { if (now >= u.expiresAt) { u.alive = false; u.removeAt = now + UNIT_REMOVE_MS; } }
       else this._tickMonster(u, dt, now);
     }
     // Core destroyed during this tick → stop simulating (no fx/atk after the victory banner).
@@ -1785,6 +1808,19 @@ export class TeamRoom extends Room {
       }
     }
     ch._wasInBush = !!ch.bush;
+    for (const rl of this._relics) {
+      if (rl.upAt <= now && dist(ch, rl) <= 68 && (ch.hp < ch.maxHp - 5 || ch.mana < ch.maxMana - 5)) {
+        rl.upAt = now + 60000;
+        this._relicsDirty = true;
+        this._heal(ch, ch.maxHp * 0.18);
+        ch.mana = Math.min(ch.maxMana, ch.mana + ch.maxMana * 0.15);
+        this._fx({ k: 'heal', x: Math.round(ch.x), y: Math.round(ch.y), r: 80, color: 0x39ff14 });
+      }
+    }
+    if (this._relicsDirty) {
+      this._relicsDirty = false;
+      this.state.relicsJson = JSON.stringify(this._relics);
+    }
     this._recalc(ch, now);
 
     // Regen (×4 out of combat) + coffee + passive gold
@@ -1792,7 +1828,8 @@ export class TeamRoom extends Room {
     const ooc = now - ch.lastDamagedAt >= OUT_OF_COMBAT_MS ? 4 : 1;
     const healMul = this._healMul(ch, now); // v3: Escalate cuts regen + coffee too
     ch.hp = Math.min(ch.maxHp, ch.hp + ch.maxHp * HP_REGEN_PCT_PER_SEC * ooc * sec * healMul);
-    ch.mana = Math.min(ch.maxMana, ch.mana + (ch.maxMana * MANA_REGEN_PCT_PER_SEC * ooc + (ch._manaRegen || 0)) * sec);
+    const blueMana = (ch._blueBuffUntil || 0) > now ? ch.maxMana * 0.03 * sec : 0;
+    ch.mana = Math.min(ch.maxMana, ch.mana + (ch.maxMana * MANA_REGEN_PCT_PER_SEC * ooc + (ch._manaRegen || 0)) * sec + blueMana);
     if (ch.regens.length) {
       for (const r of ch.regens) {
         const ms = Math.max(0, Math.min(dt, r.until - (now - dt)));
@@ -1876,6 +1913,7 @@ export class TeamRoom extends Room {
     if (now < ch.atkReadyAt) return;
     ch.atkReadyAt = now + 1000 / Math.max(0.1, ch.as);
     ch.revealUntil = now + BUSH_REVEAL_MS; // v4: attacking reveals you
+    ch._stealthUntil = 0;
     ch.atkTarget = t.id;
     ch.action = 'attack';
     ch.actionSeq++;
@@ -1972,31 +2010,34 @@ export class TeamRoom extends Room {
     const n = Math.min(full.length, Math.floor(room / (TEAMS.length * LANE_IDS.length)));
     const kinds = full.slice(0, n);
     for (const team of TEAMS) {
+      const enemy = otherTeam(team);
       const empowered = this.teamBuffActive(team, now);
       for (const lane of LANE_IDS) {
         if ((perLane[`${team}_${lane}`] || 0) >= MINION_LANE_CAP) continue;
+        const superLane = !this.structs.get(`${enemy}_${lane}_2`)?.alive || !this.structs.get(`${enemy}_base_3`)?.alive;
+        const laneKinds = superLane && kinds.length ? ['siege', ...kinds.slice(1)] : kinds;
         const path = minionPath(team, lane);
         const p0 = path[0], p1 = path[1];
         const d = dist(p0, p1) || 1;
         const ux = (p1.x - p0.x) / d, uy = (p1.y - p0.y) / d;
         // Lateral offsets are mirrored for red so both bases look (and play) the same.
         const flip = team === 'blue' ? 1 : -1;
-        kinds.forEach((kind, i) => {
+        laneKinds.forEach((kind, i) => {
           const back = i * MINION_SPACING;
           const side = (i % 2 ? 1 : -1) * 14 * flip;
-          this._addMinion(team, lane, kind, p0.x - ux * back - uy * side, p0.y - uy * back + ux * side, growth, empowered);
+          this._addMinion(team, lane, kind, p0.x - ux * back - uy * side, p0.y - uy * back + ux * side, growth, empowered, superLane && i === 0);
         });
       }
     }
     if (this._waveNo === 1) this._feed({ text: '🐞 The first bug waves have shipped — last-hit them for gold!', color: '#c9a0ff' });
   }
 
-  _addMinion(team, lane, kind, x, y, growth, empowered) {
+  _addMinion(team, lane, kind, x, y, growth, empowered, isSuper = false) {
     const def = MINIONS[kind];
     const id = 'u' + (this._nextUnitId++);
     const s = new TeamUnit();
-    const hpMul = growth * (empowered ? DEADLINE_MINION_HP_MUL : 1);
-    const dmgMul = growth * (empowered ? 1 + EPICS.deadline.buff.minionBuffPct : 1);
+    const hpMul = growth * (empowered ? DEADLINE_MINION_HP_MUL : 1) * (isSuper ? 1.85 : 1);
+    const dmgMul = growth * (empowered ? 1 + EPICS.deadline.buff.minionBuffPct : 1) * (isSuper ? 1.55 : 1);
     const p = freeSpot(x, y, Math.max(MINION_RADIUS, def.size / 2));
     const u = {
       id, etype: 'unit', utype: 'minion', team, kind, lane, s,
@@ -2755,12 +2796,22 @@ export class TeamRoom extends Room {
       src._lastCombatAt = now;
       const ampCeiling = (didCrit ? baseAfterResist * 1.6 : baseAfterResist) * 2.0 + 40;
       dmg = Math.min(dmg, ampCeiling);
+      if ((src._redBuffUntil || 0) > now && t.etype !== 'struct') {
+        dmg += 18;
+        if (t.etype === 'champ') this._applyCC(t, { slow: { pct: 0.2, ms: 1500 } }, now);
+      }
     }
     if (t.etype === 'champ') {
       dmg *= t.dmgTakenMul || 1;
       const tgtP = itemPassives(t.items);
       const tgtRoleP = championPassive(t.def)?.id;
       if (tgtP.has('fortress')) dmg *= 0.9;
+      if (tgtRoleP === 'brick_wall') {
+        let nearAlly = false;
+        for (const al of this.champs.values()) if (al.id !== t.id && al.team === t.team && !al.dead && dist(al, t) <= 450) { nearAlly = true; break; }
+        if (!nearAlly) for (const st of this.structs.values()) if (st.alive && st.team === t.team && st.kind === 'tower' && dist(st, t) <= 600) { nearAlly = true; break; }
+        if (nearAlly) dmg *= 0.9;
+      }
       if (tgtRoleP === 'failover') {
         t._tankStacks = Math.min(5, (t._tankStacks || 0) + 1);
         t._tankUntil = now + 4000;
@@ -3012,22 +3063,30 @@ export class TeamRoom extends Room {
     const ch = this.champs.get(sid);
     const now = Date.now();
     if (!ch || ch.dead || (ch._wardCd || 0) > now) return false;
-    let active = 0;
-    for (const u of this.units.values()) if (u.alive && u.utype === 'ward' && u.owner === ch.id) active++;
-    if (active >= WARD.maxActivePerPlayer) return false;
+    const liveWards = [];
+    for (const u of this.units.values()) if (u.alive && u.utype === 'ward' && u.owner === ch.id) liveWards.push(u);
+    if (liveWards.length >= WARD.maxActivePerPlayer) {
+      liveWards.sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
+      liveWards[0].alive = false;
+      liveWards[0].removeAt = now + UNIT_REMOVE_MS;
+    }
     const ax = Number.isFinite(msg.x) ? msg.x : ch.x, ay = Number.isFinite(msg.y) ? msg.y : ch.y;
     const d = Math.hypot(ax - ch.x, ay - ch.y);
     const ratio = d > WARD.castRange ? WARD.castRange / d : 1;
     const pos = clampToMap(ch.x + (ax - ch.x) * ratio, ch.y + (ay - ch.y) * ratio, 16);
     ch._wardCd = now + WARD.cdMs;
-    const id = `w_${++this._uid}`;
+    const id = 'u' + (this._nextUnitId++);
+    const s = new TeamUnit();
     const rec = {
-      id, etype: 'unit', utype: 'ward', team: ch.team, owner: ch.id,
+      id, etype: 'unit', utype: 'ward', team: ch.team, kind: 'ward', owner: ch.id, s,
       x: pos.x, y: pos.y, radius: 14, hp: 3, maxHp: 3, armor: 0, alive: true,
       expiresAt: now + WARD.durationMs, sightRadius: WARD.sightRadius,
       stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, hitSeq: 0, removeAt: 0,
     };
+    s.team = ch.team; s.kind = 'ward'; s.campId = ''; s.owner = ch.id;
     this.units.set(id, rec);
+    this._syncUnit(rec);
+    this.state.units.set(id, s);
     return true;
   }
 
@@ -3083,7 +3142,8 @@ export class TeamRoom extends Room {
       killer.kills++;
       killer.streak++;
       if (killer.team === 'blue') this.state.blueKills++; else this.state.redKills++;
-      let gold = KILL_GOLD;
+      let gold = KILL_GOLD + bountyBonus(vStreak);
+      const bounty = bountyBonus(vStreak);
       const color = TEAM_INFO[killer.team].css;
       if (!this._firstBlood) {
         this._firstBlood = true;
@@ -3095,7 +3155,7 @@ export class TeamRoom extends Room {
       const tier = STREAKS[killer.streak];
       if (tier) this._announce({ title: `${tier.icon} ${killer.name} ${tier.label}`, sub: `${killer.streak} kills without dying`, color });
       if (vStreak >= SHUTDOWN_MIN_STREAK) {
-        this._announce({ title: `💥 SHUTDOWN! ${killer.name} ended ${v.name}'s streak`, sub: `${vStreak}-kill streak closed as Won't Fix`, color });
+        this._announce({ title: `💥 SHUTDOWN +${bounty}g! ${killer.name} ended ${v.name}'s streak`, sub: `${vStreak}-kill streak closed as Won't Fix`, color });
       }
       if (assisters.length) {
         const each = ASSIST_GOLD / assisters.length;
@@ -3111,6 +3171,10 @@ export class TeamRoom extends Room {
           this._heal(c, Math.max(0, c.maxHp - c.hp) * (syn ? 0.27 : 0.18));
         }
         if (augs.includes('bug_bounty')) this._giveGold(c, c === killer ? 60 : 30, v.x, v.y);
+        if (championPassive(c.def)?.id === 'velocity_rush' && !c.dead) {
+          this._heal(c, 45);
+          this._addBuff(c, 'velocity_ms', { msPct: 0.25 }, now + 2500, true);
+        }
       }
       if ((killer.augments || []).includes('evo_zero_reset')) {
         killer.cd.q = 0; killer.cd.e = 0;
@@ -3134,6 +3198,10 @@ export class TeamRoom extends Room {
       if (src && src.etype === 'champ' && src.team !== u.team) {
         this._giveGold(src, u.gold, u.x, u.y);
         src.cs++;
+        if (championPassive(src.def)?.id === 'clean_sweep' && !src.dead) {
+          this._heal(src, 25);
+          src.mana = Math.min(src.maxMana, src.mana + 20);
+        }
       }
       const near = [];
       for (const c of this.champs.values()) {
@@ -3154,6 +3222,14 @@ export class TeamRoom extends Room {
       const jc = (killer.augments || []).includes('jungle_contract');
       this._giveGold(killer, u.gold * (jc ? 1.25 : 1), u.x, u.y);
       if (jc && !killer.dead) this._heal(killer, killer.maxHp * 0.08);
+      if (championPassive(killer.def)?.id === 'clean_sweep' && !killer.dead) {
+        this._heal(killer, 25);
+        killer.mana = Math.min(killer.maxMana, killer.mana + 20);
+      }
+      if (u.kind === 'big' && u.campId) {
+        if (String(u.campId).includes('tj_') || u.y < 3000) killer._blueBuffUntil = now + 75000;
+        else killer._redBuffUntil = now + 75000;
+      }
       killer.cs++;
       const near = [];
       for (const c of this.champs.values()) {
@@ -3376,6 +3452,8 @@ export class TeamRoom extends Room {
     if (this.teamBuffActive(ch.team, now)) add('deadline');
     if (ch.recallUntil > 0) add('recall');
     if (ch.regens.length) add('coffee');
+    if ((ch._blueBuffUntil || 0) > now) add('blueBuff');
+    if ((ch._redBuffUntil || 0) > now) add('redBuff');
     return out;
   }
 
@@ -3517,6 +3595,13 @@ export class TeamRoom extends Room {
   canSee(team, e, now = Date.now()) {
     if (!e || e.team === team || e.etype === 'struct' || team === 'all') return true;
     if (e.etype === 'champ' ? e.dead : !e.alive) return true;
+    if (now < (e.revealUntil || 0)) return true;
+    if (e.etype === 'champ' && (e._stealthUntil || 0) > now) {
+      for (const c of this.champs.values()) {
+        if (c.team === team && !c.dead && dist(c, e) <= 280) return true;
+      }
+      return false;
+    }
     if (e.utype === 'pet') {
       const o = this.champs.get(e.owner);
       if (o && !this.canSee(team, o, now)) return false;
@@ -3525,6 +3610,10 @@ export class TeamRoom extends Room {
     if (!b || now < (e.revealUntil || 0)) return true;
     const occ = this._bushOcc[team];
     if (!occ || occ.has(b)) return true;
+    // Wards reveal enemies inside the same bush within WARD.sightRadius (750 px).
+    for (const u of this.units.values()) {
+      if (u.alive && u.utype === 'ward' && u.team === team && u.bush === b && dist(u, e) <= WARD.sightRadius) return true;
+    }
     // Towers see into bushes within their range (no waiting under a tower in a bush — playtest v4).
     for (const s of this.structs.values()) {
       if (s.alive && s.team === team && s.kind === 'tower' && Math.hypot(s.x - e.x, s.y - e.y) <= TOWER.range + (e.radius || 0)) return true;
