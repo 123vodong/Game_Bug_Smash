@@ -249,7 +249,9 @@ export function itemStatLine(it, compact = false) {
   }
   const F = {
     ad: (v) => `+${v} AD`, ap: (v) => `+${v} AP`, hp: (v) => `+${v} HP`, mana: (v) => `+${v} Mana`,
-    armor: (v) => `+${v} Armor`, ms: (v) => `+${v} MS`, as: (v) => `+${pct(v)}% AS`,
+    manaRegen: (v) => (compact ? `+${v} MP/s` : `+${v} mana/s`),
+    armor: (v) => `+${v} Armor`, mr: (v) => `+${v} MR`, armorPen: (v) => `+${pct(v)}% Pen`,
+    mrPen: (v) => `+${pct(v)}% MPen`, ms: (v) => `+${v} MS`, as: (v) => `+${pct(v)}% AS`,
     haste: (v) => `${pct(v)}% CDR`, lifesteal: (v) => (compact ? `${pct(v)}% LS` : `${pct(v)}% lifesteal`),
     apPct: (v) => `+${pct(v)}% AP`,
   };

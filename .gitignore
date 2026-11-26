@@ -13,3 +13,6 @@ tools/playtest/out/
 
 # Pass 2: Team Mode rank store (runtime data)
 server/.data/
+
+# Local game preview tool and captured screenshots
+preview/

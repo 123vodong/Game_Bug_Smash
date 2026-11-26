@@ -29,11 +29,14 @@ export const PICK_RATE_MS = 150;            // min interval between accepted pic
 export const END_LINGER_MS = 20000;         // victory screen before the room closes
 export const TICK_MS = 50;                  // 20 Hz simulation
 
-// ── Leveling (1–12) ──
-export const MAX_LEVEL = 12;
+// ── Leveling (1–18, 5+5+5+3 = 18 skill ranks) ──
+export const MAX_LEVEL = 18;
 // Cumulative XP to reach level i+1 (index 0 = level 1).
-export const XP_TABLE = [0, 280, 660, 1140, 1720, 2400, 3180, 4060, 5040, 6120, 7300, 8580];
-export const ULT_UNLOCK_LEVEL = 6;          // R becomes available
+export const XP_TABLE = [
+  0, 280, 660, 1140, 1720, 2400, 3180, 4060, 5040,
+  6120, 7300, 8580, 9960, 11440, 13020, 14700, 16480, 18360,
+];
+export const ULT_UNLOCK_LEVEL = 6;          // R unlocks at level 6
 export function levelForXp(xp) {
   let lv = 1;
   for (let i = 0; i < XP_TABLE.length; i++) if (xp >= XP_TABLE[i]) lv = i + 1;
@@ -47,6 +50,12 @@ export const PASSIVE_GOLD_DELAY_MS = 30000;
 export const KILL_GOLD = 300;               // champion kill
 export const ASSIST_GOLD = 150;             // split between assisters
 export const FIRST_BLOOD_BONUS = 100;
+/** Comeback shutdown bounty bonus when killing a champion on a 3+ kill streak. */
+export function bountyBonus(streak) {
+  const s = Math.max(0, Math.floor(streak || 0));
+  if (s < 3) return 0;
+  return Math.min(600, (s - 2) * 150);
+}
 export const TOWER_GOLD_TEAM = 120;         // to every member of the destroying team
 export const ASSIST_WINDOW_MS = 10000;      // damage within this window = assist
 export const XP_SHARE_RADIUS = 1300;        // champions this close to a dying unit share its XP
@@ -71,7 +80,41 @@ export function sellValue(cost, boughtAt, now) {
 }
 
 // ── Combat ──
-export function damageAfterArmor(raw, armor) { return raw * 100 / (100 + Math.max(0, armor)); }
+export function damageAfterResist(raw, resist, shredPct = 0, penPct = 0) {
+  const r = Math.max(0, resist || 0);
+  const afterShred = r * (1 - Math.max(0, Math.min(0.6, shredPct || 0)));
+  const afterPen = afterShred * (1 - Math.max(0, Math.min(0.6, penPct || 0)));
+  const eff = r <= 0 ? 0 : Math.max(r * 0.4, afterPen);
+  return raw * 100 / (100 + eff);
+}
+export function damageAfterArmor(raw, armor, penPct = 0, shredPct = 0) {
+  return damageAfterResist(raw, armor, shredPct, penPct);
+}
+export const CC_DR_WINDOW_MS = 4000;
+export const CC_DR_MUL = [1, 0.5, 0.25];
+export const CC_IMMUNE_AFTER = 3;           // trigger Hard CC immunity after 3 applications within CC_DR_WINDOW_MS
+export const CC_IMMUNE_MS = 2000;           // 2.0s immunity to stun / root / wallStun after 3rd Hard CC resolves
+
+/** Compute Diminishing Returns duration for Hard CC (root, stun, wallStun) and trigger chain immunity. */
+export function applyHardCcDuration(target, baseMs, now) {
+  if (!target || !(baseMs > 0)) return 0;
+  if ((target._ccImmuneUntil || 0) > now) return 0;
+  if ((target._ccChainUntil || 0) > now) {
+    target._ccChainCount = (target._ccChainCount || 1) + 1;
+  } else {
+    target._ccChainCount = 1;
+  }
+  target._ccChainUntil = now + CC_DR_WINDOW_MS;
+  const idx = Math.min(CC_DR_MUL.length - 1, target._ccChainCount - 1);
+  const dur = Math.round(baseMs * CC_DR_MUL[idx]);
+  if (target._ccChainCount >= CC_IMMUNE_AFTER) {
+    target._ccImmuneUntil = now + dur + CC_IMMUNE_MS;
+    target._ccChainCount = 0;
+    target._ccChainUntil = 0;
+  }
+  return dur;
+}
+export const WARD = { durationMs: 45000, cdMs: 90000, sightRadius: 750, castRange: 550, maxActivePerPlayer: 2 };
 export const OUT_OF_COMBAT_MS = 6000;       // regen boost after this long without damage
 export const HP_REGEN_PCT_PER_SEC = 0.006;  // × max HP / s (×4 out of combat)
 export const MANA_REGEN_PCT_PER_SEC = 0.012;
@@ -133,16 +176,16 @@ export const CAMPS = {
 };
 export const CAMP_LEASH_RADIUS = 620;       // monsters reset if pulled further than this
 export const EPICS = {
-  golden: {  // the CEO's golden bug — team gold (3:00 + 150 g: a 2:00/200 g bug snowballed)
+  golden: {  // the CEO's golden bug — pure economy objective
     sprite: 'bug-ladybug', tint: 0xffd700, hp: 2600, dmg: 40, atkMs: 1300, size: 80,
-    firstSpawnMs: 180000, respawnMs: 180000, teamGold: 150, xp: 300,
-    title: "✨ THE CEO'S GOLDEN BUG", reward: '+150 gold for the whole team',
+    firstSpawnMs: 180000, respawnMs: 180000, teamGold: 200, xp: 300,
+    title: "✨ THE CEO'S GOLDEN BUG", reward: '+200 gold for the whole team',
   },
-  deadline: { // THE DEADLINE — team buff (reuses assets/boss/deadline.png)
+  deadline: { // THE DEADLINE — pure siege / wave objective (no champion PvP combat amp)
     sprite: 'boss-deadline', hp: 4500, dmg: 110, atkMs: 1700, size: 150,
-    firstSpawnMs: 240000, respawnMs: 240000, teamGold: 150, xp: 500,
-    buff: { id: 'deadline', ms: 120000, dmgPct: 0.2, minionBuffPct: 0.5 },
-    title: '⏰ THE DEADLINE', reward: '+20% damage + empowered bug waves for 2 min',
+    firstSpawnMs: 360000, respawnMs: 240000, teamGold: 100, xp: 400,
+    buff: { id: 'deadline', ms: 90000, structDmgPct: 0.2, minionBuffPct: 0.4 },
+    title: '⏰ THE DEADLINE', reward: '+20% structure dmg + empowered waves for 90s',
   },
 };
 
@@ -195,4 +238,8 @@ export function scaledAmount(spec, level, ad, ap, maxHp = 0) {
 export const MAX_HASTE_PCT = 0.4;
 export function cooldownMs(baseSec, hastePct) {
   return Math.round(baseSec * 1000 * (1 - Math.min(MAX_HASTE_PCT, hastePct || 0)));
+}
+export function skillCooldownMs(baseSec, totalHastePct, rank = 1) {
+  const rankMul = Math.max(0.65, 1 - Math.max(0, (rank || 1) - 1) * 0.06);
+  return Math.round(cooldownMs(baseSec, totalHastePct) * rankMul);
 }

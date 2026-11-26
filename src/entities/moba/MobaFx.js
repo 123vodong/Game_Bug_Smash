@@ -672,4 +672,25 @@ export class MobaFx {
       }
     }
   }
+
+  /** Textured skill/combat burst from assets/moba/vfx-*.png (CC0 Kenney particle pack). */
+  burstTex(x, y, key, size = 96, tint = 0x39c2ff, duration = 360, spin = 60) {
+    if (this.low || !this.scene?.textures?.exists(key) || !this.onScreen(x, y, size)) return;
+    const im = this.scene.add.image(x, y, key)
+      .setDisplaySize(size * 0.4, size * 0.4)
+      .setTint(tint)
+      .setBlendMode(ADD)
+      .setDepth(D.fx)
+      .setAlpha(0.9);
+    this.scene.tweens.add({
+      targets: im,
+      displayWidth: size,
+      displayHeight: size,
+      angle: spin,
+      alpha: 0,
+      duration,
+      ease: 'Cubic.easeOut',
+      onComplete: () => im.destroy(),
+    });
+  }
 }

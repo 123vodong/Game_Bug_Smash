@@ -127,54 +127,175 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-/** Brick "Firewall" pillar, 76×140, drawn in the team's color. */
+/** 2.5D Oblique Cyber-Obelisk Tower (128×196), lit top-left → bottom-right. */
 function drawTower(ctx, w, h, color) {
-  const dark = css(shade(color, -0.62)), mid = css(shade(color, -0.35)), brick = css(shade(color, -0.48));
-  const light = css(shade(color, 0.35));
-  // plinth
-  ctx.fillStyle = '#1b2029'; roundRect(ctx, 3, h - 22, w - 6, 19, 5); ctx.fill();
-  ctx.strokeStyle = '#07090d'; ctx.lineWidth = 2; ctx.stroke();
-  const px = 12, pw = w - 24, top = 24, bottom = h - 20;
-  ctx.fillStyle = dark; ctx.fillRect(px, top, pw, bottom - top);
-  // bricks (staggered rows)
-  const bh = 11, bw = 18;
-  for (let row = 0, y = top; y < bottom; row++, y += bh) {
-    const off = row % 2 ? 0 : -bw / 2;
-    for (let x = px + off, i = 0; x < px + pw; x += bw, i++) {
-      const bx = Math.max(px, x), bx2 = Math.min(px + pw, x + bw - 1);
-      if (bx2 - bx <= 2) continue;
-      ctx.fillStyle = (row + i) % 3 === 0 ? mid : brick;
-      ctx.fillRect(bx + 1, y + 1, bx2 - bx - 1, Math.min(bh - 2, bottom - y - 2));
-    }
+  const cx = w / 2;
+  const col = css(color);
+  const light = css(shade(color, 0.45));
+  const mid = css(shade(color, -0.25));
+  const dark = css(shade(color, -0.58));
+
+  // 1. Directional cast shadow (top-left light → bottom-right shadow)
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+  ctx.beginPath();
+  ctx.ellipse(cx + 22, h - 18, 44, 18, 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 2. 2.5D Beveled Hexagonal Plinth Base
+  const by = h - 22;
+  ctx.fillStyle = '#151c29';
+  ctx.beginPath();
+  ctx.moveTo(cx - 42, by); ctx.lineTo(cx - 26, by + 16); ctx.lineTo(cx + 26, by + 16);
+  ctx.lineTo(cx + 42, by); ctx.lineTo(cx + 30, by - 14); ctx.lineTo(cx - 30, by - 14);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#070a10'; ctx.lineWidth = 2.5; ctx.stroke();
+
+  // Plinth top face (lifted by 12px for 2.5D depth)
+  ctx.fillStyle = '#2a374f';
+  ctx.beginPath();
+  ctx.moveTo(cx - 38, by - 12); ctx.lineTo(cx - 22, by + 2); ctx.lineTo(cx + 22, by + 2);
+  ctx.lineTo(cx + 38, by - 12); ctx.lineTo(cx + 26, by - 24); ctx.lineTo(cx - 26, by - 24);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+
+  // 3. Tapered 3D Armored Obelisk Shaft (left lit face + right shaded face)
+  const topY = 58, botY = by - 8;
+  // Left lit face
+  const gL = ctx.createLinearGradient(cx - 24, topY, cx, botY);
+  gL.addColorStop(0, '#465878'); gL.addColorStop(1, '#263248');
+  ctx.fillStyle = gL;
+  ctx.beginPath();
+  ctx.moveTo(cx - 16, topY); ctx.lineTo(cx, topY + 6); ctx.lineTo(cx, botY + 4); ctx.lineTo(cx - 24, botY - 4);
+  ctx.closePath(); ctx.fill();
+  // Right shaded face
+  const gR = ctx.createLinearGradient(cx, topY, cx + 24, botY);
+  gR.addColorStop(0, '#232e42'); gR.addColorStop(1, '#121824');
+  ctx.fillStyle = gR;
+  ctx.beginPath();
+  ctx.moveTo(cx, topY + 6); ctx.lineTo(cx + 16, topY); ctx.lineTo(cx + 24, botY - 4); ctx.lineTo(cx, botY + 4);
+  ctx.closePath(); ctx.fill();
+  // Outer silhouette stroke
+  ctx.strokeStyle = '#070a10'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 16, topY); ctx.lineTo(cx - 24, botY - 4); ctx.lineTo(cx, botY + 4);
+  ctx.lineTo(cx + 24, botY - 4); ctx.lineTo(cx + 16, topY);
+  ctx.stroke();
+
+  // Horizontal armor collar rings
+  for (const ry of [topY + 22, topY + 56, topY + 86]) {
+    const rw = 16 + ((ry - topY) / (botY - topY)) * 8;
+    ctx.strokeStyle = '#0d1320'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(cx - rw, ry); ctx.lineTo(cx, ry + 5); ctx.lineTo(cx + rw, ry); ctx.stroke();
+    ctx.strokeStyle = mid; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx - rw + 2, ry - 1); ctx.lineTo(cx, ry + 4); ctx.lineTo(cx + rw - 2, ry - 1); ctx.stroke();
   }
-  // battlements
-  ctx.fillStyle = mid;
-  ctx.fillRect(px - 5, top - 4, pw + 10, 7);
-  for (let i = 0; i < 3; i++) ctx.fillRect(px - 5 + i * ((pw + 10 - 12) / 2), top - 15, 12, 12);
-  // glowing core slit
-  const g = ctx.createLinearGradient(0, top + 26, 0, top + 62);
-  g.addColorStop(0, light); g.addColorStop(1, css(color));
-  ctx.fillStyle = g; ctx.fillRect(w / 2 - 4, top + 26, 8, 36);
-  ctx.strokeStyle = '#07090d'; ctx.lineWidth = 2; ctx.strokeRect(px, top - 4, pw, bottom - top + 4);
+
+  // Glowing vertical energy conduit along front spine
+  ctx.save();
+  ctx.shadowColor = col; ctx.shadowBlur = 10;
+  ctx.strokeStyle = light; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(cx, topY + 12); ctx.lineTo(cx, botY - 8); ctx.stroke();
+  ctx.restore();
+
+  // 4. Twin Armored Crown Fins cradling the Floating Energy Crystal
+  ctx.fillStyle = '#384866'; ctx.strokeStyle = '#070a10'; ctx.lineWidth = 2;
+  // Left fin
+  ctx.beginPath(); ctx.moveTo(cx - 16, topY + 6); ctx.lineTo(cx - 28, topY - 20); ctx.lineTo(cx - 14, topY - 34); ctx.lineTo(cx - 10, topY - 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // Right fin (darker)
+  ctx.fillStyle = '#1e2738';
+  ctx.beginPath(); ctx.moveTo(cx + 16, topY + 6); ctx.lineTo(cx + 28, topY - 20); ctx.lineTo(cx + 14, topY - 34); ctx.lineTo(cx + 10, topY - 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  // 5. Floating Glowing Crystal Core (AoV turret energy core)
+  const cy = topY - 24;
+  ctx.save();
+  ctx.shadowColor = col; ctx.shadowBlur = 16;
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 20); ctx.lineTo(cx + 12, cy); ctx.lineTo(cx, cy + 16); ctx.lineTo(cx - 12, cy);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 20); ctx.lineTo(cx + 12, cy); ctx.lineTo(cx, cy + 16); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(cx - 2, cy - 12); ctx.lineTo(cx - 7, cy - 1); ctx.lineTo(cx - 1, cy + 4); ctx.closePath(); ctx.fill();
+  ctx.restore();
 }
 
-/** "Production Server" rack, 140×190 (LEDs are separate blinking objects). */
+/** 2.5D Oblique Nexus Production Server Citadel (220×248). */
 function drawCore(ctx, w, h, color) {
-  ctx.fillStyle = '#121722'; roundRect(ctx, 6, 8, w - 12, h - 14, 10); ctx.fill();
-  ctx.strokeStyle = css(color); ctx.lineWidth = 4; ctx.stroke();
-  ctx.fillStyle = css(shade(color, -0.5));
-  ctx.fillRect(13, 18, 8, h - 34); ctx.fillRect(w - 21, 18, 8, h - 34);
-  for (let i = 0; i < CORE_BAYS; i++) {
-    const y = CORE_BAY_Y0 + i * CORE_BAY_STEP;
-    ctx.fillStyle = '#232b3a'; ctx.fillRect(24, y, w - 48, 14);
-    ctx.fillStyle = '#0b0f16'; ctx.fillRect(30, y + 5, w - 84, 4);
-    ctx.fillStyle = '#38445a'; ctx.fillRect(24, y, w - 48, 2);
+  const cx = w / 2, by = h - 28;
+  const col = css(color);
+  const light = css(shade(color, 0.48));
+  const dark = css(shade(color, -0.55));
+
+  // 1. Directional cast shadow
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.46)';
+  ctx.beginPath();
+  ctx.ellipse(cx + 30, by + 6, 86, 30, 0.16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 2. Stepped 2.5D Hexagonal Citadel Dais
+  const hex = (y, rx, ry, fill, stroke, lw = 2.5) => {
+    ctx.beginPath();
+    ctx.moveTo(cx - rx, y); ctx.lineTo(cx - rx * 0.55, y + ry); ctx.lineTo(cx + rx * 0.55, y + ry);
+    ctx.lineTo(cx + rx, y); ctx.lineTo(cx + rx * 0.55, y - ry); ctx.lineTo(cx - rx * 0.55, y - ry);
+    ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+  };
+  hex(by, 84, 30, '#121824', '#06080d', 3);
+  hex(by - 14, 78, 26, '#26334a', col, 2.5);
+  hex(by - 26, 62, 20, '#334361', '#0b0f18', 2);
+
+  // 3. Three-Faceted 3D Server Citadel Body (left lit, center front, right dark)
+  const topY = 92, botY = by - 22;
+  // Left wing
+  ctx.fillStyle = '#3a4b6b';
+  ctx.beginPath(); ctx.moveTo(cx - 52, botY); ctx.lineTo(cx - 42, topY + 12); ctx.lineTo(cx - 18, topY + 22); ctx.lineTo(cx - 22, botY + 12); ctx.closePath(); ctx.fill();
+  // Front core rack face
+  const gF = ctx.createLinearGradient(cx, topY, cx, botY);
+  gF.addColorStop(0, '#2a3752'); gF.addColorStop(1, '#141c2b');
+  ctx.fillStyle = gF;
+  ctx.beginPath(); ctx.moveTo(cx - 22, botY + 12); ctx.lineTo(cx - 18, topY + 22); ctx.lineTo(cx + 18, topY + 22); ctx.lineTo(cx + 22, botY + 12); ctx.closePath(); ctx.fill();
+  // Right shaded wing
+  ctx.fillStyle = '#182030';
+  ctx.beginPath(); ctx.moveTo(cx + 22, botY + 12); ctx.lineTo(cx + 18, topY + 22); ctx.lineTo(cx + 42, topY + 12); ctx.lineTo(cx + 52, botY); ctx.closePath(); ctx.fill();
+  // Crisp structural outline
+  ctx.strokeStyle = '#070a10'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(cx - 52, botY); ctx.lineTo(cx - 42, topY + 12); ctx.lineTo(cx, topY + 2); ctx.lineTo(cx + 42, topY + 12); ctx.lineTo(cx + 52, botY); ctx.stroke();
+
+  // Server rack vents + glowing data strips on front face
+  for (let i = 0; i < 5; i++) {
+    const ry = topY + 34 + i * 16;
+    ctx.fillStyle = '#0b101a'; ctx.fillRect(cx - 15, ry, 30, 8);
+    ctx.fillStyle = i % 2 === 0 ? col : light; ctx.fillRect(cx - 12, ry + 2.5, 24, 3);
   }
-  ctx.fillStyle = css(color); ctx.fillRect(18, 9, w - 36, 6);
-  ctx.fillStyle = '#07090d'; ctx.fillRect(12, h - 9, w - 24, 5);
+
+  // 4. Orbital Energy Rings + Suspended Nexus Crystal
+  const cy = 62;
+  ctx.save();
+  ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.7;
+  ctx.beginPath(); ctx.ellipse(cx, cy + 4, 46, 15, -0.18, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = light; ctx.lineWidth = 2; ctx.globalAlpha = 0.55;
+  ctx.beginPath(); ctx.ellipse(cx, cy + 4, 46, 15, 0.22, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.shadowColor = col; ctx.shadowBlur = 22;
+  ctx.fillStyle = light;
+  ctx.beginPath(); ctx.moveTo(cx, cy - 38); ctx.lineTo(cx + 22, cy); ctx.lineTo(cx, cy + 28); ctx.lineTo(cx - 22, cy); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(cx, cy - 38); ctx.lineTo(cx + 22, cy); ctx.lineTo(cx, cy + 28); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(cx - 3, cy - 24); ctx.lineTo(cx - 13, cy - 2); ctx.lineTo(cx - 2, cy + 10); ctx.closePath(); ctx.fill();
+  ctx.restore();
 }
-export const CORE_TEX_W = 140, CORE_TEX_H = 190;
-export const CORE_BAYS = 8, CORE_BAY_Y0 = 24, CORE_BAY_STEP = 19;
+export const CORE_TEX_W = 220, CORE_TEX_H = 248;
+export const CORE_BAYS = 6, CORE_BAY_Y0 = 120, CORE_BAY_STEP = 16;
 
 /** Generates every texture the Team Mode views use (idempotent). */
 export function ensureMobaTextures(scene) {
@@ -232,7 +353,7 @@ export function ensureMobaTextures(scene) {
   });
   for (const team of ['blue', 'red']) {
     const col = TEAM_INFO[team].color;
-    canvasTex(scene, `moba-tower-${team}`, 76, 140, (ctx, w, h) => drawTower(ctx, w, h, col));
+    canvasTex(scene, `moba-tower-${team}`, 128, 196, (ctx, w, h) => drawTower(ctx, w, h, col));
     canvasTex(scene, `moba-core-${team}`, CORE_TEX_W, CORE_TEX_H, (ctx, w, h) => drawCore(ctx, w, h, col));
   }
 }

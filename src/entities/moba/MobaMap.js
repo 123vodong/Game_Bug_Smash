@@ -106,8 +106,49 @@ export class MobaMap {
     this._buildTexts();
     this._buildDecor();
     this._buildGlyphs();
+    this._buildFog();
     this._timerAt = 0;
     this._collectStatics();
+  }
+
+  /** Lightweight 150×150 Fog of War canvas stretched over 6000×6000 (updated at 10 Hz, <0.25ms/frame). */
+  _buildFog() {
+    const s = this.scene;
+    const key = 'moba-fog';
+    const W = 150, H = 150;
+    if (s.textures.exists(key)) s.textures.remove(key);
+    const tex = s.textures.createCanvas(key, W, H);
+    if (!tex) return;
+    this._fogTex = tex;
+    this._fogCtx = tex.getContext();
+    this._fogW = W; this._fogH = H;
+    this._fogAt = 0;
+    this._fogImg = s.add.image(0, 0, key).setOrigin(0, 0).setDisplaySize(MAP_W, MAP_H).setDepth(D.fxTop + 1);
+  }
+
+  /** Update Fog of War vision holes at 10 Hz (5 Hz in lowFx mode). watchers: [{x, y, r}] */
+  updateFog(watchers, now) {
+    if (!this._fogCtx || !this._fogTex) return;
+    const step = this.lowFx ? 200 : 100;
+    if (now < this._fogAt) return;
+    this._fogAt = now + step;
+    const ctx = this._fogCtx, W = this._fogW, H = this._fogH;
+    const sx = W / MAP_W, sy = H / MAP_H;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(4, 9, 20, 0.56)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'destination-out';
+    for (const w of watchers) {
+      const fx = w.x * sx, fy = w.y * sy, fr = w.r * sx;
+      const g = ctx.createRadialGradient(fx, fy, fr * 0.58, fx, fy, fr);
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(fx, fy, fr, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    this._fogTex.refresh();
   }
 
   /** v4 perf: static world images / decor texts with precomputed bounds, culled vs the camera. */
@@ -167,13 +208,19 @@ export class MobaMap {
       g.lineStyle(w, color, a); g.lineBetween(from.x, from.y, to.x, to.y);
       g.fillStyle(color, a); g.fillCircle(from.x, from.y, w / 2); g.fillCircle(to.x, to.y, w / 2);
     };
-    band(width + 150, RIVER_GLOW, 0.05);
-    band(width + 50, RIVER_GLOW, 0.1);
+    // 2.5D Recessed River Channel: outer embankment rim + deep inner cliff shadow
+    band(width + 160, RIVER_GLOW, 0.05);
+    band(width + 58, 0x050a14, 0.72);
+    band(width + 24, 0x192b44, 0.9);
     band(width, RIVER_DEEP, 1);
-    band(width * 0.55, RIVER_MID, 0.75);
-    band(width * 0.12, 0x1a5f8f, 0.6);
+    band(width * 0.78, 0x072642, 0.85);
+    band(width * 0.52, RIVER_MID, 0.78);
+    band(width * 0.14, 0x2278b5, 0.65);
     const hw = width / 2;
-    g.lineStyle(5, RIVER_GLOW, 0.6);
+    // Steep north-east inner bank drop shadow (gives recessed depth)
+    g.lineStyle(22, 0x030812, 0.55);
+    g.lineBetween(from.x - rv.nx * (hw - 10), from.y - rv.ny * (hw - 10), to.x - rv.nx * (hw - 10), to.y - rv.ny * (hw - 10));
+    g.lineStyle(5, RIVER_GLOW, 0.65);
     for (const sg of [-1, 1]) {
       g.lineBetween(from.x + rv.nx * hw * sg, from.y + rv.ny * hw * sg, to.x + rv.nx * hw * sg, to.y + rv.ny * hw * sg);
     }
@@ -183,24 +230,32 @@ export class MobaMap {
   }
 
   _drawBasesAndLanes(g) {
+    // 2.5D Elevated Base Terraces (2-tier stepped platform with cast drop shadow)
     for (const team of ['blue', 'red']) {
       const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
       const col = teamColor(team);
-      g.fillStyle(col, 0.07); g.fillCircle(core.x, core.y, BASE_RADIUS);
-      g.lineStyle(12, col, 0.45); g.strokeCircle(core.x, core.y, BASE_RADIUS);
-      g.lineStyle(3, col, 0.25); g.strokeCircle(core.x, core.y, BASE_RADIUS - 40);
-      g.lineStyle(3, col, 0.18); g.strokeCircle(core.x, core.y, BASE_RADIUS * 0.55);
+      g.fillStyle(0x000000, 0.42); g.fillCircle(core.x + 24, core.y + 28, BASE_RADIUS + 14);
+      g.fillStyle(0x162033, 0.95); g.fillCircle(core.x, core.y, BASE_RADIUS);
+      g.fillStyle(col, 0.08); g.fillCircle(core.x, core.y, BASE_RADIUS);
+      g.lineStyle(14, col, 0.52); g.strokeCircle(core.x, core.y, BASE_RADIUS);
+      g.lineStyle(4, 0xffffff, 0.22); g.strokeCircle(core.x, core.y, BASE_RADIUS - 14);
+      // Inner elevated core tier
+      g.fillStyle(0x000000, 0.35); g.fillCircle(core.x + 14, core.y + 18, BASE_RADIUS * 0.56);
+      g.fillStyle(0x1e2b42, 0.9); g.fillCircle(core.x, core.y, BASE_RADIUS * 0.55);
+      g.lineStyle(5, col, 0.42); g.strokeCircle(core.x, core.y, BASE_RADIUS * 0.55);
     }
-    const poly = (pts, w, color, a) => {
+    const poly = (pts, w, color, a, ox = 0, oy = 0) => {
       g.lineStyle(w, color, a);
-      g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      g.beginPath(); g.moveTo(pts[0].x + ox, pts[0].y + oy);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x + ox, pts[i].y + oy);
       g.strokePath();
       g.fillStyle(color, a);
-      for (const p of pts) g.fillCircle(p.x, p.y, w / 2);
+      for (const p of pts) g.fillCircle(p.x + ox, p.y + oy, w / 2);
     };
     const lanes = Object.values(LANES);
-    for (const pts of lanes) poly(pts, LANE_WIDTH + 18, CARPET_EDGE, 1);
+    // Raised 2.5D lane shadow + beveled stone curb + surface
+    for (const pts of lanes) poly(pts, LANE_WIDTH + 34, 0x000000, 0.36, 10, 14);
+    for (const pts of lanes) poly(pts, LANE_WIDTH + 22, CARPET_EDGE, 1);
     for (const pts of lanes) poly(pts, LANE_WIDTH, CARPET, 1);
     for (const pts of lanes) {
       g.lineStyle(4, CARPET_LINE, 0.55);
@@ -343,37 +398,113 @@ export class MobaMap {
     this._cullAt = 0; // re-evaluate decor visibility next frame
   }
 
-  /** All furniture → one canvas atlas (drawn once per page), one y-sorted image per wall. */
+  /** Seamless continuous 2.5D cyber-office walls + round planters + subtle base/river props. */
   _buildWalls() {
     const s = this.scene;
-    const layout = wallLayout(s.sys.game.device.os.desktop ? 0.85 : 0.6);
-    const key = 'moba-walls';
-    if (!s.textures.exists(key)) {
-      const tex = s.textures.createCanvas(key, layout.W, layout.H);
-      if (tex) {
-        const ctx = tex.getContext();
-        for (const f of layout.frames) {
-          ctx.save();
-          ctx.beginPath(); ctx.rect(f.fx, f.fy, f.fw, f.fh); ctx.clip();
-          ctx.setTransform(layout.k, 0, 0, layout.k, f.fx - f.b.x0 * layout.k, f.fy - f.b.y0 * layout.k);
-          if (f.clip) { // seg piece: only this piece's faces (union of polygons)
-            ctx.beginPath();
-            for (const poly of f.clip) { ctx.moveTo(poly[0][0], poly[0][1]); for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]); ctx.closePath(); }
-            ctx.clip();
-          }
-          try { drawWall(ctx, f.w, f.b.H); } catch (e) { console.warn('[MobaMap] wall draw failed', f.w.id, e?.message); }
-          ctx.restore();
-          tex.add(f.name, 0, f.fx, f.fy, f.fw, f.fh);
-        }
-        tex.refresh();
-      }
-    }
+    const THEME = {
+      partition: { h: 42, sideTop: '#263147', sideBot: '#141b29', capTop: '#47597a', capBot: '#2f3d57', edge: '#0d121d', accent: '#39c2ff', glow: 'rgba(57,194,255,0.45)', glass: false },
+      cubicles:  { h: 38, sideTop: '#2a3650', sideBot: '#161e2e', capTop: '#52668a', capBot: '#364663', edge: '#0f1420', accent: '#7ec8ff', glow: 'rgba(126,200,255,0.35)', glass: false },
+      glass:     { h: 46, sideTop: 'rgba(58,185,245,0.38)', sideBot: 'rgba(22,88,138,0.52)', capTop: '#8ecae6', capBot: '#548ca8', edge: '#152a3d', accent: '#00f0ff', glow: 'rgba(0,240,255,0.65)', glass: true },
+      shelf:     { h: 48, sideTop: '#282638', sideBot: '#14131f', capTop: '#4e4866', capBot: '#332f47', edge: '#0c0b14', accent: '#ffd23f', glow: 'rgba(255,210,63,0.45)', glass: false },
+    };
     this.walls = [];
-    if (!s.textures.exists(key)) return;
-    for (const f of layout.frames) {
-      if (!s.textures.get(key).has(f.name)) continue;
-      const img = s.add.image(f.b.x0, f.b.y0, key, f.name).setOrigin(0, 0).setScale(1 / layout.k).setDepth(depthAt(f.depthY));
-      this.walls.push(img);
+    WALLS.forEach((w, idx) => {
+      if (w.kind === 'seg') {
+        const key = `moba-wall-s-${w.id || idx}`;
+        const th = THEME[w.look] || THEME.partition;
+        const H = th.h;
+        const r = (w.w || 60) * 0.5;
+        const pad = Math.ceil(r + 22);
+        const minX = Math.min(w.x1, w.x2) - pad;
+        const maxX = Math.max(w.x1, w.x2) + pad;
+        const minY = Math.min(w.y1, w.y2) - pad - H;
+        const maxY = Math.max(w.y1, w.y2) + pad + 12;
+        if (!s.textures.exists(key)) {
+          const tex = s.textures.createCanvas(key, Math.max(8, Math.ceil(maxX - minX)), Math.max(8, Math.ceil(maxY - minY)));
+          if (tex) {
+            const ctx = tex.getContext();
+            const x1 = w.x1 - minX, y1 = w.y1 - minY;
+            const x2 = w.x2 - minX, y2 = w.y2 - minY;
+            const dx = x2 - x1, dy = y2 - y1;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len, uy = dy / len;
+            const ribbon = (ax, ay, bx, by, width, style) => {
+              ctx.beginPath();
+              ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+              ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+              ctx.strokeStyle = style; ctx.stroke();
+            };
+            ribbon(x1 + 6, y1 + 10, x2 + 6, y2 + 10, r * 2 + 10, 'rgba(0,0,0,0.42)');
+            const steps = Math.max(8, Math.ceil(H / 2.5));
+            for (let i = 0; i <= steps; i++) {
+              const t = i / steps, lift = t * H, outer = i === 0 || i === steps;
+              if (th.glass) {
+                if (i === 0) ribbon(x1, y1, x2, y2, r * 2 + 2, th.edge);
+                ribbon(x1, y1 - lift, x2, y2 - lift, r * 2 - 2, i < steps * 0.5 ? th.sideBot : th.sideTop);
+              } else {
+                ribbon(x1, y1 - lift, x2, y2 - lift, r * 2 + (outer ? 2 : 0), outer ? th.edge : (t < 0.45 ? th.sideBot : th.sideTop));
+              }
+            }
+            const midLift = H * 0.42;
+            ctx.save();
+            ctx.shadowColor = th.glow; ctx.shadowBlur = th.glass ? 10 : 6;
+            ribbon(x1, y1 - midLift, x2, y2 - midLift, r * 2 - 4, th.accent);
+            ctx.restore();
+            if (!th.glass) {
+              for (let i = Math.ceil(steps * 0.52); i < steps; i++) {
+                ribbon(x1, y1 - (i / steps) * H, x2, y2 - (i / steps) * H, r * 2, th.sideTop);
+              }
+            } else {
+              ctx.save();
+              ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 3;
+              const n = Math.max(2, Math.floor(len / 95));
+              for (let i = 1; i < n; i++) {
+                const px = x1 + dx * (i / n), py = y1 + dy * (i / n);
+                ctx.beginPath(); ctx.moveTo(px - ux * 10, py - H * 0.2); ctx.lineTo(px + ux * 10, py - H * 0.85); ctx.stroke();
+              }
+              ctx.restore();
+            }
+            ribbon(x1, y1 - H, x2, y2 - H, r * 2 + 2, th.edge);
+            const g = ctx.createLinearGradient(x1, y1 - H - r, x1, y1 - H + r);
+            g.addColorStop(0, th.capTop); g.addColorStop(1, th.capBot);
+            ribbon(x1, y1 - H, x2, y2 - H, r * 2 - 3, g);
+            ribbon(x1, y1 - H, x2, y2 - H, Math.max(6, r * 0.45), 'rgba(10,16,28,0.42)');
+            ribbon(x1, y1 - H, x2, y2 - H, 2.5, th.accent);
+            tex.refresh();
+          }
+        }
+        if (s.textures.exists(key)) {
+          const img = s.add.image(minX, minY, key).setOrigin(0, 0).setDepth(depthAt((w.y1 + w.y2) * 0.5));
+          this.walls.push(img);
+        }
+      } else if (w.kind === 'circle') {
+        const c = s.add.container(w.x, w.y).setDepth(depthAt(w.y));
+        const r = w.r || 70;
+        c.add([
+          s.add.ellipse(6, 10, r * 2.1, r * 1.9, 0x000000, 0.4),
+          s.add.circle(0, 0, r, 0x2a3650).setStrokeStyle(4, 0x0f1420),
+          s.add.circle(0, -6, r * 0.84, 0x1c2838).setStrokeStyle(2, 0x39c2ff, 0.65),
+        ]);
+        if (s.textures.exists('moba-prop-plant')) {
+          c.add(s.add.image(0, -14, 'moba-prop-plant').setDisplaySize(r * 1.9, r * 1.9));
+        }
+        this.walls.push(c);
+      }
+    });
+    // Subtle river & base environment accents (assets/moba/*)
+    const props = [
+      { x: 2680, y: 2680, k: 'moba-prop-crystal', s: 54 },
+      { x: 3320, y: 3320, k: 'moba-prop-crystal', s: 54 },
+      { x: 2810, y: 3190, k: 'moba-prop-barricade', s: 52, rot: -45 },
+      { x: 3190, y: 2810, k: 'moba-prop-barricade', s: 52, rot: -45 },
+      { x: 1080, y: 4920, k: 'moba-prop-beacon', s: 50 },
+      { x: 4920, y: 1080, k: 'moba-prop-beacon', s: 50 },
+    ];
+    for (const p of props) {
+      if (!s.textures.exists(p.k)) continue;
+      const im = s.add.image(p.x, p.y, p.k).setDisplaySize(p.s, p.s).setDepth(D.ground + 0.5).setAlpha(0.9);
+      if (p.rot) im.setAngle(p.rot);
+      this.walls.push(im);
     }
   }
 
