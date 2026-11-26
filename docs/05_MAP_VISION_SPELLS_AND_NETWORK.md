@@ -22,25 +22,27 @@
 | **River ("Data Stream")** | `(700,700) -> (5300,5300)` | `420 px` | Central neutral corridor housing both Epic Pits |
 | **Bases / Fountains** | Blue `(380,5620)` / Red `(5620,380)` | `BASE_RADIUS = 1150 px`, `FOUNTAIN_RADIUS = 520 px` | Heal/Shop safe zone + `1200 DPS` enemy fountain laser |
 
-### 1.3. Structures (`16` Total = `8` per Team)
-- **Breakdown per Team:** `3` Tier-1 Towers + `3` Tier-2 Towers + `1` Tier-3 Core Firewall (`7` Towers total per team) + `1` Production Server Core = **`8` Structures per team** (`14` Towers + `2` Cores = `16` total).
+### 1.3. Structures (`20` Total = `10` per Team)
+- **Breakdown per Team:** `3` Tier-1 Towers + `3` Tier-2 Towers + `3` Tier-3 High-Ground Core Firewalls (`9` Towers total per team, `3` per lane) + `1` Production Server Core = **`10` Structures per team** (`18` Towers + `2` Cores = `20` total).
 - **Collision Radii:** `STRUCTURE_RADIUS.tower = 70 px`, `STRUCTURE_RADIUS.core = 115 px`.
 - **Invulnerability Chain (`unlockedBy`):**
   1. `tier 1` (`top_1`, `mid_1`, `bot_1`) -> vulnerable from `0:00`.
-  2. `tier 2` (`top_2`, `mid_2`, `bot_2`) -> unlocked when same-lane `tier 1` falls.
-  3. `tier 3` (`base_3` Core Firewall) -> unlocked when **any** lane `tier 2` falls.
-  4. `core` (`core`) -> unlocked when `base_3` Core Firewall falls.
+  2. `tier 2` (`top_2`, `mid_2`, `bot_2`) -> unlocked strictly when **same-lane** `tier 1` falls.
+  3. `tier 3` (`top_3`, `mid_3`, `bot_3` Core Firewalls) -> unlocked strictly when **same-lane** `tier 2` falls (no cross-lane skipping). Each rebuilds after `180s` (`TOWER.tier3RespawnMs`).
+  4. `core` (`core`) -> unlocked when **any** lane's `tier 3` Core Firewall is down (re-locks if all `3` Tier-3 Core Firewalls respawn).
 
 | Blue Structure ID | Kind | Lane | Tier | Coordinates `(x, y)` | Red Mirror `(x, y)` |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | `blue_top_1` | Tower | `top` | 1 | `(650, 2000)` | `(2000, 650)` |
 | `blue_top_2` | Tower | `top` | 2 | `(650, 3500)` | `(3500, 650)` |
+| `blue_top_3` | Tower (Core Firewall) | `top` | 3 | `(850, 4650)` | `(4650, 850)` |
 | `blue_mid_1` | Tower | `mid` | 1 | `(2250, 3750)` | `(3750, 2250)` |
 | `blue_mid_2` | Tower | `mid` | 2 | `(1650, 4350)` | `(4350, 1650)` |
+| `blue_mid_3` | Tower (Core Firewall) | `mid` | 3 | `(1200, 4800)` | `(4800, 1200)` |
 | `blue_bot_1` | Tower | `bot` | 1 | `(4000, 5350)` | `(5350, 4000)` |
 | `blue_bot_2` | Tower | `bot` | 2 | `(2500, 5350)` | `(5350, 2500)` |
-| `blue_base_3` | Tower (Firewall) | `base` | 3 | `(1200, 4800)` | `(4800, 1200)` |
-| `blue_core` | Core | `base` | 4 | `(850, 5150)` | `(5150, 850)` |
+| `blue_bot_3` | Tower (Core Firewall) | `bot` | 3 | `(1350, 5150)` | `(5150, 1350)` |
+| `blue_core` | Core (Attacks `640 px`) | `base` | 4 | `(850, 5150)` | `(5150, 850)` |
 
 ### 1.4. Jungle Camps (`12`), Epic Pits (`2`), Walls (`44`) & Bushes (`24`)
 - **Blue Top-Jungle Camps:** `blue_tj_small` `(1350, 2500)`, `blue_tj_medium` `(1500, 3450)`, `blue_tj_big` `(2150, 3000)` -> reflected across mid (`reflectMid`) to `blue_bj_*`, then mirrored to Red (`red_tj_*`, `red_bj_*`).
@@ -193,6 +195,7 @@ All coordinates below are authored for **Blue Top-Jungle** (`tj_*`). Reflections
 | `hello` / `ready` / `startNow` | `{}` | - | Handshake (`welcome` reply) or queue ready check |
 | `pick` / `lock` / `spells` | `{ champ }` / `{ d, f }` | `150 ms` | Champion select (`SELECT_MS = 30s`); `validSpellPair(d, f)` |
 | `side` | `{ team }` | `400 ms` | Custom room team swap (`ROOM_MAX_HUMANS = 10`) |
+| `botLevel` | `{ level: 'easy'\|'normal'\|'hard' }` | - | Custom room host-only (`hostId`) bot difficulty selector (defaults to `'easy'`) |
 | `order` | `{ type: 'move'\|'attack'\|'stop', x?, y?, id? }` | `50 ms` | Rejects hidden IDs (`!canSee`), pets, and dead actors; cancels Recall |
 | `cast` | `{ slot: 'q'\|'w'\|'e'\|'r', x, y, id? }` | `120 ms` | Checks rank `> 0`, Lv `>= 6` for R, mana, CD, stun, and target visibility |
 | `upgrade` | `{ slot: 'q'\|'w'\|'e'\|'r' }` | - | Consumes `skillPoints`; enforces `max 5` (Q/W/E) and `max 3` (R, Lv 6+) |

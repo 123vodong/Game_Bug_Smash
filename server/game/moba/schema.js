@@ -267,6 +267,7 @@ export class TeamState extends Schema {
     // Experience Pass 1 (appended): how the match was decided — '' (not yet) | 'core' | 'rollback'.
     this.winReason = '';
     this.relicsJson = '';
+    this.botLevel = '';        // custom room bot difficulty: 'easy' | 'normal' | 'hard' ('' = MMR auto)
   }
 }
 type('string')(TeamState.prototype, 'phase');
@@ -292,6 +293,7 @@ type('string')(TeamState.prototype, 'hostId');
 type({ map: TeamScore })(TeamState.prototype, 'scores');   // v4 §3.2b (appended, NOT view-filtered)
 type('string')(TeamState.prototype, 'winReason');           // EP-04 (appended)
 type('string')(TeamState.prototype, 'relicsJson');
+type('string')(TeamState.prototype, 'botLevel');
 // v4 visibility (TEAM_MODE_V4_BREAKDOWN.md §3.2): champions + units are per-client
 // StateView filtered — TeamRoom adds/removes each entry per team view (bush vision).
 // Wire indexes are unchanged; the view tag is server-side only.

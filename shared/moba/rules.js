@@ -150,9 +150,13 @@ export const ATK_PROJ_SPEED = 1500;
 export const TOWER = {
   range: 600, atkMs: 1000, dmgChamp: 155, dmgChampByTier: { 1: 155, 2: 195, 3: 260 }, dmgChampRampPct: 0.25, // +25 % per consecutive hit on the same champ
   dmgMinionPctMaxHp: 0.28, armor: 40,
-  hp: { 1: 2100, 2: 2500, 3: 2900 },  // lowered 2026-11-07: first tower fell ~8:50 live  // tier 1 outer, 2 inner, 3 core firewall
+  hp: { 1: 2100, 2: 2500, 3: 2900 },  // tier 1 outer, 2 inner, 3 high-ground core firewall
+  tier3RespawnMs: 180000,             // Tier-3 Core Firewalls rebuild 3 minutes after destruction
 };
-export const CORE = { hp: 5000, armor: 30 };
+export const CORE = {
+  hp: 5000, armor: 30,
+  range: 640, atkMs: 950, dmgChamp: 300, dmgChampRampPct: 0.25, dmgMinionPctMaxHp: 0.32,
+};
 // Structure damage taken without allied minions nearby is reduced ("backdoor" guard).
 export const BACKDOOR_RADIUS = 700;
 export const BACKDOOR_DAMAGE_MUL = 0.4;

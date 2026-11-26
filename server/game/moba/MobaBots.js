@@ -88,22 +88,22 @@ const IDLE_CHAT_EVERY_MS = [45000, 90000];
 // humans' average MMR; bots-only matches play "normal". Easy = the constants above, unchanged.
 export const BOT_SKILL = {
   easy: {
-    name: 'Easy', think: THINK_MS, aim: [0.55, 0.9], aggro: [0.5, 0.85],
-    retreatHp: RETREAT_HP, retreatOut: RETREAT_HP_OUTNUMBERED, fightMinHp: FIGHT_MIN_HP, danger: DANGER_RATIO,
+    name: 'Easy', think: [480, 680], aim: [0.25, 0.50], aggro: [0.35, 0.65], castProb: 0.45, spellUse: false,
+    retreatHp: 0.28, retreatOut: 0.48, fightMinHp: 0.40, danger: 1.4,
     graceMs: HUMAN_GRACE_MS, gankGraceMs: HUMAN_GANK_GRACE_MS, mercyDeaths: HUMAN_MERCY_DEATHS, mercyMs: HUMAN_MERCY_WINDOW_MS,
-    readyMul: 1.8, shopAny: false,
+    readyMul: 1.5, shopAny: false,
   },
   normal: {
-    name: 'Normal', think: [200, 300], aim: [0.7, 0.95], aggro: [0.6, 0.9],
-    retreatHp: 0.18, retreatOut: 0.38, fightMinHp: 0.28, danger: 1.8,
+    name: 'Normal', think: [300, 440], aim: [0.50, 0.75], aggro: [0.50, 0.80], castProb: 0.68, spellUse: true,
+    retreatHp: 0.22, retreatOut: 0.42, fightMinHp: 0.34, danger: 1.65,
     graceMs: 2 * 60000, gankGraceMs: 2 * 60000, mercyDeaths: 3, mercyMs: 120000,
-    readyMul: 2.2, shopAny: true,
+    readyMul: 1.9, shopAny: true,
   },
   hard: {
-    name: 'Hard', think: [150, 230], aim: [0.85, 1], aggro: [0.7, 0.95],
-    retreatHp: 0.15, retreatOut: 0.34, fightMinHp: 0.24, danger: 2.0,
+    name: 'Hard', think: [170, 250], aim: [0.80, 0.96], aggro: [0.70, 0.95], castProb: 0.90, spellUse: true,
+    retreatHp: 0.16, retreatOut: 0.35, fightMinHp: 0.25, danger: 2.0,
     graceMs: 0, gankGraceMs: 0, mercyDeaths: Infinity, mercyMs: 0,
-    readyMul: 2.6, shopAny: true,
+    readyMul: 2.5, shopAny: true,
   },
 };
 export const BOT_SKILL_MMR = { normal: 1050, hard: 1200 };   // average human MMR from which bots step up
@@ -443,10 +443,10 @@ export class MobaBots {
     return this.room._doCast(b.sid, { slot, x, y, ...(id ? { id } : {}) });
   }
 
-  /** Aim point with simple lead (target velocity × travel time) + a little human error. */
+  /** Aim point with simple lead (target velocity × travel time) + skill-scaled human error. */
   _lead(b, ch, t, travelMs) {
-    const k = Math.min(1.2, travelMs / 1000) * (0.6 + b.skill * 0.4);
-    const err = (1 - b.skill) * 70;
+    const k = Math.min(1.2, travelMs / 1000) * (0.4 + b.skill * 0.6);
+    const err = (1 - b.skill) * 130;
     return {
       x: t.x + (t.vx || 0) * k + rand(-err, err),
       y: t.y + (t.vy || 0) * k + rand(-err, err),
@@ -468,7 +468,8 @@ export class MobaBots {
   }
 
   _offensiveCasts(b, ch, foe, ctx, now) {
-    if (Math.random() > 0.5 + b.skill * 0.45) return; // hesitate sometimes
+    const prob = this.k.castProb ?? (0.5 + b.skill * 0.45);
+    if (Math.random() > prob) return; // hesitate based on difficulty
     const d = dist(ch, foe);
     for (const slot of ['r', 'q', 'e', 'w']) {
       const k = b.skills[slot];
@@ -704,6 +705,7 @@ export class MobaBots {
   }
 
   _spell(b, slot, x, y, id) {
+    if (this.k.spellUse === false) return false;
     return this.room._doSpell(b.sid, { slot, x, y, ...(id ? { id } : {}) });
   }
 

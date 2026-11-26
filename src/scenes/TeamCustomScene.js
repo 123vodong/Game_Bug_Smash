@@ -702,7 +702,11 @@ export default class TeamCustomScene extends Phaser.Scene {
       x: 150, y: 668, w: 220, h: 56, label: '✕ LEAVE', sub: 'ESC', color: NEON.red, fontSize: 18,
       onClick: () => this._leaveRoom(),
     });
-    this._infoT = this.add.text(cx - 40, 668, '', {
+    this._botBtn = makeButton(this, {
+      x: 416, y: 668, w: 244, h: 56, label: '🤖 BOT: EASY', sub: 'host · B', color: NEON.green, fontSize: 16,
+      onClick: () => this._cycleBotLevel(),
+    });
+    this._infoT = this.add.text(740, 668, '', {
       fontFamily: FONT_MONO, fontSize: 13, color: '#cfe3f5', align: 'center', lineSpacing: 4,
     }).setOrigin(0.5);
     this._startBtn = makeButton(this, {
@@ -712,7 +716,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._waitT = this.add.text(1096, 664, '', {
       fontFamily: FONT_TITLE, fontSize: 16, color: '#8fa3bf', stroke: '#000000', strokeThickness: 3, align: 'center',
     }).setOrigin(0.5);
-    root.add([this._leaveBtn.root, this._infoT, this._startBtn.root, this._waitT]);
+    root.add([this._leaveBtn.root, this._botBtn.root, this._infoT, this._startBtn.root, this._waitT]);
     root.setAlpha(0);
     this.tweens.add({ targets: root, alpha: 1, duration: 200 });
     this._renderRoom(true);
@@ -764,9 +768,10 @@ export default class TeamCustomScene extends Phaser.Scene {
       if (e.host) hostName = e.name;
     });
     for (const t of ['blue', 'red']) sides[t].sort((a, b) => (b.host - a.host));
+    const botLevel = (st.botLevel === 'easy' || st.botLevel === 'normal' || st.botLevel === 'hard') ? st.botLevel : 'easy';
     return {
       phase: st.phase || '', roomName: String(st.roomName || ''), hostId, isHost: !!hostId && hostId === me,
-      hostName, sides, myTeam, humans: sides.blue.length + sides.red.length,
+      hostName, sides, myTeam, humans: sides.blue.length + sides.red.length, botLevel,
     };
   }
 
@@ -779,7 +784,7 @@ export default class TeamCustomScene extends Phaser.Scene {
       this._sidePending = null; force = true;
     }
     const startPending = this._startSentAt && now - this._startSentAt < 2500;
-    const sig = JSON.stringify([s.roomName, s.hostId, s.isHost, s.myTeam, s.sides, !!this._sidePending, !!startPending, this._room?.roomId]);
+    const sig = JSON.stringify([s.roomName, s.hostId, s.isHost, s.myTeam, s.sides, s.botLevel, !!this._sidePending, !!startPending, this._room?.roomId]);
     if (!force && sig === this._roomSig) return;
     this._roomSig = sig;
     this._rmName.setText(`🏠 ${clipName(s.roomName || 'Custom room', ROOM_NAME_MAX)}`);
@@ -814,6 +819,14 @@ export default class TeamCustomScene extends Phaser.Scene {
         .setDimmed(mine || full || pend);
     }
     const bots = Math.max(0, PER_SIDE * 2 - s.humans);
+    const botMeta = s.botLevel === 'hard'
+      ? { label: '🤖 BOT: HARD', color: NEON.red }
+      : s.botLevel === 'normal'
+        ? { label: '🤖 BOT: NORMAL', color: NEON.cyan }
+        : { label: '🤖 BOT: EASY', color: NEON.green };
+    this._botBtn.setLabel(botMeta.label)
+      .setSub(s.isHost ? 'click to change · B' : 'host sets bot level')
+      .setDimmed(!s.isHost);
     this._infoT.setText(`👤 ${s.humans}/${ROOM_MAX_HUMANS} humans · 🤖 ${bots} bot${bots === 1 ? '' : 's'}\nnext: champion draft → loading → match`);
     this._startBtn.root.setVisible(s.isHost);
     setTreeInput(this._startBtn.root, s.isHost);
@@ -834,6 +847,16 @@ export default class TeamCustomScene extends Phaser.Scene {
     this._sidePending = { team, at: now };
     AudioManager.uiClick();
     this._renderRoom(true);
+  }
+
+  _cycleBotLevel() {
+    const s = this._roomRead();
+    if (!s || s.phase !== 'room') return;
+    if (!s.isHost) { this._botBtn?.shake(); this._toast('Only the host 👑 can change bot level', '#ffd23f'); return; }
+    const order = ['easy', 'normal', 'hard'];
+    const next = order[(order.indexOf(s.botLevel) + 1) % order.length];
+    try { this._room.send('botLevel', { level: next }); } catch (e) { console.warn('[TeamCustom] botLevel failed', e?.message); return; }
+    AudioManager.uiClick();
   }
 
   _startNow() {
@@ -924,6 +947,7 @@ export default class TeamCustomScene extends Phaser.Scene {
         else if (k === 'Enter') this._startNow();
         else if (k === 'c' || k === 'C') this._copyCode();
         else if (k === 'i' || k === 'I') this._copyInvite();
+        else if (k === 'b' || k === 'B') this._cycleBotLevel();
         else if (k === 'Escape') this._leaveRoom();
         return;
       }

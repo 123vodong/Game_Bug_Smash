@@ -136,6 +136,7 @@ export class TeamRoom extends Room {
     this.patchRate = PATCH_MS;
     const st0 = this.state;
     st0.custom = custom;
+    st0.botLevel = custom ? 'easy' : '';
     if (custom) {
       st0.phase = 'room';
       st0.roomName = cleanText(options?.roomName, ROOM_NAME_MAX) || `${sanitizeName(options?.name)}'s room`.slice(0, ROOM_NAME_MAX);
@@ -218,6 +219,7 @@ export class TeamRoom extends Room {
     this.onMessage('chat', (client, msg) => this._onChat(client.sessionId, msg));
     this.onMessage('startNow', (client) => this._doStartNow(client.sessionId));
     this.onMessage('side', (client, msg) => this._doSide(client, msg));
+    this.onMessage('botLevel', (client, msg) => this._doBotLevel(client.sessionId, msg));
     // v3 champion select (TEAM_MODE_V3_BREAKDOWN.md §3.3)
     this.onMessage('pick', (client, msg) => this._doPick(client.sessionId, msg));
     this.onMessage('lock', (client) => this._doLock(client.sessionId));
@@ -577,6 +579,20 @@ export class TeamRoom extends Room {
     return true;
   }
 
+  /** botLevel {level} — custom room, phase 'room', host only: set bot difficulty ('easy'|'normal'|'hard'). */
+  _doBotLevel(sid, msg) {
+    const st = this.state;
+    if (!st.custom || st.phase !== 'room' || sid !== st.hostId) return false;
+    const lv = String(msg?.level || '').toLowerCase();
+    if (lv !== 'easy' && lv !== 'normal' && lv !== 'hard') return false;
+    if (st.botLevel === lv) return true;
+    st.botLevel = lv;
+    const label = lv === 'easy' ? 'Easy' : lv === 'hard' ? 'Hard' : 'Normal';
+    this._feed({ text: `🤖 Bot difficulty set to ${label}`, color: lv === 'easy' ? '#7ed957' : lv === 'hard' ? '#ff6b6b' : '#7ec8ff', a: sid });
+    this._updateMetadata();
+    return true;
+  }
+
   /** The host left: the next human (seat order) becomes host. */
   _handOffHost(sid) {
     const st = this.state;
@@ -884,6 +900,9 @@ export class TeamRoom extends Room {
    */
   _botSkillLevel() {
     if (this._botSkillOverride) return this._botSkillOverride;
+    if (this.state.custom && (this.state.botLevel === 'easy' || this.state.botLevel === 'normal' || this.state.botLevel === 'hard')) {
+      return this.state.botLevel;
+    }
     let sum = 0, n = 0;
     for (const sl of this.slots.values()) {
       if (sl.isBot) continue;
@@ -1748,7 +1767,7 @@ export class TeamRoom extends Room {
     // Core destroyed during this tick → stop simulating (no fx/atk after the victory banner).
     if (st.phase === 'playing') {
       this._separateUnits();
-      for (const s of this.structs.values()) if (s.alive && s.kind === 'tower') this._tickTower(s, now);
+      for (const s of this.structs.values()) if (s.alive && (s.kind === 'tower' || s.kind === 'core')) this._tickTower(s, now);
       if (st.phase === 'playing') this._tickShots(now);
       if (st.phase === 'playing') this.skills.tick(dt, now);
       if (st.phase === 'playing') this._tickFountains(dt, now);
@@ -2039,7 +2058,7 @@ export class TeamRoom extends Room {
       const empowered = this.teamBuffActive(team, now);
       for (const lane of LANE_IDS) {
         if ((perLane[`${team}_${lane}`] || 0) >= MINION_LANE_CAP) continue;
-        const superLane = !this.structs.get(`${enemy}_${lane}_2`)?.alive || !this.structs.get(`${enemy}_base_3`)?.alive;
+        const superLane = !this.structs.get(`${enemy}_${lane}_3`)?.alive;
         const laneKinds = superLane && kinds.length ? ['siege', ...kinds.slice(1)] : kinds;
         const path = minionPath(team, lane);
         const p0 = path[0], p1 = path[1];
@@ -2375,20 +2394,22 @@ export class TeamRoom extends Room {
 
   _tickTower(tw, now) {
     if (now < tw.atkReadyAt || now < (tw.scanAt || 0)) return;
-    const t = this._towerTarget(tw, now);
-    if (!t) { tw.target = ''; tw.scanAt = now + 100; return; } // v4: idle towers rescan at 10 Hz
-    tw.atkReadyAt = now + TOWER.atkMs;
+    const cfg = tw.kind === 'core' ? CORE : TOWER;
+    const t = this._towerTarget(tw, now, cfg.range || TOWER.range);
+    if (!t) { tw.target = ''; tw.scanAt = now + 100; return; } // v4: idle structures rescan at 10 Hz
+    tw.atkReadyAt = now + (cfg.atkMs || TOWER.atkMs);
     tw.target = t.id;
     let dmg, opts;
     if (t.etype === 'champ') {
       if (tw.rampId === t.id) tw.ramp = Math.min(TOWER_MAX_RAMP_HITS, tw.ramp + 1);
       else { tw.rampId = t.id; tw.ramp = 0; }
-      const baseDmg = TOWER.dmgChampByTier?.[tw.tier] ?? TOWER.dmgChamp;
-      dmg = baseDmg * (1 + TOWER.dmgChampRampPct * tw.ramp);
+      const baseDmg = tw.kind === 'core' ? (CORE.dmgChamp || 300) : (TOWER.dmgChampByTier?.[tw.tier] ?? TOWER.dmgChamp);
+      const rampPct = cfg.dmgChampRampPct ?? TOWER.dmgChampRampPct;
+      dmg = baseDmg * (1 + rampPct * tw.ramp);
       opts = { kind: 'tower' };
     } else {
       tw.rampId = ''; tw.ramp = 0;
-      dmg = TOWER.dmgMinionPctMaxHp * t.maxHp;
+      dmg = (cfg.dmgMinionPctMaxHp ?? TOWER.dmgMinionPctMaxHp) * t.maxHp;
       opts = { kind: 'tower', trueDmg: true };
     }
     this._atkBatch.push({ f: tw.id, t: t.id, r: 1 });
@@ -2396,11 +2417,10 @@ export class TeamRoom extends Room {
   }
 
   /**
-   * Tower target: enemy champion that hurt an allied champion near the tower
+   * Structure target (towers & Production Server): enemy champion that hurt an allied champion near it
    * (last 2 s) › current target › nearest enemy minion › nearest enemy champion.
    */
-  _towerTarget(tw, now) {
-    const range = TOWER.range;
+  _towerTarget(tw, now, range = TOWER.range) {
     let best = null, bestD = Infinity;
     for (const c of this.champs.values()) {
       if (c.dead || c.team === tw.team || now - c.aggroAt > TOWER_AGGRO_MS || !this.canSee(tw.team, c, now)) continue;
@@ -3304,10 +3324,10 @@ export class TeamRoom extends Room {
     }
     for (const c of this.champs.values()) if (c.team === winner) this._giveGold(c, TOWER_GOLD_TEAM, s.x, s.y);
     const owner = TEAM_INFO[s.team];
-    const where = s.tier === 1 ? `${s.lane} Firewall` : s.tier === 2 ? `inner ${s.lane} Firewall` : TOWER_NAMES[3];
+    const where = s.tier === 1 ? `${s.lane} Firewall` : s.tier === 2 ? `inner ${s.lane} Firewall` : `${s.lane} ${TOWER_NAMES[3]}`;
     this._announce({
       title: `🔥 ${owner.name}'s ${where} is down!`,
-      sub: s.tier === 3 ? `The ${CORE_NAME} is exposed · +${TOWER_GOLD_TEAM} gold for every ${teamLabel(winner)} dev`
+      sub: s.tier === 3 ? `The ${CORE_NAME} is exposed (rebuilds in ${Math.round((TOWER.tier3RespawnMs || 180000) / 1000)}s) · +${TOWER_GOLD_TEAM} gold for every ${teamLabel(winner)} dev`
         : `+${TOWER_GOLD_TEAM} gold for every ${teamLabel(winner)} dev`,
       color: TEAM_INFO[winner].css,
     });
@@ -3317,6 +3337,31 @@ export class TeamRoom extends Room {
     this._feed(feed);
     this._refreshInvulnerability();
     this.bots.onStructureDestroyed(s);
+    if (s.tier === 3 && TOWER.tier3RespawnMs > 0) {
+      this._later(TOWER.tier3RespawnMs, () => this._respawnStructure(s.id));
+    }
+  }
+
+  /** Rebuild a destroyed Tier-3 Core Firewall after its respawn cooldown (re-locks Core if all 3 are up). */
+  _respawnStructure(id) {
+    if (this.state.phase !== 'playing') return;
+    const s = this.structs.get(id);
+    if (!s || s.alive || s.kind !== 'tower' || s.tier !== 3) return;
+    s.alive = true;
+    s.hp = s.maxHp;
+    s.target = '';
+    s.rampId = '';
+    s.ramp = 0;
+    s.atkReadyAt = 0;
+    this._refreshInvulnerability();
+    const owner = TEAM_INFO[s.team];
+    const where = `${s.lane} ${TOWER_NAMES[3]}`;
+    this._announce({
+      title: `🛡️ ${owner.name}'s ${where} has respawned!`,
+      sub: `Super minions halted in ${s.lane} lane`,
+      color: owner.css,
+    });
+    this._feed({ text: `🛡️ ${owner.name}'s ${where} has respawned`, color: owner.css });
   }
 
   // ───────────────────────── state sync ─────────────────────────
@@ -3664,9 +3709,12 @@ export class TeamRoom extends Room {
     for (const u of this.units.values()) {
       if (u.alive && u.utype === 'ward' && u.team === team && u.bush === b && dist(u, e) <= WARD.sightRadius) return true;
     }
-    // Towers see into bushes within their range (no waiting under a tower in a bush — playtest v4).
+    // Towers and Production Server see into bushes within their attack range.
     for (const s of this.structs.values()) {
-      if (s.alive && s.team === team && s.kind === 'tower' && Math.hypot(s.x - e.x, s.y - e.y) <= TOWER.range + (e.radius || 0)) return true;
+      if (s.alive && s.team === team && (s.kind === 'tower' || s.kind === 'core')) {
+        const sr = s.kind === 'core' ? (CORE.range || TOWER.range) : TOWER.range;
+        if (Math.hypot(s.x - e.x, s.y - e.y) <= sr + (e.radius || 0)) return true;
+      }
     }
     return false;
   }

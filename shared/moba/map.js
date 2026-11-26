@@ -33,16 +33,18 @@ export function laneFor(team, lane) {
   return team === 'blue' ? pts : [...pts].reverse();
 }
 
-// ── Structures (blue side; red = mirrored). tier 1 outer, 2 inner, 3 core firewall ──
+// ── Structures (blue side; red = mirrored). tier 1 outer, 2 inner, 3 high-ground core firewall ──
 const BLUE_STRUCTURES = [
-  { id: 'top_1',  kind: 'tower', lane: 'top',  tier: 1, x: 650,  y: 2000 },
-  { id: 'top_2',  kind: 'tower', lane: 'top',  tier: 2, x: 650,  y: 3500 },
-  { id: 'mid_1',  kind: 'tower', lane: 'mid',  tier: 1, x: 2250, y: 3750 },
-  { id: 'mid_2',  kind: 'tower', lane: 'mid',  tier: 2, x: 1650, y: 4350 },
-  { id: 'bot_1',  kind: 'tower', lane: 'bot',  tier: 1, x: 4000, y: 5350 },
-  { id: 'bot_2',  kind: 'tower', lane: 'bot',  tier: 2, x: 2500, y: 5350 },
-  { id: 'base_3', kind: 'tower', lane: 'base', tier: 3, x: 1200, y: 4800 },
-  { id: 'core',   kind: 'core',  lane: 'base', tier: 4, x: 850,  y: 5150 },
+  { id: 'top_1', kind: 'tower', lane: 'top',  tier: 1, x: 650,  y: 2000 },
+  { id: 'top_2', kind: 'tower', lane: 'top',  tier: 2, x: 650,  y: 3500 },
+  { id: 'top_3', kind: 'tower', lane: 'top',  tier: 3, x: 850,  y: 4650 },
+  { id: 'mid_1', kind: 'tower', lane: 'mid',  tier: 1, x: 2250, y: 3750 },
+  { id: 'mid_2', kind: 'tower', lane: 'mid',  tier: 2, x: 1650, y: 4350 },
+  { id: 'mid_3', kind: 'tower', lane: 'mid',  tier: 3, x: 1200, y: 4800 },
+  { id: 'bot_1', kind: 'tower', lane: 'bot',  tier: 1, x: 4000, y: 5350 },
+  { id: 'bot_2', kind: 'tower', lane: 'bot',  tier: 2, x: 2500, y: 5350 },
+  { id: 'bot_3', kind: 'tower', lane: 'bot',  tier: 3, x: 1350, y: 5150 },
+  { id: 'core',  kind: 'core',  lane: 'base', tier: 4, x: 850,  y: 5150 },
 ];
 /** All structures with team + globally unique id (e.g. 'blue_top_1', 'red_core'). */
 export const STRUCTURES = [
@@ -54,12 +56,12 @@ export const STRUCTURE_RADIUS = { tower: 70, core: 115 };
  * Invulnerability chain: a structure can only be damaged once its
  * prerequisite is destroyed. Returns the prerequisite id(s) — ANY one of them
  * destroyed unlocks it — or [] if it's open from the start.
- *   lane tier 2 ← same-lane tier 1 · core firewall ← any tier 2 · core ← core firewall
+ *   lane tier 2 ← same-lane tier 1 · lane tier 3 ← same-lane tier 2 · core ← any tier 3
  */
 export function unlockedBy(struct) {
   const t = struct.team;
-  if (struct.kind === 'core') return [`${t}_base_3`];
-  if (struct.tier === 3) return [`${t}_top_2`, `${t}_mid_2`, `${t}_bot_2`];
+  if (struct.kind === 'core') return [`${t}_top_3`, `${t}_mid_3`, `${t}_bot_3`];
+  if (struct.tier === 3) return [`${t}_${struct.lane}_2`];
   if (struct.tier === 2) return [`${t}_${struct.lane}_1`];
   return [];
 }

@@ -2,7 +2,7 @@
 // Server": big rack with blinking LEDs). Shows an HP bar, a shield bubble while
 // `invulnerable`, the tower's attack range when an enemy champion (you) is close,
 // and a destroy animation when `alive` flips false.
-import { TOWER, TEAM_INFO } from '../../../shared/moba/rules.js';
+import { TOWER, CORE, TEAM_INFO } from '../../../shared/moba/rules.js';
 import {
   D, FONT, BAR, depthAt, teamColor, teamCss, relation, calmPrefs,
   CORE_TEX_W, CORE_TEX_H, CORE_BAYS, CORE_BAY_Y0, CORE_BAY_STEP,
@@ -47,7 +47,8 @@ export class StructureView {
       this.crystalGlow = scene.add.image(0, -148, 'moba-glow').setTint(col).setDisplaySize(78, 78).setAlpha(0.45).setBlendMode(1);
       c.add([this.crystalGlow, this.body]);
     }
-    this.laserG = !isCore ? scene.add.graphics().setDepth(D.fx) : null;
+    this._origScaleY = this.body.scaleY || 1;
+    this.laserG = scene.add.graphics().setDepth(D.fx);
     this.targetPos = null;
     this.targetIsMe = false;
     // Invulnerability bubble.
@@ -96,6 +97,7 @@ export class StructureView {
     if (alive !== this.alive) {
       this.alive = alive;
       if (!alive) this._setRubble(true);
+      else this._setRebuilt();
     }
   }
 
@@ -148,19 +150,18 @@ export class StructureView {
         this._hadLaser = false;
       }
     }
-    // Tower range ring: only for enemy towers when you're close.
-    if (this.kind === 'tower') {
-      const near = me && !me.dead && me.team !== this.team
-        && Math.hypot(me.x - this.x, me.y - this.y) < TOWER.range + 320;
-      if (near) {
-        if (!this.rangeRing) {
-          this.rangeRing = this.scene.add.circle(this.x, this.y, TOWER.range)
-            .setStrokeStyle(4, 0xff4a4a, 0.55).setFillStyle(0xff2020, 0.05).setDepth(D.ground);
-        }
-        const d = Math.hypot(me.x - this.x, me.y - this.y);
-        this.rangeRing.setVisible(true).setAlpha(d < TOWER.range ? 1 : 0.6);
-      } else if (this.rangeRing?.visible) this.rangeRing.setVisible(false);
-    }
+    // Structure range ring: only for enemy towers / core when you're close.
+    const atkRange = this.kind === 'core' ? (CORE.range || 640) : TOWER.range;
+    const near = me && !me.dead && me.team !== this.team
+      && Math.hypot(me.x - this.x, me.y - this.y) < atkRange + 320;
+    if (near) {
+      if (!this.rangeRing) {
+        this.rangeRing = this.scene.add.circle(this.x, this.y, atkRange)
+          .setStrokeStyle(4, 0xff4a4a, 0.55).setFillStyle(0xff2020, 0.05).setDepth(D.ground);
+      }
+      const d = Math.hypot(me.x - this.x, me.y - this.y);
+      this.rangeRing.setVisible(true).setAlpha(d < atkRange ? 1 : 0.6);
+    } else if (this.rangeRing?.visible) this.rangeRing.setVisible(false);
   }
 
   destroy() {
@@ -204,5 +205,18 @@ export class StructureView {
       this.body.setScale(this.body.scaleX, end.scaleY);
       if (end.angle) this.body.setAngle(end.angle);
     }
+  }
+
+  /** Restore a respawned Tier-3 Core Firewall from rubble back to full operational state. */
+  _setRebuilt() {
+    this.scene.tweens.killTweensOf(this.body);
+    this.body.clearTint();
+    this.body.setAngle(0);
+    this.body.setScale(this.body.scaleX, this._origScaleY || 1);
+    this.hpBg.setVisible(true); this.hpFill.setVisible(true); this.hpText?.setVisible(true);
+    if (this.fire) this.fire.setVisible(true);
+    this._applyHp();
+    this._applyInvuln();
+    this.flash();
   }
 }
