@@ -3005,16 +3005,23 @@ export class OfflineSim {
         break;
       }
       case 'swap': {
-        let ally = null, best = 220;
-        this.state.champions.forEach((a) => {
-          if (a === c || a.dead || a.team !== c.team || dist(a, c) > (sk.range || 600) + 40) return;
-          const d = Math.hypot(a.x - aimX, a.y - aimY);
-          if (d <= best) { best = d; ally = a; }
-        });
-        if (!ally) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); break; }
+        const reach = (sk.range || 600) + 40;
+        const okAlly = (a) => a && a !== c && !a.dead && a.team === c.team && dist(a, c) <= reach;
+        let ally = m.id ? this.state.champions.get(m.id) : null; // the client-chosen ally (targets:'ally') wins
+        if (!okAlly(ally)) {
+          ally = null;
+          let best = 220;
+          this.state.champions.forEach((a) => {
+            if (!okAlly(a)) return;
+            const d = Math.hypot(a.x - aimX, a.y - aimY);
+            if (d <= best) { best = d; ally = a; }
+          });
+        }
+        if (!ally || c.rootedUntil > t) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); break; } // no ally, or rooted
         const cx = c.x, cy = c.y, ax = ally.x, ay = ally.y;
         c.x = ax; c.y = ay; c._order = null; c._nav = null;
         ally.x = cx; ally.y = cy; ally._order = null; ally._nav = null;
+        this._suppressBroken(ally, 'teleport');
         fx({ k: 'blink', sid: c.id, slot, x0: Math.round(cx), y0: Math.round(cy), x1: Math.round(ax), y1: Math.round(ay) }); // one fx links both ends
         for (const a of [c, ally]) {
           if (sk.shield) { a.shield = Math.round(amt(sk.shield)); a._shieldUntil = t + (sk.duration || 3000); }

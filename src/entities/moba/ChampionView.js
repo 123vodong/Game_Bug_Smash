@@ -7,7 +7,7 @@
 // v2: a procedural costume from `def.look` (looks.js): outfit (between the team
 // outline and the stickman), hat + held prop (in front), and for Rush a scooter
 // (deck + 2 spinning wheels; he leans instead of running). ≤ 6 extra images.
-import { CHAMPIONS, parseKitTags, parseCcTags, CC_TYPES, CC_TUNING } from '../../../shared/moba/champions.js';
+import { CHAMPIONS, parseKitTags, parseCcTags, CC_TYPES, CC_TUNING, resolveSkill } from '../../../shared/moba/champions.js';
 import { RECALL_MS } from '../../../shared/moba/rules.js';
 import { FONT, BAR, ME_COLOR, D, depthAt, teamColor, teamCss, relation, approach, calmPrefs, hatEmoji } from './mobaGfx.js';
 
@@ -36,7 +36,7 @@ const STANCE_TINT = { hotfix: 0xffb0d0, feature: 0xb8f5a0, bucket: 0xb0dcff }; /
 const MIX_COLOR = { S: 0x5a3a22, M: 0xf5e6d3, G: 0xffb347 };
 
 /** Map the server's free-form `action` string onto one of the stickman poses (null = none). */
-export function poseForAction(action, def, alt) {
+export function poseForAction(action, def, alt, stance) {
   const a = String(action || '').toLowerCase();
   // Server actions: idle | attack | q | w | e | r | recall | dead (anything else → best guess).
   if (!a || a === 'idle' || a === 'move' || a === 'run' || a === 'none' || a === 'dead' || a.includes('recall')) return null;
@@ -46,7 +46,7 @@ export function poseForAction(action, def, alt) {
     const m = a.match(/(?:cast|skill|spell)[_:\- ]?([qwer])(?![a-z])/) || a.match(/^([qwer])[_:\-]/);
     if (m) slot = m[1];
   }
-  if (slot) return TYPE_POSE[def?.skills?.[slot]?.type] || 'smash';
+  if (slot) return TYPE_POSE[(def ? resolveSkill(def, slot, stance) : null)?.type] || 'smash'; // stance-resolved (Mop / Patch)
   if (POSE_KEYS[a]) return a;
   if (a.includes('dash')) return 'kick';
   if (a.includes('blink')) return 'jump';
@@ -284,7 +284,7 @@ export class ChampionView {
     if (seq !== this.actionSeq) {
       this.actionSeq = seq;
       this._alt = !this._alt;
-      const pose = poseForAction(ch.action, this.def, this._alt);
+      const pose = poseForAction(ch.action, this.def, this._alt, this._kit?.stance);
       if (pose) { this.actionPose = pose; this.actionUntil = now + (pose === 'punch' || pose === 'kick' ? 320 : 430); }
     }
     // Status effects (server timestamps → compare against the server clock).
@@ -617,7 +617,7 @@ export class ChampionView {
     let color = null;
     for (const t of BUFF_PRIORITY) {
       if (!tags.includes(t)) continue;
-      color = t === 'deadline' ? 0xff5a2a : (this.def.skills?.[t]?.color ?? 0xffffff);
+      color = t === 'deadline' ? 0xff5a2a : (resolveSkill(this.def, t, parseKitTags(str).stance)?.color ?? 0xffffff);
       break;
     }
     this._auraColor = color;

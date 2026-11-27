@@ -15,3 +15,4 @@ Curated by Duke Nguyen (duc.nguyen@onethesis.com).
 - fb/vf*.webp (22 flipbooks, 8 columns x 128 px frames): "Free VFX asset pack" (Effect_Anima, BigHit, BloodImpact, Charged, Constellation,
   DitheredFire, EldenRing, ElectricShield, Explosion, Explosion2, FastPixelFire, Hyperspeed, Impact, Kabooms, Magma, PowerChords,
   PuffAndStars, SmallHit, Tentacles, TheVortex, Wheel, Worm), CC0 1.0 — https://opengameart.org/content/free-vfx-asset-pack
+- ico/*.png (23 white icons, 100 px): Kenney Game Icons (CC0 1.0) — used as glyph art by SkillFx instead of emoji.

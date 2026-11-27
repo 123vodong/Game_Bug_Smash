@@ -71,7 +71,7 @@ deleted documents ("v6 numbering" / "v6.1 numbering"). Translate them with this 
 |---|---|---|---|---|---|
 | Pixel | Drawn laser wall + rewind | Laser Fence: drag a 2-point wall (4s) that hurts and marks Glitch | Flexbox Orbs: chain zap, +30% vs Glitch | Ctrl+Z: rewind own position 3s, cleanse | Framework Rewrite: delayed nuke, +25% vs Glitch |
 | Stack | Portal pair | SQL Hook: pull + stun | Access Control: toggle portals everyone / allies only (+shield) | Portal Pair: place A, recast to place B, 9s | Database Lock: pull-in + stun |
-| Ops | Heal tether + beacon | Health Check: scan, slow, self heal | Hotfix Tether: channel link, heals ally per tick | Failover Beacon: allies recall to it; recast to teleport there | Blue-Green Deploy: team heal + shield |
+| Ops | Heal tether + ally swap | Health Check: scan, slow, self heal | Hotfix Tether: channel link, heals ally per tick | Hot Swap: trade places with an ally, both get a shield and speed | Blue-Green Deploy: team heal + shield |
 | Tester | Charge sniper + scout | Unit Test: HOLD to charge (range, dmg scale) | Scout Drone: flying vision unit that spots | Edge Case: vault + net | Regression Barrage: map-wide shot, +25% vs spotted |
 | Zero | Shadow clone | Fork Process: place shadow | Context Switch: swap with shadow + stealth | Brute Force: slash at you AND shadow | Zero-Day: execute, leaves shadow at origin |
 | Model | Data orbs (resource 0-3) | Gradient Descent: spend orbs for dmg/radius | Overfit: spend orbs for shield layers | Random Forest: spend orbs for root time | Big Data: spend orbs for dmg/stun |
@@ -93,7 +93,7 @@ deleted documents ("v6 numbering" / "v6.1 numbering"). Translate them with this 
 Exact data: `shared/moba/champions.js`. Costs are mana; cooldowns are seconds.
 - Pixel: Q Laser Fence (60 mana, 9s) drag a wall up to 520 px, 4s, crossers take 50+ AP damage, 30% slow, Glitch mark; W chain zap (55, 9s); E Ctrl+Z (50, 16s) position rewind 3s and cleanse; R Framework Rewrite (100, 70s).
 - Stack: Q hook (11s); W Access Control (0 mana, 1.5s) toggles portal filter and gives a 60+ shield; E Portal Pair (60, 16s) place A, press E within 6s to place B, 9s of teleport; R Database Lock (75s).
-- Ops: Q scan (6s); W Hotfix Tether (50, 9s) 22+ heal per 0.5s for 5s, 40% back to Ops, Ops slowed 25%; E Failover Beacon (50, 18s) 12s, ally recall 3s to it; R Blue-Green Deploy (85s).
+- Ops: Q scan (6s); W Hotfix Tether (50, 9s) 22+ heal per 0.5s for 5s, 40% back to Ops, Ops slowed 25%; E Hot Swap (55, 14s) swaps places with the ally nearest the aim within 650 px, both get a 2.5s shield and +30% MS; R Blue-Green Deploy (85s).
 - Tester: Q Unit Test (50, 6s) hold 0.25-1.4s: damage x0.6-1.8, range 600-1500; W Scout Drone (40, 20s) 7s, 650 vision, Spotted 3s; E vault (11s); R Barrage (58s) +25% on spotted.
 - Zero: Q Fork Process (30, 7s) shadow 6s; W Context Switch (25, 5s) swap + 0.9s stealth + 25% MS; E Brute Force (35, 6s) slash at both bodies, Vulnerable mark; R Zero-Day (90, 68s) execute behind target, shadow at origin.
 - Model: orbs 3 max, +0.4/s. Q (45, 5s) +30% dmg and +8% radius per orb; W Overfit (40, 12s) 1-3 orbs, 45+ shield each; E (55, 11s) +0.25s root per orb; R (100, 80s) 1-3 orbs, +25% dmg, +0.25s stun per orb.
@@ -206,7 +206,7 @@ Placement: aim clamped to `spec.range` from the caster (range 0 = on the caster)
 - portal (Stack): first cast places end A (`range`); within `recast.ms` the second press places end B (`obj.range2` from the caster); the pair lives `obj.ms` from B placement. If B is never placed, A is removed. Each `OBJ_TICK_MS`: every champion, minion and non-epic monster (not pets) within `r + PORTAL_ENTER_PAD` of an end whose per-unit lock `gapMs` has expired is moved to the other end (`nearestFree`, pushed `r+30` px outward), then locked `gapMs`. Filter: owner's live stance `allies` admits only the owner's team; `open` admits everyone (the deliberate risk: enemies can use it). fx `obj` x2 (with `pair`), `tp`, `objUpd` on stance toggle.
 - barricade (Brick): unit `kind:'obj'`, solid circle `r`. Every tick, any champion, minion or monster overlapping is pushed out along the normal (`room._pushOutObjs`, same idea as `nav.pushOut`); dashes and knockbacks stop at its edge (`room._clipObjs`) and a knockback ended by a barricade counts as a WALL for `wallStun`. HP = `amount(obj.hp)` snapshot. Expires at `ms`. Death = `objEnd {boom:true}`.
 - turret (Volt): unit `kind:'obj'`. Every `atkMs` (x `atkMul` while overclocked) hitscan the nearest visible enemy champion within `obj.range`, else nearest visible enemy minion or monster: `dmg` snapshot at placement, fx `shot`. Heat: `+perShot` (x `heatMul` while overclocked) per shot; after `coolDelayMs` without firing it cools `coolPerSec`; at `heat >= max` it EXPLODES (`explode.radius`, `explode.dmg`, `explode.stun`, kills itself). Turrets never hit structures. `objcmd`: `overclock` (all own turrets, `ms`), `vent` (heat 0 and slow `slow` on enemies within `radius` of each turret), `detonate` (explode now, damage x (1 + heat x heatMulPerPct)); none alive = cast fails. Heat is fx `objHeat` only (tenths, on change).
-- beacon (Ops): fx-only, `maxActive 1`, lifetime `ms`. While a live allied beacon exists, an allied champion's recall (B) takes `allyRecallMs` and ends at the beacon (`nearestFree`) instead of the fountain (no fountain heal); damage and movement cancel it as usual. Recast `'toObj'`: the owner teleports to it and consumes it.
+- beacon (no champion uses it since Ops E became Hot Swap; the engine support stays available): fx-only, `maxActive 1`, lifetime `ms`. While a live allied beacon exists, an allied champion's recall (B) takes `allyRecallMs` and ends at the beacon (`nearestFree`) instead of the fountain (no fountain heal); damage and movement cancel it as usual. Recast `'toObj'`: the owner teleports to it and consumes it.
 - pin (Lint): fx-only, shared cap per `group` (5 total, oldest removed). Armed after `armMs`. `trigger:'enemy'`: first enemy champion or unit entering `r` triggers the stored spec (`dmg`, `slow`, `root`, `mark`) centered on the pin, then the pin is removed. `trigger:'ally'`: first allied champion (owner included) heals `heal` and gets `buff`. Hidden from the enemy team `hideAfterMs` after placement (suggestion pins stay visible); revealed 3s when triggered. `type:'resolve'`: needs at least one live pin in `group` or it fails; every pin triggers at once at radius x `radiusMul`, effects x `dmgMul`, and `resolve.detonate` cashes Nit stacks; fx `pinBoom` per pin. This replaces the old trap engine (no champion uses `trap` any more).
 
 #### 2.5.6 Rewind (F)
@@ -375,12 +375,12 @@ taunt/charm/fear circles = normal radius ring. Pointer on the minimap while a gl
 ## 4. Bots
 
 Bots still cast generically. Rules: `classifySkill` gains flags `hold, drag, place, objKind, stance, tether, link, rewind, shadow, summon, echo, timebox, reload, pickup, deliver, serve, resolve, objcmd, spend, hint (spec.bot)`. Behaviour:
-- `spec.bot:'skip'` slots are never cast by bots (portal, beacon, shadow place, drone, pickup, deliver, Suggestion Pin, stance toggles unless botPref).
+- `spec.bot:'skip'` slots are never cast by bots (portal, shadow place, drone, pickup, deliver, Suggestion Pin, stance toggles unless botPref).
 - hold: bots tap-cast (quick-cast, `ph` absent). drag: bots send no `x2,y2`. place with `dmg` (wall, barricade as opener, pins): cast at the target enemy position when within range; barricade between self and the closest chaser when `hurt`.
 - stance: `kit.stance.botPref`: every think tick pick `near` stance if the target enemy is within `dist`, else `far`; Patch uses `lowHp` below `lowHpPct` HP; toggle with the stance skill when current differs (ignore its cooldown spam: at most once per 2s).
 - spend skills: cast only when `res >= spend.min`; Model prefers `res == max` for R; Swipe casts E (reload) when ammo 0 or when no enemy within 900 and ammo < 4 (taps only: no perfect timing, always natural reload); Brew casts Q/W/E to fill the mix then R when size >= 2 and an enemy champion or hurt ally exists; `serve` outcome is chosen by the engine.
 - tether/link (`bot:'peel'`): ally champion with HP < 60% within range, lowest HP first. rewind (`bot:'escape'` Pixel: HP < 35% and being damaged; `bot:'self'` Pager R: 2 or more allies in radius below 55% HP or the team lost >25% HP in 3s). echo, timebox, objcmd, resolve, Peak Hours: `bot:'self'` cast when an enemy champion is within 700 and ready (resolve: when >= 2 pins are placed and an enemy is within 400 of one). Shadow swap `bot:'escape'`: HP < 35% and a shadow exists.
-- Scout drone, portals, beacons, pickup and deliver are skipped, so Stack, Ops, Tester, Zero, Rush bots lose those skills but remain functional on their other keys.
+- Scout drone, portals, pickup and deliver are skipped (and Ops E Hot Swap, which is `bot: skip`), so Stack, Ops, Tester, Zero, Rush bots lose those skills but remain functional on their other keys.
 
 ---
 
@@ -422,7 +422,7 @@ Bots still cast generically. Rules: `classifySkill` gains flags `hold, drag, pla
 | :---: | :--- | :---: | :---: | :---: | :--- | :---: | :--- |
 | **Q** | Health Check | `circle` | 45 | 6s | Dmg: 65 +14/lv +55% AP, Range 820, Radius 200, Delay 300ms, Slow 35% | `scan` | Scans an area: slows enemies inside and heals you for each champion hit. |
 | **W** | Hotfix Tether | `tether` | 50 | 9s | Range 600 | `tether` | Links to an ally for 5s: heals them every 0.5s (and you for 40% of it). You move 25% slower. Press W again to cut the link. |
-| **E** | Failover Beacon | `place` | 50 | 18s | Recast 12s (toObj) | `beacon` | Plants a beacon for 12s. Allies who recall (B) arrive at it in 3s. Press E again to teleport to it yourself. |
+| **E** | Hot Swap | `swap` | 55 | 14s | Range 650, Duration 2.5s, Shield: 70 +14/lv +40% AP | `swap` | Swaps places with the allied champion nearest your aim, pulling them out of danger. Both of you gain a shield and +30% MS for 2.5s. |
 | **R** | Blue-Green Deploy | `allies` | 110 | 85s | Heal: 160 +22/lv +55% AP, Shield: 130 +13/lv +35% AP, Radius 800, Duration 3s, Revive guard 3s | `blueGreen` | Swaps the whole team to a fresh deployment: heal, shield, 15% damage reduction, and a Failover standby for 3s: a lethal hit instead reboots the ally at 30% HP (1s untargetable). Once per ally. |
 
 ### Tester — the QA Sniper (`tester`)
@@ -641,7 +641,7 @@ Use `assets/moba/vfx` (Kenney particles) and `assets/moba/fb` (flipbooks, see `F
 - laserFence: two glowing posts (`flare_01`) joined by a flickering line (`trace_03` tiled + `spark_05`), brightens on each hit, fades last 400 ms.
 - rewind: ghost silhouettes (low-alpha champion tint) sliding back along `list` trails, reverse `twirl_01` spiral at the end point, white flash on cleanse.
 - accessToggle: hex lock ring (`circle_03`) flips green (open) to amber (allies) around Stack. portal: two pulsing `twirl_02` rings with `ringBlue.webp`, a faint dotted line between ends when both exist, `tp` = streak plus pop at the exit; allies-only tint cyan.
-- tether: animated beam between the two bodies with `+` particles flowing toward the ally, thickens each heal tick (`tetherEnd` fades). beacon: tall light pillar (`light_01` stretched) + expanding `ringGold.webp` pulses; arrival = gold burst.
+- tether: animated beam between the two bodies with `+` particles flowing toward the ally, thickens each heal tick (`tetherEnd` fades). beacon (engine only, unused by the roster): tall light pillar (`light_01` stretched) + expanding `ringGold.webp` pulses; arrival = gold burst.
 - sniperCharge: red laser sight line from caster growing with charge, converging ring (`circle_05`) at the muzzle (locally driven by `charge`); release = bolt thickness and brightness scale with the charge fraction. drone: small hovering drone sprite from the unit view with a rotating scan cone and a ring at `vision` radius; spotted enemies get a `crosshair.webp` for 3s.
 - shadowCast: dark silhouette thrown to the spot, lands as a translucent purple clone (outline `smoke_07`) that persists until `shadowEnd`. shadowSwap: two smoke puffs plus a purple streak linking both ends. bladeSpin plays at both bodies when `alsoAtShadow`.
 - orbShield: orbs (`magic_01`) orbiting the body, one layer per shield orb, shatter on break. ChampionView must also draw the 0-3 orbiting orbs from `kit:orbs`. dataSphere radius and spark count scale with the orbs spent (fx carries `r`).
@@ -676,7 +676,7 @@ colour logic; default tint = `spec.color`. Sprite names without extension are Ke
 | stack.r | rowLift | vfEldenRing contracting 2.6r to 0.4r; window_01 panes rising; dirt_03 debris; lime | pull in, then panes rise and fall | contracting ring outline radius 350 |
 | ops.q | scan | arc rotating wedge slash_03; ringGold; light_02; yellow | wedge sweeps 360 degrees over the delay | circle outline with sweep |
 | ops.w | tether | beam trace_06; symbol_01 plus signs flowing; vfAnima pulse on ally; green | particles flow, beam thickens per tick | link line preview on hover |
-| ops.e | beacon | light_01 pillar; ringGold pulses; divineCloud base; gold-blue | pillar rises, ring pulse each 1 s | ring r90 at aim |
+| ops.e | swap | twirl_03 pair curving between the two bodies; ringWhite at both ends; sparkGold at the arrival | beams cross, rings flash at both ends | none |
 | ops.r | blueGreen | ringBlue then ringGreen swap; vfElectricShield dome on each ally; revive halo ring | blue expands, green replaces 200 ms later | faint radius 800 ring on cast |
 | tester.q | sniperCharge | red laser line growing; circle_05 converging; vfCharged at muzzle; thickness by charge | line lengthens with charge | laser sight (enemies see it above 50% charge) |
 | tester.w | drone | drone unit sprite; cone (slash_04) rotating scan; ringDots at vision radius; crosshair on spotted | scan cone rotates | range ring |
@@ -852,7 +852,7 @@ Brick R wallStun. Taunt pairs with Brick's shield by design; charm and fear neve
 
 ### 9.1 Risks (v6)
 
-- Balance: Hira link plus Pager rollback are the strongest team tools; both are capped (shared damage never kills, rollback never reduces HP, 90s cooldown). Beacon recall is strong when pushing: if abused add `obj.allyUses` (data change only). Portal `open` lets enemies exploit it by design; `gapMs` prevents ping-pong abuse. Echo excludes W and R; timebox excludes W and R.
+- Balance: Hira link plus Pager rollback are the strongest team tools; both are capped (shared damage never kills, rollback never reduces HP, 90s cooldown). Portal `open` lets enemies exploit it by design; `gapMs` prevents ping-pong abuse. Echo excludes W and R; timebox excludes W and R.
 - New players (Interns): every system has a readable tap fallback (quick-cast hold, default wall, auto ally); no kit requires a drag or perfect timing to be useful; Swipe's perfect reload is a bonus only.
 - Sync and performance: no schema change; objects with HP add at most 5 units per champion (max about 50 per match, under the 14 per team cap for live ones); fx-only objects are bounded by `MAX_OBJECTS_PER_TEAM`; history is 20 samples per champion; `kit:` tags change a few times per second per champion. Turret hitscan and portal checks run at `OBJ_TICK_MS` only.
 - Fairness: hidden pins revealed on trigger, drone vision capped at 7s, hold slows the caster so it is a visible commit, charge cancels on stun. Offline and online must match; the shared rules in section 4 plus `resolveSkill` are the single source.
