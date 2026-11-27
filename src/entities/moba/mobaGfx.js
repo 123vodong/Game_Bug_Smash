@@ -6,8 +6,6 @@ import { fxAllowed } from '../../core/FxPrefs.js';
 import { hatById } from '../../data/cosmetics.js';
 
 export const FONT = 'Arial Black, sans-serif';
-// Kenney Future Narrow (CC0, loaded by champUiKit.loadChampUiAssets) for short HUD labels; falls back to FONT.
-export const FONT_UI = "'Kenney Future Narrow', Arial Black, sans-serif";
 export const MONO = 'Consolas, monospace';
 
 export const NEUTRAL = 0xe0b84a;          // jungle monsters / epics

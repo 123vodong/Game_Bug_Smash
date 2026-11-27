@@ -9,6 +9,14 @@ import TeamModeScene from './scenes/TeamModeScene.js';
 import TeamSelectScene from './scenes/TeamSelectScene.js';
 import TeamCustomScene from './scenes/TeamCustomScene.js';
 
+// Three.js renderer opt-in (team/story only): ?renderer=3d or localStorage bs.renderer='3d'; ?renderer=2d forces classic.
+// When active, Phaser boots with no scenes (idle) and src/three/boot.js takes over. Absent flag = untouched 2D path.
+const _qs = new URLSearchParams(window.location.search);
+let _rend = _qs.get('renderer');
+if (!_rend) { try { _rend = localStorage.getItem('bs.renderer'); } catch (_) { /* no storage */ } }
+const _sc = _qs.get('scene');
+const use3d = _rend === '3d' && !_qs.get('room') && (!_sc || ['menu', 'team', 'story', 'hunt', 'arena'].includes(_sc));
+
 const config = {
   type: Phaser.AUTO,
   parent: 'game',
@@ -23,7 +31,7 @@ const config = {
     default: 'arcade',
     arcade: { gravity: { y: 1400 }, debug: false },
   },
-  scene: [MenuScene, HuntScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
+  scene: use3d ? [] : [MenuScene, HuntScene, MultiPlayScene, TeamLobbyScene, TeamCustomScene, TeamSelectScene, TeamModeScene],
 };
 
 const game = new Phaser.Game(config);
@@ -34,7 +42,11 @@ window.__game = game;
 //   ?scene=lobby                         → Team Mode champion select
 //   ?scene=team[&champ=pixel][&name=X][&offline=1] → straight into a Team Mode match
 const params = new URLSearchParams(window.location.search);
-const deepScene = params.get('scene');
+const deepScene = use3d ? null : params.get('scene');
+if (use3d) {
+  import('./three/boot.js').then((m) => m.bootThree({ scene: params.get('scene'), params }))
+    .catch((e) => console.error('[three] could not load 3D renderer', e));
+}
 // Custom-room invite link: ?room=<roomId> → straight to the rooms screen, joining that code (EP-11).
 const inviteRoom = params.get('room');
 if (inviteRoom && /^[A-Za-z0-9_-]{1,32}$/.test(inviteRoom) && !deepScene) {

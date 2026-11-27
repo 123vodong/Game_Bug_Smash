@@ -1,0 +1,97 @@
+/* ======================= LoL skin (v2), loaded after hud.css =======================
+   Overrides the older rules in hud.css (#bsh-root prefix beats .bsx-touch). --hs = HUD scale, set by hud.js fit() from the viewport.
+   Gold #c8aa6e frames, glass #0b1020 -> #1b2a49. */
+#bsh-root { --hs: 1; --gold: #c8aa6e; --glass: linear-gradient(180deg, rgba(27,42,73,.94), rgba(11,16,32,.96)); --sa-b: env(safe-area-inset-bottom, 0px); --sa-l: env(safe-area-inset-left, 0px); --sa-r: env(safe-area-inset-right, 0px); --sa-t: env(safe-area-inset-top, 0px); font-size: 14px; }
+/* overhead nameplates */
+.bsh-np-layer { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
+.bsh-np { position: absolute; left: 0; top: 0; will-change: transform; display: flex; align-items: flex-end; gap: 3px; font: 600 13px/1.1 "Segoe UI", system-ui, sans-serif; color: #fff; }
+.bsh-np.champ { --bc: #4fd16a; width: 142px; }
+.bsh-np.champ.me { --bc: #5fe07a; } .bsh-np.champ.foe { --bc: #e0483f; }
+.bsh-np .lv { flex: 0 0 22px; height: 22px; margin-bottom: 1px; border-radius: 50%; display: grid; place-items: center; font: 700 12px/1 Consolas, monospace; color: #fff; background: radial-gradient(circle, #1b2a49, #0b1020); border: 2px solid var(--gold); }
+.bsh-np.champ.foe .lv { border-color: #e0483f; } .bsh-np.champ.ally .lv { border-color: #39c2ff; }
+.bsh-np .col { width: 112px; display: flex; flex-direction: column; gap: 2px; }
+.bsh-np .nm { display: flex; justify-content: center; gap: 3px; white-space: nowrap; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; }
+.bsh-np .nt { max-width: 104px; overflow: hidden; text-overflow: ellipsis; }
+.bsh-np.champ.me .nt { color: #ffd870; } .bsh-np.champ.ally .nt { color: #8fdcff; } .bsh-np.champ.foe .nt { color: #ff8b84; }
+.bsh-np .hb { position: relative; height: 9px; background: rgba(0,0,0,.82); border: 1px solid #000; box-shadow: 0 0 0 1px rgba(200,170,110,.55); overflow: hidden; }
+.bsh-np .hb > i { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; background: linear-gradient(#7af08c, var(--bc)); }
+.bsh-np .hb > i.sh { background: linear-gradient(#fff, #aab4c4); width: 0; }
+.bsh-np .hb > u { position: absolute; inset: 0; --tk: 11px; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--tk) - 1px), rgba(0,0,0,.85) calc(var(--tk) - 1px), rgba(0,0,0,.85) var(--tk)); }
+.bsh-np .mb { height: 5px; background: rgba(0,0,0,.82); border: 1px solid #000; } .bsh-np .mb > i { display: block; height: 100%; width: 100%; background: linear-gradient(#6fb6ff, #2f6fd8); }
+.bsh-np .cs { position: relative; height: 11px; background: rgba(0,0,0,.85); border: 1px solid #39c2ff; } .bsh-np .cs > i { position: absolute; inset: 0 auto 0 0; background: #39c2ff; } .bsh-np .cs > b { position: absolute; inset: 0; text-align: center; font: 700 9px/11px Consolas, monospace; text-shadow: 0 0 2px #000; }
+.bsh-np .cc { display: flex; justify-content: center; gap: 2px; min-height: 0; }
+.bsh-np .chip { display: inline-flex; align-items: center; gap: 1px; padding: 0 3px; font-size: 12px; background: rgba(0,0,0,.75); border: 1px solid rgba(200,170,110,.6); border-radius: 3px; }
+.bsh-np .chip b { font: 700 10px Consolas, monospace; }
+.bsh-np.small { flex-direction: column; align-items: center; gap: 1px; }
+.bsh-np.small .hb { width: 44px; height: 5px; box-shadow: none; } .bsh-np.small.foe .hb > i { background: #e0483f; } .bsh-np.small.ally .hb > i { background: #39c2ff; } .bsh-np.small.neu .hb > i { background: #e0a838; }
+.bsh-np.small.big .hb { width: 84px; height: 9px; box-shadow: 0 0 0 1px rgba(200,170,110,.55); } .bsh-np.small.struct .hb { width: 100px; height: 11px; } .bsh-np.small.epic .hb { width: 150px; height: 13px; }
+.bsh-np.small .nt { font-size: 12px; white-space: nowrap; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; } .bsh-np.small.epic .nt { font-size: 16px; color: #ffd23f; letter-spacing: .5px; }
+
+/* top-center score bar */
+#bsh-root .bsh-top { top: calc(6px + var(--sa-t)); min-width: 280px; padding: 5px 16px 4px; background: var(--glass); border: 2px solid var(--gold); border-radius: 0 0 10px 10px; transform: translateX(-50%) scale(var(--hs)); transform-origin: 50% 0; }
+#bsh-root .bsh-kb, #bsh-root .bsh-kr { font-size: 20px; font-weight: 700; } #bsh-root .bsh-clock { font-size: 18px; font-weight: 700; color: var(--gold); }
+#bsh-root .bsh-epic { font-size: 13px; color: #e6ecf8; } #bsh-root .bsh-buff { font-size: 13px; }
+
+/* minimap bottom-right with frame */
+#bsh-root .bsh-mmbox { position: absolute; right: calc(8px + var(--sa-r)); bottom: calc(6px + var(--sa-b)); width: calc(160px * var(--hs)); height: calc(160px * var(--hs)); }
+#bsh-root .bsh-mmbox .bsh-mm { width: 100%; height: 100%; border: 3px solid var(--gold); border-radius: 6px; box-shadow: 0 0 0 2px #0b1020, 0 4px 14px #000a; }
+#bsh-root .bsh-left { left: calc(10px + var(--sa-l)); top: calc(8px + var(--sa-t) + 92px * var(--hs)); width: calc(220px * var(--hs)); }
+#bsh-root .bsh-target { left: calc(10px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: calc(230px * var(--hs)); background: var(--glass); border-color: var(--gold); font-size: 14px; }
+#bsh-root .bsh-target.enemy { border-color: #ff5e5e; }
+
+/* bottom panel */
+#bsh-root .bsh-panel { left: 50%; bottom: calc(6px + var(--sa-b)); width: 900px; height: 150px; max-width: none; padding: 8px 10px; grid-template-columns: 196px 1fr 188px; gap: 10px; background: var(--glass); border: 2px solid var(--gold); border-radius: 8px; transform: translateX(-50%) scale(var(--hs)); transform-origin: 50% 100%; box-shadow: 0 -2px 18px #0009, inset 0 0 0 1px #000; }
+.bsh-lcol { display: flex; gap: 8px; align-items: center; min-width: 0; }
+#bsh-root .bsh-who { flex: 0 0 82px; width: 82px; height: 82px; margin: 0; }
+#bsh-root .bsh-ring { -webkit-mask: radial-gradient(circle, transparent 35px, #000 36px); mask: radial-gradient(circle, transparent 35px, #000 36px); background: conic-gradient(var(--gold) calc(var(--p, 0) * 1%), rgba(0,0,0,.7) 0); }
+#bsh-root .bsh-face { inset: 6px; font-size: 34px; border-color: var(--gold); }
+#bsh-root .bsh-lv { right: -4px; bottom: -4px; min-width: 28px; font-size: 16px; background: #0b1020; border-color: var(--gold); }
+.bsh-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; font-size: 14px; flex: 1; min-width: 0; }
+.bsh-stats .st { display: flex; align-items: center; gap: 3px; white-space: nowrap; } .bsh-stats .i { font-size: 13px; } .bsh-stats b { font-size: 15px; color: #fff; font-weight: 700; }
+#bsh-root .bsh-mid { gap: 5px; justify-content: flex-end; }
+#bsh-root .bsh-slots { order: 0; gap: 8px; align-items: flex-end; margin: 0; }
+#bsh-root .bsh-slot { width: 60px; } #bsh-root .bsh-slot.sp { width: 44px; }
+#bsh-root .bsh-sbox { width: 60px; height: 60px; border: 2px solid var(--gold); border-radius: 8px; background: radial-gradient(circle at 50% 35%, #223a63, #0b1020); box-shadow: inset 0 0 0 2px var(--c, #3a4a66), 0 2px 6px #000a; font-size: 30px; }
+#bsh-root .bsh-slot.sp .bsh-sbox { width: 44px; height: 44px; font-size: 22px; border-radius: 6px; }
+#bsh-root .bsh-sbox .key { left: auto; right: 2px; top: 1px; padding: 0 4px; font-size: 13px; background: rgba(11,16,32,.88); border: 1px solid var(--gold); border-radius: 3px; line-height: 15px; }
+#bsh-root .bsh-sbox .mana { right: auto; left: 3px; bottom: 1px; font-size: 12px; }
+#bsh-root .bsh-sbox .cd { font-size: 21px; font-weight: 700; }
+#bsh-root .bsh-pips { height: 10px; margin-top: 2px; font-size: 7px; color: var(--gold); }
+#bsh-root .bsh-sub { height: 0; overflow: visible; position: absolute; left: 0; right: 0; top: -14px; font-size: 11px; }
+#bsh-root .bsh-up { top: -12px; left: auto; right: -6px; transform: none; width: 24px; height: 24px; line-height: 20px; font-size: 18px; background: radial-gradient(circle, #ffe9a8, #c8aa6e); border-color: #fff; box-shadow: 0 0 10px 2px #ffd870; animation: bsh-glow .8s infinite alternate; }
+@keyframes bsh-glow { from { box-shadow: 0 0 4px 1px #ffd870; } to { box-shadow: 0 0 14px 4px #ffd870; } }
+#bsh-root .bsh-bar { height: 22px; border: 2px solid #000; box-shadow: 0 0 0 1px var(--gold); background: rgba(0,0,0,.85); }
+#bsh-root .bsh-bar > i { background: linear-gradient(#7af08c, #3f9f3a); } #bsh-root .bsh-bar.mp > i { background: linear-gradient(#6fb6ff, #2f6fd8); } #bsh-root .bsh-bar > i.sh { background: linear-gradient(#fff, #aab4c4); }
+#bsh-root .bsh-bar > u { position: absolute; inset: 0; --tk: 20px; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--tk) - 1px), rgba(0,0,0,.7) calc(var(--tk) - 1px), rgba(0,0,0,.7) var(--tk)); }
+#bsh-root .bsh-bar > b { font-size: 14px; line-height: 18px; } #bsh-root .bsh-bar.mp { height: 16px; } #bsh-root .bsh-bar.mp > b { font-size: 12px; line-height: 12px; }
+#bsh-root .bsh-right { gap: 5px; }
+#bsh-root .bsh-gold-t { order: 0; font-size: 20px; } #bsh-root .bsh-items { order: 1; grid-template-columns: repeat(3, 1fr); gap: 4px; } #bsh-root .bsh-kda { order: 2; font-size: 14px; font-weight: 600; white-space: nowrap; }
+#bsh-root .bsh-item { position: relative; height: 36px; font-size: 22px; background: radial-gradient(circle at 50% 30%, #223a63, #0b1020); border: 1px solid #4a4030; border-radius: 5px; } #bsh-root .bsh-item.on { border-color: var(--gold); }
+#bsh-root .bsh-item::after { content: attr(data-k); position: absolute; left: 2px; top: 0; font: 700 10px Consolas, monospace; color: #cbd5e6; }
+
+/* things stacked above the panel (offsets scale with --hs) */
+#bsh-root .bsh-ccrow { bottom: calc(162px * var(--hs) + var(--sa-b)); } #bsh-root .bsh-kit { bottom: calc(214px * var(--hs) + var(--sa-b)); font-size: 13px; }
+#bsh-root .bsh-recall { bottom: calc(188px * var(--hs) + var(--sa-b)); font-size: 14px; } #bsh-root .bsh-hidepill { bottom: calc(162px * var(--hs) + var(--sa-b)); font-size: 14px; }
+#bsh-root .bsh-toasts { bottom: calc(230px * var(--hs) + var(--sa-b)); } #bsh-root .bsh-toasts > div { font-size: 16px; }
+#bsh-root .bsx-acts { right: calc(8px + var(--sa-r)); bottom: calc(194px * var(--hs) + var(--sa-b)); }
+#bsh-root .bsh-chat { left: calc(12px + var(--sa-l)); bottom: calc(164px * var(--hs) + var(--sa-b)); width: min(340px, 26vw); }
+#bsh-root .bsh-feed { top: calc(10px + var(--sa-t)); }
+#bsh-root .bsh-banner { top: 15%; }
+#bsh-root .bsx-sbx { top: calc(60px + var(--sa-t)); right: calc(8px + var(--sa-r)); }
+#bsh-root .bsh-death { inset: 0; top: 0; transform: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(5,8,16,.35); -webkit-backdrop-filter: grayscale(1) brightness(.8); backdrop-filter: grayscale(1) brightness(.8); }
+#bsh-root .bsh-death .dt { font-size: 26px; } #bsh-root .bsh-death .dc { font-size: 40px; } #bsh-root .bsh-death .dh { font-size: 15px; }
+
+/* compact (touch / narrow): the virtual pad owns the ability buttons, so the bar keeps portrait + HP/MP + gold/KDA */
+#bsh-root.bsh-compact .bsh-panel { width: 470px; height: 104px; grid-template-columns: 86px 1fr 120px; gap: 8px; padding: 6px 8px; }
+#bsh-root.bsh-compact .bsh-stats, #bsh-root.bsh-compact .bsh-slots, #bsh-root.bsh-compact .bsh-items { display: none; }
+#bsh-root.bsh-compact .bsh-mid, #bsh-root.bsh-compact .bsh-right { justify-content: center; }
+#bsh-root.bsh-compact .bsh-who { flex-basis: 76px; width: 76px; height: 76px; }
+#bsh-root.bsh-compact .bsh-mmbox { right: auto; bottom: auto; left: calc(8px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: calc(120px * var(--hs)); height: calc(120px * var(--hs)); }
+#bsh-root.bsh-compact .bsh-left { left: calc(8px + var(--sa-l)); top: calc(16px + var(--sa-t) + 120px * var(--hs)); width: calc(150px * var(--hs)); }
+#bsh-root.bsh-compact .bsh-target { left: calc(136px * var(--hs) + 12px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: calc(200px * var(--hs)); }
+#bsh-root.bsh-compact .bsx-acts { bottom: calc(112px * var(--hs) + var(--sa-b)); right: auto; left: calc(180px * var(--hs)); justify-content: flex-start; }
+#bsh-root.bsh-compact .bsh-chat { bottom: calc(180px + var(--sa-b)); width: 30vw; }
+#bsh-root.bsh-compact .bsh-ccrow { bottom: calc(112px * var(--hs) + var(--sa-b)); } #bsh-root.bsh-compact .bsh-kit { bottom: calc(150px * var(--hs) + var(--sa-b)); }
+#bsh-root.bsh-compact .bsh-toasts { bottom: calc(140px * var(--hs) + var(--sa-b)); } #bsh-root.bsh-compact .bsh-recall { bottom: calc(130px * var(--hs) + var(--sa-b)); }
+#bsh-root.bsh-compact .bsh-top { min-width: 0; padding: 3px 10px; } #bsh-root.bsh-compact .bsx-sbx { top: calc(56px + var(--sa-t)); }
+#bsh-root.bsh-compact .bsh-np.champ { font-size: 12px; }

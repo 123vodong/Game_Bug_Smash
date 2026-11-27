@@ -72,11 +72,11 @@ export const FOUNTAIN_LASER_DPS = 1200;     // lethal true damage/s to ENEMY cha
 export const SHOP_ONLY_IN_FOUNTAIN = true;  // or while dead
 export const INVENTORY_SLOTS = 6;
 // Pass 2 RP-07: selling (same place rules as buying — in your fountain or while dead).
-export const SELL_REFUND_PCT = 0.7;         // 70 % of the cost back …
-export const SELL_UNDO_MS = 10000;          // … or 100 % within 10 s of buying it ("undo")
+export const SELL_REFUND_PCT = 0.75;        // every item loses 25 % when sold (no free undo window)
+export const SELL_UNDO_MS = 0;              // kept for importers; 0 = the old 100 % undo is removed
 export function sellValue(cost, boughtAt, now) {
   if (!(cost > 0)) return 0;
-  return boughtAt && now - boughtAt <= SELL_UNDO_MS ? cost : Math.floor(cost * SELL_REFUND_PCT);
+  return Math.floor(cost * SELL_REFUND_PCT);
 }
 
 // ── Combat ──

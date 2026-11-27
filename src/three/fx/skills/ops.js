@@ -1,0 +1,8 @@
+// Ops: terminal prompt cursors ('>_') and blue/green deploy rings.
+const C = 0xffd23f;
+export default {
+  q: { land(k, m, x, y) { k.pings(x, y, m.r || 200, C, 2); k.cursor(x, y, C, 70); } }, // Health Check
+  w: { cast(k, m) { const p = k.me(m); k.cursor(p.x, p.y, C, 50); if (Number.isFinite(m.x1)) k.cursor(m.x1, m.y1, 0x39ff9a, 50); } }, // Hotfix Tether
+  e: { cast(k, m) { if (Number.isFinite(m.x0)) k.cursor(m.x0, m.y0, C, 50); if (Number.isFinite(m.x1)) { k.cursor(m.x1, m.y1, 0x39ff9a, 50); k.chev(m.x0, m.y0, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), C, 3, 80, 50); } } }, // Hot Swap
+  r: { cast(k, m) { const p = k.me(m), R = m.r || 800; k.ring(p.x, p.y, R, 0x39c2ff, 0.7); k.ring(p.x, p.y, R * 0.88, 0x39ff9a, 0.7, 0.18); k.cursor(p.x, p.y, C, 90, 1.0); } }, // Blue-Green Deploy
+};

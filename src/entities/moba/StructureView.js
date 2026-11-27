@@ -25,7 +25,6 @@ export class StructureView {
     const isCore = this.kind === 'core';
     const col = teamColor(s.team);
     this.height = isCore ? 190 : 140;
-    this._smokeAt = 0;
     this.hitRadius = isCore ? 125 : 78;
 
     const c = scene.add.container(s.x, s.y).setDepth(depthAt(s.y));
@@ -134,12 +133,6 @@ export class StructureView {
       const g = 0.34 + 0.16 * Math.sin((now + this._phase) / 260);
       this.crystalGlow.setAlpha(g);
     }
-    // damage states: scorched body below 60% / 30% hp, smoke puffs when badly hurt
-    const hpk = this.hp / this.maxHp;
-    if (hpk < 0.35 && now > this._smokeAt && this.scene.fx?.part && !this.scene._lowFx) {
-      this._smokeAt = now + 520;
-      this.scene.fx.part(this.x + (Math.random() - 0.5) * 50, this.y - this.height * 0.55, { tex: 'vfx-smoke_04', tint: 0x555555, vy: -40, vx: 8, s0: 30, s1: 90, a0: 0.5, life: 1.1, depth: this.c.depth + 0.1 });
-    }
     if (this.laserG) {
       if (this.targetPos && this.alive) {
         this.laserG.clear();
@@ -181,10 +174,6 @@ export class StructureView {
   _applyHp() {
     const p = Math.max(0, Math.min(1, this.hp / this.maxHp));
     this.hpFill.width = this.barW * p;
-    if (this.alive && this.body?.setTint) { // damage state tint
-      this._baseTint = p < 0.3 ? 0x9c8a84 : p < 0.6 ? 0xd2c6c0 : null;
-      if (this._baseTint != null) this.body.setTint(this._baseTint); else this.body.clearTint();
-    }
     if (this.hpText) this.hpText.setText(`${Math.max(0, Math.round(this.hp))} / ${Math.round(this.maxHp)}`);
   }
 

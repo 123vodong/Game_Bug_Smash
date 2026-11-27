@@ -95,7 +95,7 @@ A.send('sell', { slot: 99 }); A.send('sell', { slot: -1 }); A.send('sell', { slo
 await sleep(300);
 check('sell: junk slots are ignored', champ().gold === g0, `gold=${champ().gold}`);
 const { sellValue, SELL_UNDO_MS } = await import('../../shared/moba/rules.js');
-check('sell: 70 % after the undo window', sellValue(1000, 1, 2 + SELL_UNDO_MS) === 700 && sellValue(1000, 1, 100) === 1000);
+check('sell: always 75 % (25 % loss, no undo)', sellValue(1000, 1, 2 + SELL_UNDO_MS) === 750 && sellValue(1000, 1, 100) === 750);
 A.send('buy', { item: 'chair' });           // bought at home …
 await sleep(250);
 A.send('debug', { cmd: 'tp', x: champ().team === 'blue' ? 1500 : 4500, y: champ().team === 'blue' ? 4500 : 1500 });
