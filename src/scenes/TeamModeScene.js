@@ -54,7 +54,7 @@ import { ChampionView } from '../entities/moba/ChampionView.js';
 import { UnitView } from '../entities/moba/UnitView.js';
 import { StructureView } from '../entities/moba/StructureView.js';
 import { MobaFx } from '../entities/moba/MobaFx.js';
-import { castFx, styleFor, VFX_NAMES, loadFb } from '../entities/moba/SkillFx.js';
+import { castFx, styleFor, VFX_NAMES, loadFb, loadIcons } from '../entities/moba/SkillFx.js';
 import { MobaHud } from '../entities/moba/MobaHud.js';
 import { OfflineSim } from '../entities/moba/OfflineSim.js';
 import { FallbackShopPanel, FallbackScoreboard, FallbackEndScreen } from '../entities/moba/Fallbacks.js';
@@ -154,6 +154,7 @@ export default class TeamModeScene extends Phaser.Scene {
     let lowPref = false;
     try { lowPref = (new URLSearchParams(window.location.search).get('fx') || window.localStorage?.getItem(FX_PREF_KEY)) === 'low'; } catch (_) { /* storage blocked */ }
     if (!lowPref) loadFb(this);
+    loadIcons(this); // Kenney game icons used as glyph art by SkillFx (replaces emoji)
   }
 
   /** The skill spec a cast `fx` message belongs to (needs sid + slot), or null. */

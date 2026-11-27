@@ -225,18 +225,25 @@ export class SkillEngine {
 
   /** v5 `swap`: trade places with the allied champion nearest the aim within `range`. */
   _swap(ch, slot, spec, aim, now) {
-    let ally = null, best = 220; // the ally must be within 220 px of the aim point
-    for (const a of this.room.champs.values()) {
-      if (a === ch || a.dead || a.team !== ch.team) continue;
-      if (Math.hypot(a.x - ch.x, a.y - ch.y) > (spec.range || 600) + 40) continue;
-      const d = Math.hypot(a.x - aim.x, a.y - aim.y);
-      if (d <= best) { best = d; ally = a; }
+    if (now < ch.rootedUntil) return false; // displacement skills fail while rooted (same rule as blink / dash)
+    const reach = (spec.range || 600) + 40;
+    const okAlly = (a) => a && a !== ch && !a.dead && a.team === ch.team && Math.hypot(a.x - ch.x, a.y - ch.y) <= reach;
+    let ally = aim.id ? this.room.champs.get(aim.id) : null; // the client-chosen ally (targets:'ally') wins
+    if (!okAlly(ally)) {
+      ally = null;
+      let best = 220; // otherwise the ally must be within 220 px of the aim point
+      for (const a of this.room.champs.values()) {
+        if (!okAlly(a)) continue;
+        const d = Math.hypot(a.x - aim.x, a.y - aim.y);
+        if (d <= best) { best = d; ally = a; }
+      }
     }
     if (!ally) return false;
     const until = now + (spec.duration || 0);
     const ax = ally.x, ay = ally.y, cx = ch.x, cy = ch.y;
     this.room._teleport(ch, ax, ay);
     this.room._teleport(ally, cx, cy);
+    if ((ally.suppressUntil || 0) > now) this.room.cc.breakOn(ally, 'teleport', now); // moving a suppressed ally frees it
     this.room._fx({ k: 'blink', sid: ch.id, slot, x0: round(cx), y0: round(cy), x1: round(ax), y1: round(ay) }); // one fx links both ends
     const sh = spec.shield ? this.amount(ch, spec.shield) : 0;
     for (const who of [ch, ally]) {

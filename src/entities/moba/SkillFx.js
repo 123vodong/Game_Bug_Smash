@@ -27,6 +27,30 @@ export const VFX_NAMES = [
   'trace_07', 'twirl_01', 'twirl_02', 'twirl_03', 'window_01', 'window_03', 'window_04',
 ];
 
+/** Kenney Game Icons (CC0, white, tintable) used as glyph art: assets/moba/ico/<name>.png → texture `ico-<name>`. */
+export const ICON_NAMES = ['stop', 'audioOff', 'warning', 'star', 'right', 'rewind', 'locked', 'unlocked', 'export', 'menuList', 'return',
+  'share2', 'multiplayer', 'leaderboardsSimple', 'contrast', 'fastForward', 'wrench', 'tablet', 'target', 'left', 'signal3', 'siganl1', 'plus'];
+export function loadIcons(scene) {
+  for (const n of ICON_NAMES) if (!scene.textures.exists(`ico-${n}`)) scene.load.image(`ico-${n}`, `assets/moba/ico/${n}.png`);
+}
+/** Emoji used by gl() → sprite art (ico = game icon, vfx = Kenney particle sprite); `tint` colours it, `k` scales it. */
+const GLYPH_ART = {
+  '📶': { ico: 'signal3', tint: 0xff7a7a }, '🛑': { ico: 'stop', tint: 0xd63031, k: 1.6 }, '🔇': { ico: 'audioOff', tint: 0xffe0e0 },
+  '⚠️': { ico: 'warning', tint: 0xffd23f }, '⭐': { ico: 'star', tint: 0xffd23f }, '⏪': { ico: 'rewind', tint: 0xcfe3ff },
+  '🔒': { ico: 'locked', tint: 0xcfe3ff }, '🔓': { ico: 'unlocked', tint: 0xcfe3ff }, '📤': { ico: 'export', tint: 0xcfe3ff },
+  '📋': { ico: 'menuList', tint: 0xcfe3ff }, '📄': { ico: 'menuList', tint: 0xffffff }, '🔁': { ico: 'return', tint: 0x7ec8ff },
+  '🔄': { ico: 'return', tint: 0x7ed957 }, '🔀': { ico: 'share2', tint: 0x91a7ff }, '🤝': { ico: 'multiplayer', tint: 0xf7a072 },
+  '📉': { ico: 'leaderboardsSimple', tint: 0xff9d4d }, '🌙': { ico: 'contrast', tint: 0xb6a8ff }, '🚀': { ico: 'fastForward', tint: 0xff9a3a },
+  '🔨': { ico: 'wrench', tint: 0xcfd8dc }, '💻': { ico: 'tablet', tint: 0x7ec8ff }, '📌': { ico: 'target', tint: 0xffc94d },
+  '👈': { ico: 'left', tint: 0xff7fc0 }, '📣': { ico: 'siganl1', tint: 0xff6b6b }, '🩹': { ico: 'plus', tint: 0xff9db0 },
+  '📦': { vfx: 'window_01', tint: 0xc8a165 }, '☕': { vfx: 'smoke_07', tint: 0xc8864a }, '🪣': { vfx: 'circle_01', tint: 0x7ec8ff },
+  '🧹': { vfx: 'slash_01', tint: 0xe3c88e }, '😴': { vfx: 'smoke_07', tint: 0x9b7bd4 }, '❄': { vfx: 'star_08', tint: 0xbff4ff },
+  '🕸': { vfx: 'scratch_01', tint: 0xffffff }, '⏳': { vfx: 'twirl_01', tint: 0x6cffd6 }, '🔥': { vfx: 'flame_05', tint: 0xff9800 },
+  '🚩': { vfx: 'trace_03', tint: 0xffb300 }, '🎉': { vfx: 'star_06', tint: 0xffd23f }, '🎈': { vfx: 'circle_01', tint: 0xff7fc0 },
+  '✨': { vfx: 'star_04', tint: 0xffffff }, '🍜': { vfx: 'smoke_04', tint: 0xffc04d }, '✏️': { vfx: 'scratch_01', tint: 0xff7675 },
+  '⚔️': { vfx: 'slash_02', tint: 0xffffff }, '💧': { vfx: 'circle_05', tint: 0x7ec8ff }, '🍒': { vfx: 'circle_05', tint: 0xd64545 },
+};
+
 // ───────────────────────── primitives ─────────────────────────
 /** A tweened one-shot sprite. size/size1 in px, spin in radians over the life, sx/sy stretch. */
 // V5: one-shot sprites / flipbooks are capped (f._live), so a team fight cannot grow the display list without bound.
@@ -50,6 +74,22 @@ function sp(f, name, x, y, o = {}) {
 /** A tweened emoji / text glyph. */
 function gl(f, str, x, y, o = {}) {
   const s = f.scene;
+  const art = GLYPH_ART[str];
+  if (art) { // emoji are drawn as sprites (same look on every OS, no emoji fonts): Kenney icon or particle sprite
+    const key = art.ico ? `ico-${art.ico}` : K(art.vfx);
+    if (s.textures.exists(key)) {
+      const img = s.add.image(x, y, key).setDepth(o.depth ?? D.fxTop).setAlpha(0).setRotation(o.rot || 0)
+        .setTint(art.tint ?? 0xffffff).setBlendMode(art.ico ? 0 : 1);
+      const base = ((o.size || 26) * (art.k || 1.5)) / img.width;
+      img.setScale(base * (o.s0 ?? 1));
+      s.tweens.add({
+        targets: img, delay: o.delay || 0, duration: o.life || 700, ease: o.ease || 'Sine.easeOut',
+        x: x + (o.dx || 0), y: y + (o.dy || 0), scale: base * (o.s1 ?? 1), rotation: (o.rot || 0) + (o.spin || 0),
+        alpha: { from: o.a0 ?? 1, to: o.a1 ?? 0 }, onStart: () => img.setAlpha(o.a0 ?? 1), onComplete: () => img.destroy(),
+      });
+      return img;
+    }
+  }
   const t = s.add.text(x, y, str, {
     fontFamily: 'Arial, sans-serif', fontSize: `${o.size || 26}px`, color: o.color || '#ffffff',
     stroke: o.stroke || '#000000', strokeThickness: o.thick ?? 3, fontStyle: o.bold ? 'bold' : 'normal',
