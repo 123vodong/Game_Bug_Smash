@@ -1126,10 +1126,19 @@ export const LIVE = {
     const fires = f.low ? [] : [A, B].map((P) => loopFb(f, 'vfPixelFire', P.x, P.y - 10, { size: th * 3, depth: D.ground + 0.75, tint: col })).filter(Boolean);
     for (const fr of fires) e.add(fr);
     let sparkAcc = 0;
+    const band = e.gfx(D.ground + 0.55, true), nx = -Math.sin(a), ny = Math.cos(a), hw = th * 0.85; // readable laser: a lit lane with bright edges and core
     e.upd = (dt) => {
       e.flash = Math.max(0, e.flash - dt * 3);
       const hot = e.flash > 0.25 ? 0xff4fa3 : col; // pink flash on every hit
       line.setTint(hot); post1.setTint(hot); post2.setTint(hot);
+      const bk = e.vis * (0.75 + 0.25 * Math.sin(e.t / 70));
+      band.clear();
+      band.fillStyle(hot, Math.min(0.5, 0.22 * bk + e.flash * 0.25));
+      band.beginPath(); band.moveTo(A.x + nx * hw, A.y + ny * hw); band.lineTo(B.x + nx * hw, B.y + ny * hw); band.lineTo(B.x - nx * hw, B.y - ny * hw); band.lineTo(A.x - nx * hw, A.y - ny * hw); band.closePath(); band.fillPath();
+      band.lineStyle(3, hot, Math.min(1, 0.9 * bk));
+      band.lineBetween(A.x + nx * hw, A.y + ny * hw, B.x + nx * hw, B.y + ny * hw); band.lineBetween(A.x - nx * hw, A.y - ny * hw, B.x - nx * hw, B.y - ny * hw);
+      band.lineStyle(6, 0xffffff, Math.min(1, 0.9 * bk)); band.lineBetween(A.x, A.y, B.x, B.y);
+      band.lineStyle(3, hot, Math.min(1, bk)); band.strokeCircle(A.x, A.y, hw * 0.9); band.strokeCircle(B.x, B.y, hw * 0.9);
       for (const fr of fires) fr.setAlpha(0.8 * e.vis);
       const fl = 0.7 + 0.3 * Math.sin(e.t / 38) * Math.cos(e.t / 91), k = e.vis * (fl + e.flash * 0.6);
       line.setDisplaySize(th * (1.2 + e.flash), len).setAlpha(Math.min(1, 0.75 * k));
@@ -1435,8 +1444,15 @@ LIVE.barrier = function barrier(f, m, e) {
     if (!f.low) e.add(s); else s.setPosition(px, py - th * 0.5);
     node.push({ s, k: Math.abs(d) / (len / 2) });
   }
+  const lane = e.gfx(D.ground + 0.52, true), nx = -Math.sin(a), ny = Math.cos(a), hw = th * 0.9; // a lit green lane so the solid wall reads at a glance
   e.upd = () => {
     base.setDisplaySize(len + 40, th * 1.6).setAlpha(0.8 * e.vis);
+    lane.clear();
+    const lk = e.vis * (0.7 + 0.3 * Math.sin(e.t / 140));
+    lane.fillStyle(col, 0.2 * lk);
+    lane.beginPath(); lane.moveTo(A.x + nx * hw, A.y + ny * hw); lane.lineTo(B.x + nx * hw, B.y + ny * hw); lane.lineTo(B.x - nx * hw, B.y - ny * hw); lane.lineTo(A.x - nx * hw, A.y - ny * hw); lane.closePath(); lane.fillPath();
+    lane.lineStyle(4, col, 0.95 * lk); lane.lineBetween(A.x + nx * hw, A.y + ny * hw, B.x + nx * hw, B.y + ny * hw); lane.lineBetween(A.x - nx * hw, A.y - ny * hw, B.x - nx * hw, B.y - ny * hw);
+    lane.lineStyle(3, 0xffffff, 0.6 * lk); lane.lineBetween(A.x, A.y, B.x, B.y);
     for (const o of node) {
       const g = clamp((e.t - o.k * 250) / 100, 0, 1), sz = th * 3 * g;
       if (f.low) o.s.setDisplaySize(th * 0.5, th * 2.4 * g).setAlpha(0.8 * e.vis); else o.s.setDisplaySize(sz, sz).setAlpha(0.9 * g * e.vis);

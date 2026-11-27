@@ -150,9 +150,9 @@ export const CHAMPIONS = {
     growth: { hp: 86,  mana: 42,  ad: 3,  armor: 3.4, mr: 1.2, as: 0.01 },
     skills: {
       q: { name: 'Laser Fence', icon: '📏', type: 'place', input: 'drag', mana: 60, cd: 9, color: 0x39c2ff,
-           range: 700, obj: { kind: 'wall', len: 520, thick: 36, ms: 4000, maxActive: 1, rehitMs: 700 },
+           range: 700, obj: { kind: 'wall', len: 520, thick: 46, ms: 4000, maxActive: 1, rehitMs: 700 },
            dmg: { base: 50, perLevel: 11, ap: 0.45 }, slow: { pct: 0.3, ms: 800 }, mark: { tag: 'glitch', ms: 5000, max: 1 }, bot: 'opener',
-           desc: 'Drag to draw a laser fence (max 520 px, 4s). Enemies crossing it take damage, slow and a Glitch mark.' },
+           desc: 'Press Q at the start point, drag toward the other end and release: a laser fence (max 520 px) stands for 4s. Enemies crossing it take damage, slow and a Glitch mark.' },
       w: { name: 'Flexbox Orbs', icon: '⚡', type: 'target', mana: 55, cd: 9, color: 0x7ec8ff,
            range: 620, targets: 'enemy', chain: { bounces: 2, range: 360, decay: 0.8 }, dmg: { base: 70, perLevel: 16, ap: 0.55 },
            detonate: { tag: 'glitch', pctPerStack: 0.3 },

@@ -394,7 +394,7 @@ Bots still cast generically. Rules: `classifySkill` gains flags `hold, drag, pla
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Visual style | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :---: | :--- |
-| **Q** | Laser Fence | `place` | 60 | 9s | Input: drag, Dmg: 50 +11/lv +45% AP, Range 700, Slow 30% | `laserFence` | Drag to draw a laser fence (max 520 px, 4s). Enemies crossing it take damage, slow and a Glitch mark. |
+| **Q** | Laser Fence | `place` | 60 | 9s | Input: drag, Dmg: 50 +11/lv +45% AP, Range 700, Slow 30% | `laserFence` | Press Q at the start point, drag toward the other end and release: a laser fence (max 520 px) stands for 4s. Enemies crossing it take damage, slow and a Glitch mark. |
 | **W** | Flexbox Orbs | `target` | 55 | 9s | Dmg: 70 +16/lv +55% AP, Range 620 | `pixelOrb` | Zaps an enemy and chains to 2 nearby targets. Glitch-marked targets take +30% true damage. |
 | **E** | Ctrl+Z | `rewind` | 50 | 16s | N/A | `rewind` | Rewinds your position to where you stood 3s ago and cleanses stun, root and slow. |
 | **R** | Framework Rewrite | `line` | 100 | 70s | Dmg: 270 +32/lv +95% AP, Range 1050, Delay 700ms | `pixelWipe` | Marks a long lane; after 0.7s a rewrite wipes everything in it for massive damage. Glitch-marked champions take +25% true damage. |

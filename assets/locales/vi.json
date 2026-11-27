@@ -110,7 +110,7 @@
   "custom.refresh": "\u27f3 L\u00c0M M\u1edaI",
   "custom.code": "\ud83d\udd11 V\u00c0O B\u1eb0NG M\u00c3",
   "custom.create": "\uff0b T\u1ea0O PH\u00d2NG",
-  "skill.pixel.q": "K\u00e9o \u0111\u1ec3 v\u1ebd h\u00e0ng r\u00e0o laser (t\u1ed1i \u0111a 520 px, 4s). K\u1ebb \u0111\u1ecbch \u0111i qua b\u1ecb s\u00e1t th\u01b0\u01a1ng, l\u00e0m ch\u1eadm v\u00e0 d\u00ednh d\u1ea5u Glitch.",
+  "skill.pixel.q": "Nh\u1ea5n Q t\u1ea1i \u0111i\u1ec3m b\u1eaft \u0111\u1ea7u, k\u00e9o v\u1ec1 \u0111\u1ea7u kia r\u1ed3i th\u1ea3: h\u00e0ng r\u00e0o laser (t\u1ed1i \u0111a 520 px) \u0111\u1ee9ng y\u00ean 4s. K\u1ebb \u0111\u1ecbch \u0111i qua b\u1ecb s\u00e1t th\u01b0\u01a1ng, l\u00e0m ch\u1eadm v\u00e0 d\u00ednh d\u1ea5u Glitch.",
   "skill.pixel.w": "Gi\u1eadt \u0111i\u1ec7n m\u1ed9t k\u1ebb \u0111\u1ecbch v\u00e0 lan sang 2 m\u1ee5c ti\u00eau g\u1ea7n \u0111\u00f3. M\u1ee5c ti\u00eau c\u00f3 d\u1ea5u Glitch ch\u1ecbu th\u00eam 30% s\u00e1t th\u01b0\u01a1ng chu\u1ea9n.",
   "skill.pixel.e": "Tua v\u1ecb tr\u00ed c\u1ee7a b\u1ea1n v\u1ec1 ch\u1ed7 \u0111\u1ee9ng 3s tr\u01b0\u1edbc v\u00e0 gi\u1ea3i tr\u1eeb cho\u00e1ng, tr\u00f3i, l\u00e0m ch\u1eadm.",
   "skill.pixel.r": "\u0110\u00e1nh d\u1ea5u m\u1ed9t l\u00e0n d\u00e0i; sau 0.7s b\u1ea3n vi\u1ebft l\u1ea1i qu\u00e9t s\u1ea1ch m\u1ecdi th\u1ee9 trong \u0111\u00f3 v\u1edbi s\u00e1t th\u01b0\u01a1ng c\u1ef1c l\u1edbn. T\u01b0\u1edbng c\u00f3 d\u1ea5u Glitch ch\u1ecbu th\u00eam 25% s\u00e1t th\u01b0\u01a1ng chu\u1ea9n.",
@@ -281,5 +281,7 @@
   "skill.barista.r.milk": "Latte Art: h\u1ed3i m\u00e1u v\u00e0 t\u1ea1o l\u00e1 ch\u1eafn cho \u0111\u1ed3ng minh trong 650 px.",
   "skill.barista.r.syrup": "Sugar Rush: t\u0103ng 35% t\u1ed1c ch\u1ea1y v\u00e0 35% t\u1ed1c \u0111\u00e1nh cho \u0111\u1ed3ng minh trong 650 px trong 4s.",
   "skill.barista.r.mocha": "Mocha Break: v\u00f9ng mocha 4s h\u1ed3i m\u00e1u \u0111\u1ed3ng minh b\u00ean trong, l\u00e0m b\u1ecfng v\u00e0 l\u00e0m ch\u1eadm k\u1ebb \u0111\u1ecbch.",
-  "skill.barista.r.plain": "Plain Drip: v\u00e0i gi\u1ecdt y\u1ebfu \u1edbt g\u00e2y \u00edt s\u00e1t th\u01b0\u01a1ng v\u00e0 l\u00e0m ch\u1eadm 30% trong 1s."
+  "skill.barista.r.plain": "Plain Drip: v\u00e0i gi\u1ecdt y\u1ebfu \u1edbt g\u00e2y \u00edt s\u00e1t th\u01b0\u01a1ng v\u00e0 l\u00e0m ch\u1eadm 30% trong 1s.",
+  "kit.dragHint": "Nh\u1ea5n Q t\u1ea1i \u0111i\u1ec3m b\u1eaft \u0111\u1ea7u, k\u00e9o r\u1ed3i th\u1ea3 \u0111\u1ec3 \u0111\u1eb7t",
+  "kit.dragRelease": "Th\u1ea3 \u0111\u1ec3 \u0111\u1eb7t"
 }
