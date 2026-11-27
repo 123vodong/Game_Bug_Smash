@@ -54,6 +54,7 @@ import { ChampionView } from '../entities/moba/ChampionView.js';
 import { UnitView } from '../entities/moba/UnitView.js';
 import { StructureView } from '../entities/moba/StructureView.js';
 import { MobaFx } from '../entities/moba/MobaFx.js';
+import { castFx, styleFor, VFX_NAMES, loadFb } from '../entities/moba/SkillFx.js';
 import { MobaHud } from '../entities/moba/MobaHud.js';
 import { OfflineSim } from '../entities/moba/OfflineSim.js';
 import { FallbackShopPanel, FallbackScoreboard, FallbackEndScreen } from '../entities/moba/Fallbacks.js';
@@ -144,6 +145,15 @@ export default class TeamModeScene extends Phaser.Scene {
       ['moba-prop-crystal', 'crystal.png'], ['moba-prop-beacon', 'beacon.png'],
     ];
     for (const [k, f] of MOBA_ASSETS) if (!this.textures.exists(k)) this.load.image(k, `assets/moba/${f}`);
+    // v5 skill VFX sprites (Kenney Particle Pack, CC0) — see SkillFx.js
+    for (const n of VFX_NAMES) if (!this.textures.exists(`vfx-${n}`)) this.load.image(`vfx-${n}`, `assets/moba/vfx/${n}.png`);
+    loadFb(this); // animated flipbooks (RPG VFX Pack)
+  }
+
+  /** The skill spec a cast `fx` message belongs to (needs sid + slot), or null. */
+  _skillOf(m) {
+    const c = m && m.sid && m.slot ? this._state()?.champions?.get?.(m.sid) : null;
+    return c ? CHAMPIONS[c.champ]?.skills?.[m.slot] || null : null;
   }
 
   create() {
@@ -778,40 +788,67 @@ export default class TeamModeScene extends Phaser.Scene {
         if (![m.x, m.y, m.dx, m.dy].every(Number.isFinite)) return;
         const c = this._state()?.champions?.get?.(m.sid);
         const sk = c ? CHAMPIONS[c.champ]?.skills?.[m.slot] : null;
-        this.fx.skillshot(m, !!sk?.pierce, c ? projectileTex(this, c.champ, m.slot) : null);
-        this.fx.burstTex?.(m.x, m.y, 'moba-vfx-slash', 88, Number.isFinite(m.color) ? m.color : 0x39c2ff, 260, 100);
+        const pst = styleFor(sk, 'proj');
+        this.fx.skillshot(m, !!sk?.pierce, c ? projectileTex(this, c.champ, m.slot) : null, pst);
+        if (!pst) this.fx.burstTex?.(m.x, m.y, 'moba-vfx-slash', 88, Number.isFinite(m.color) ? m.color : 0x39c2ff, 260, 100);
+        else castFx(this.fx, 'proj', pst, { x: m.x, y: m.y, dx: m.dx, dy: m.dy, color: m.color });
         if (m.sid === this.localId) this._myCastAt = this.time.now;
         break;
       }
       case 'circle':
         if (Number.isFinite(m.x) && Number.isFinite(m.y)) {
+          const cst = styleFor(this._skillOf(m), 'circle');
+          if (cst && castFx(this.fx, 'circle', cst, { x: m.x, y: m.y, r: m.r, delay: m.delay || 0, color: m.color })) {
+            this.fx.telegraph(m, true); // thin warning ring only; the style draws the windup + impact
+            break;
+          }
           this.fx.telegraph(m);
           this.fx.burstTex?.(m.x, m.y, 'moba-vfx-magic', Math.max(104, (m.r || 80) * 2), Number.isFinite(m.color) ? m.color : 0xffd23f, 460, 90);
         }
         break;
-      case 'dash':
-        this.fx.dash(m);
-        if (Number.isFinite(m.x0) && Number.isFinite(m.y0)) this.fx.burstTex?.(m.x0, m.y0, 'moba-vfx-flare', 100, 0x39ff14, 300, 45);
+      case 'tgt': {
+        const tst = styleFor(this._skillOf(m), 'tgt');
+        if (tst) castFx(this.fx, 'tgt', tst, m);
+        break;
+      }
+      case 'dash': {
+        const dst = styleFor(this._skillOf(m), 'dash');
+        if (!(dst && castFx(this.fx, 'dash', dst, m))) {
+          this.fx.dash(m);
+          if (Number.isFinite(m.x0) && Number.isFinite(m.y0)) this.fx.burstTex?.(m.x0, m.y0, 'moba-vfx-flare', 100, 0x39ff14, 300, 45);
+        }
         if (m.sid === this.localId) { this._moveDest = null; this._dashUntil = this.time.now + 450; }
         break;
+      }
       case 'blink':
-        this.fx.blink(m);
-        if (Number.isFinite(m.x1) && Number.isFinite(m.y1)) this.fx.burstTex?.(m.x1, m.y1, 'moba-vfx-flare', 110, 0x39ff14, 320, 60);
+        const kst = styleFor(this._skillOf(m), 'blink');
+        if (!(kst && castFx(this.fx, 'blink', kst, m))) {
+          this.fx.blink(m);
+          if (Number.isFinite(m.x1) && Number.isFinite(m.y1)) this.fx.burstTex?.(m.x1, m.y1, 'moba-vfx-flare', 110, 0x39ff14, 320, 60);
+        }
         if (m.sid === this.localId && this._pred && Number.isFinite(m.x1) && Number.isFinite(m.y1)) {
           this._moveDest = null; this._pred.x = m.x1; this._pred.y = m.y1;
         }
         break;
       case 'buff': {
         const v = this.views.champs.get(m.sid);
-        if (v && !v.dead) this.fx.buff(v.x, v.y, Number.isFinite(m.color) ? m.color : 0xffffff);
+        if (!v || v.dead) break;
+        const bst = styleFor(this._skillOf(m), 'buff');
+        if (!(bst && castFx(this.fx, 'buff', bst, { x: v.x, y: v.y, color: m.color }))) this.fx.buff(v.x, v.y, Number.isFinite(m.color) ? m.color : 0xffffff);
         break;
       }
-      case 'heal': if (Number.isFinite(m.x) && Number.isFinite(m.y)) this.fx.heal(m); break;
+      case 'heal':
+        // A styled buff (Ops W, Hira W, Brew W ...) already draws its own heal visuals.
+        if (Number.isFinite(m.x) && Number.isFinite(m.y) && !styleFor(this._skillOf(m), 'buff')) this.fx.heal(m);
+        break;
       case 'zap': if ([m.x0, m.y0, m.x1, m.y1].every(Number.isFinite)) this.fx.zap(m.x0, m.y0 - 40, m.x1, m.y1 - 40, m.color); break;
       case 'zone': {
         if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
         const c = this._state()?.champions?.get?.(m.sid);
-        this.fx.zone(m, c ? CHAMPIONS[c.champ]?.skills?.[m.slot]?.icon : null);
+        const zsk = c ? CHAMPIONS[c.champ]?.skills?.[m.slot] : null;
+        this.fx.zone(m, zsk ? (styleFor(zsk, 'zone') ? null : zsk.icon) : null);
+        const zst = !m.trap && styleFor(zsk, 'zone');
+        if (zst && castFx(this.fx, 'zone', zst, { x: m.x, y: m.y, r: m.r, ms: m.ms, color: m.color })) break;
         this.fx.burstTex?.(m.x, m.y, 'moba-vfx-magic', Math.max(110, (m.r || 80) * 2.1), Number.isFinite(m.color) ? m.color : 0x39c2ff, 500, 90);
         break;
       }

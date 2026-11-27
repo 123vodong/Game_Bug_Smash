@@ -12,6 +12,7 @@
 // fixed-size pools — nothing grows without bound. Rare effects (telegraphs,
 // skull popups) are created and destroyed.
 import { D, FONT, clamp, LOOKS, shakeCam, calmPrefs } from './mobaGfx.js';
+import { PROJ } from './SkillFx.js';
 
 const MAX_PARTS = 260, MAX_PARTS_LOW = 110;
 const MAX_NUMS = 44, MAX_NUMS_LOW = 22;
@@ -126,7 +127,13 @@ export class MobaFx {
 
   // ───────────────────────── projectiles ─────────────────────────
   /** Skillshot from `fx {k:'proj'}`. */
-  skillshot(m, pierce = false, tex = null) {
+  skillshot(m, pierce = false, tex = null, style = null) {
+    const L = style ? PROJ[style] : null;
+    if (L && L.keepTex === undefined && L.head && !this.scene.textures.exists(`vfx-${L.head}`)) return this._skillshotBase(m, pierce, tex, null);
+    return this._skillshotBase(m, pierce, L && L.keepTex ? tex : (L ? null : tex), L);
+  }
+
+  _skillshotBase(m, pierce, tex, L) {
     const len = Math.hypot(m.dx, m.dy) || 1;
     const ux = m.dx / len, uy = m.dy / len;
     const speed = Number.isFinite(m.speed) && m.speed > 0 ? m.speed : 1500;
@@ -140,7 +147,16 @@ export class MobaFx {
     const color = Number.isFinite(m.color) ? m.color : 0x39c2ff;
     const ang = Math.atan2(uy, ux);
     let head, core, spin = 0;
-    if (tex) {
+    if (L && L.head) {
+      // v5 styled head (Kenney sprite) — see SkillFx.PROJ
+      head = this._img(`vfx-${L.head}`, color, ADD, D.fxTop);
+      head.setDisplaySize(width * (L.w || 1.6), width * (L.h || 1.6)).setAlpha(0.95);
+      if (L.orient) head.setRotation(ang);
+      core = this._img(`vfx-${L.core || L.head}`, 0xffffff, ADD, D.fxTop);
+      core.setDisplaySize(width * (L.w || 1.6) * 0.6, width * (L.h || 1.6) * 0.6);
+      if (L.orient) core.setRotation(ang);
+      spin = L.spin || 0;
+    } else if (tex) {
       // Thrown object (phone, broom, parcel...) rotated to its travel direction over a soft colored glow.
       head = this._img('moba-glow', color, ADD, D.fxTop);
       head.setDisplaySize(width * 1.5, width * 1.5).setAlpha(0.8);
@@ -159,6 +175,7 @@ export class MobaFx {
     this.shots.push({
       kind: 'skill', head, core, trail, x0: m.x, y0: m.y, x: m.x, y: m.y, ux, uy, speed, range, dist: 0,
       width, color, pierce: !!(pierce || m.boomerang), boomerang: !!m.boomerang, sid: m.sid || '', returning: false, t: 0, spin,
+      deco: L && L.deco ? L.deco : null, headSpin: !!(L && L.head && L.spin),
     });
   }
 
@@ -187,6 +204,7 @@ export class MobaFx {
   }
 
   _endShot(s, x, y) {
+    s.gfx?.destroy();
     this._release(s.head); this._release(s.core); this._release(s.trail);
     s.head = s.core = s.trail = null;
     if (this.onScreen(x, y)) {
@@ -222,12 +240,12 @@ export class MobaFx {
   }
 
   /** Ground telegraph that fills over `delay` ms, then bursts. */
-  telegraph(m) {
+  telegraph(m, noBurst = false) {
     const r = clamp(Number.isFinite(m.r) ? m.r : 200, 20, 1000);
     const delay = clamp(Number.isFinite(m.delay) ? m.delay : 0, 0, 5000);
     const color = Number.isFinite(m.color) ? m.color : 0xff5e5e;
     if (!this.onScreen(m.x, m.y, r + 200)) return;
-    if (delay <= 30) { this.burst(m.x, m.y, r, color); return; }
+    if (delay <= 30) { if (!noBurst) this.burst(m.x, m.y, r, color); return; }
     const s = this.scene;
     const g = s.add.graphics().setDepth(D.ground + 0.3);
     g.fillStyle(color, 0.1); g.fillCircle(m.x, m.y, r);
@@ -235,7 +253,7 @@ export class MobaFx {
     const fill = s.add.image(m.x, m.y, 'moba-disc').setTint(color).setDepth(D.ground + 0.4).setAlpha(0.3).setScale(0.01);
     s.tweens.add({
       targets: fill, scale: (2 * r) / 128, duration: delay, ease: 'Linear',
-      onComplete: () => { fill.destroy(); g.destroy(); this.burst(m.x, m.y, r, color); },
+      onComplete: () => { fill.destroy(); g.destroy(); if (!noBurst) this.burst(m.x, m.y, r, color); },
     });
   }
 
@@ -673,6 +691,7 @@ export class MobaFx {
         if (s.dist >= s.range) {
           s.done = true;
           const ex = s.x, ey = s.y;
+          s.gfx?.destroy();
           this._release(s.head); this._release(s.core); this._release(s.trail);
           if (this.onScreen(ex, ey)) this.part(ex, ey, { tint: s.color, add: true, s0: s.width * 1.6, s1: s.width * 0.4, a0: 0.8, life: 0.2 });
           shots.splice(i, 1);
@@ -681,6 +700,8 @@ export class MobaFx {
         s.x += s.ux * s.speed * dt; s.y += s.uy * s.speed * dt;
         s.head.setPosition(s.x, s.y); s.core.setPosition(s.x, s.y);
         if (s.spin) s.core.rotation += s.spin * dt;
+        if (s.headSpin) s.head.rotation -= s.spin * 0.6 * dt;
+        if (s.deco && this.onScreen(s.x, s.y, 200)) s.deco(this, s, dt);
         const tl = Math.min(s.dist, 150 + s.width * 1.5);
         s.trail.setPosition(s.x, s.y).setRotation(Math.atan2(s.uy, s.ux)).setDisplaySize(Math.max(8, tl), s.width * 0.85).setAlpha(0.75);
       } else {

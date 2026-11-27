@@ -186,7 +186,7 @@ export class OfflineSim {
 
   debug(cmd, a, b) {
     const me = this.state.champions.get(this.localId), st = this.state;
-    if (cmd === 'level') { me.level = Math.max(1, Math.min(R.MAX_LEVEL, a | 0)); me.xp = R.XP_TABLE[me.level - 1]; this._recalc(me, true); }
+    if (cmd === 'level') { const before = me.level; me.level = Math.max(1, Math.min(R.MAX_LEVEL, a | 0)); me.xp = R.XP_TABLE[me.level - 1]; me.skillPoints = (me.skillPoints || 0) + Math.max(0, me.level - before); this._recalc(me, true); }
     else if (cmd === 'gold') me.gold += a | 0;
     else if (cmd === 'tp') { me.x = a; me.y = b; me._order = null; }
     else if (cmd === 'kill') this._kill(me, null);
@@ -1423,7 +1423,7 @@ export class OfflineSim {
       if (sk.recast.mode === 'back') {
         const bx = c.x, by = c.y, bp = this.nav.nearestFree(rc.x0, rc.y0, CHAMP_RADIUS);
         c.x = bp.x; c.y = bp.y; c._order = null; c._nav = null;
-        this.emit('fx', { k: 'blink', sid: c.id, x0: Math.round(bx), y0: Math.round(by), x1: Math.round(c.x), y1: Math.round(c.y) });
+        this.emit('fx', { k: 'blink', sid: c.id, slot, x0: Math.round(bx), y0: Math.round(by), x1: Math.round(c.x), y1: Math.round(c.y) });
         c.action = slot; c.action_seq++;
         return;
       }
@@ -1666,7 +1666,7 @@ export class OfflineSim {
           }
           break;
         }
-        fx({ k: 'circle', x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, delay: sk.delay || 0, color: sk.color });
+        fx({ k: 'circle', sid: c.id, slot, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, delay: sk.delay || 0, color: sk.color });
         this._timers.push([t + (sk.delay || 0), () => { for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e))) hit(e, 0, p); }]);
         break;
       }
@@ -1686,6 +1686,7 @@ export class OfflineSim {
       case 'target': {
         const e = this._ent(m.id);
         if (e && e.kind !== 'pet' && this._alive(e) && e.team !== c.team && (sk.targets !== 'enemyChamp' || this._champTargetOk(e)) && dist(c, e) <= sk.range + 80) {
+          fx({ k: 'tgt', sid: c.id, slot, x0: Math.round(c.x), y0: Math.round(c.y), x1: Math.round(e.x), y1: Math.round(e.y), color: sk.color });
           if (sk.behindTarget) {
             const x0 = c.x, y0 = c.y, d = dist(c, e) || 1, ux = (e.x - x0) / d, uy = (e.y - y0) / d;
             const b = this.world.clampToMap(e.x + ux * (this._radius(e) + CHAMP_RADIUS + 14), e.y + uy * (this._radius(e) + CHAMP_RADIUS + 14));
@@ -1725,7 +1726,7 @@ export class OfflineSim {
         }
         c.x = end.x; c.y = end.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
-        fx({ k: 'dash', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color });
+        fx({ k: 'dash', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color });
         if (sk.trail) {
           const tr = sk.trail, tp = { x: (x0 + c.x) / 2, y: (y0 + c.y) / 2 };
           const tick = Math.max(100, tr.tickMs || 500), dur = Math.max(tick, tr.duration || 3000);
@@ -1747,7 +1748,7 @@ export class OfflineSim {
         const x0 = c.x, y0 = c.y, tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
-        fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
+        fx({ k: 'blink', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
         break;
       }
       case 'swap': {
@@ -1761,8 +1762,7 @@ export class OfflineSim {
         const cx = c.x, cy = c.y, ax = ally.x, ay = ally.y;
         c.x = ax; c.y = ay; c._order = null; c._nav = null;
         ally.x = cx; ally.y = cy; ally._order = null; ally._nav = null;
-        fx({ k: 'blink', sid: c.id, x0: Math.round(cx), y0: Math.round(cy), x1: Math.round(c.x), y1: Math.round(c.y) });
-        fx({ k: 'blink', sid: ally.id, x0: Math.round(ax), y0: Math.round(ay), x1: Math.round(ally.x), y1: Math.round(ally.y) });
+        fx({ k: 'blink', sid: c.id, slot, x0: Math.round(cx), y0: Math.round(cy), x1: Math.round(ax), y1: Math.round(ay) }); // one fx links both ends
         for (const a of [c, ally]) {
           if (sk.shield) { a.shield = Math.round(amt(sk.shield)); a._shieldUntil = t + (sk.duration || 3000); }
           if (sk.buff) a._buffs[slot] = t + (sk.duration || 3000);
@@ -1781,7 +1781,7 @@ export class OfflineSim {
           if (sk.invisMs > 0 && a === c) a._stealthUntil = t + sk.invisMs;
           if (sk.stasis && a === c) { a._stasisUntil = t + sk.stasis.ms; a.stunnedUntil = Math.max(a.stunnedUntil || 0, t + sk.stasis.ms); a.rootedUntil = Math.max(a.rootedUntil || 0, t + sk.stasis.ms); }
         }
-        if (sk.heal) fx({ k: 'heal', x: Math.round(c.x), y: Math.round(c.y), r: sk.radius || 120, color: sk.color });
+        if (sk.heal) fx({ k: 'heal', sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), r: sk.radius || 120, color: sk.color });
         fx({ k: 'buff', sid: c.id, slot, color: sk.color });
         break;
       }
