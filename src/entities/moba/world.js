@@ -14,7 +14,7 @@ export const WORLD_5V5 = Object.freeze({
 });
 
 /** A world over a custom floor. Bushes use the map.js shapes (seg capsule { x1, y1, x2, y2, w } or circle). */
-export function makeWorld({ id = 'floor', w, h, walls = [], bushes = [], fountain = null }) {
+export function makeWorld({ id = 'floor', w, h, walls = [], bushes = [], fountain = null, doors = [] }) {
   const nav = createNav({ walls, w, h });
   const list = bushes.map((b, i) => ({ ...b, id: b.id || `fb${i}` }));
   const bushAtFloor = (x, y) => {
@@ -29,7 +29,7 @@ export function makeWorld({ id = 'floor', w, h, walls = [], bushes = [], fountai
   const clamp = (x, y, pad = 30) => ({ x: Math.max(pad, Math.min(w - pad, x)), y: Math.max(pad, Math.min(h - pad, y)) });
   const far = { x: -100000, y: -100000 };
   return {
-    id, w, h, walls, bushes: list, nav, bushAt: bushAtFloor, clampToMap: clamp,
+    id, w, h, walls, doors, bushes: list, nav, bushAt: bushAtFloor, clampToMap: clamp,
     fountain: { blue: fountain?.blue || { x: w / 2, y: h / 2 }, red: fountain?.red || far },
   };
 }

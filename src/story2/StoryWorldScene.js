@@ -37,7 +37,7 @@ export default class StoryWorldScene extends TeamModeScene {
     const f = FLOORS[d?.floor] || F1;
     this._floorDef = f;
     return makeWorld({
-      id: f.id, w: f.w, h: f.h, bushes: f.bushes, fountain: { blue: f.breakRoom },
+      id: f.id, w: f.w, h: f.h, bushes: f.bushes, fountain: { blue: f.breakRoom }, doors: f.doors,
       walls: f.walls.map((w, i) => ({ ...w, id: w.id || `${f.id}_w${i}` })),
     });
   }

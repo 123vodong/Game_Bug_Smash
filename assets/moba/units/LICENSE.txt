@@ -1,6 +1,0 @@
-All files in this folder are CC0 1.0 Universal (public domain). Trimmed / packed into atlases by Duke Nguyen.
-
-- units.png / units.json: Kenney "RTS Pack: Sci-Fi" (CC0 1.0, https://kenney.nl/assets/rts-pack-sci-fi), retina units
-  (blue + red soldiers, gunners, cannon tanks for minions; grey + green soldiers / tanks / trucks for jungle monsters).
-- structs.png / structs.json: Kenney "RTS Pack: Sci-Fi" structures; the orange accents are hue-shifted to team blue / red.
-  Currently not used by StructureView (the procedural obelisk looks better); kept for future use.

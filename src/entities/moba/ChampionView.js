@@ -4,8 +4,6 @@
 // YOU), name + level badge, HP bar (green you / blue ally / red enemy) with
 // shield + 100-HP ticks, mana bar for you, and status visuals (stun, slow, root,
 // shield, recall channel, buff auras). Pose comes from `action` / `action_seq`.
-// v7: champions are CC0 'Puny Characters' pixel sprites (champUiKit.js, palette-swapped per champion, 8 facing rows,
-// walk / melee / bow / cast / death frames); the stick poses + costume remain as a fallback when the atlas is missing.
 // v2: a procedural costume from `def.look` (looks.js): outfit (between the team
 // outline and the stickman), hat + held prop (in front), and for Rush a scooter
 // (deck + 2 spinning wheels; he leans instead of running). ≤ 6 extra images.
@@ -19,9 +17,6 @@ import { FONT, BAR, ME_COLOR, D, depthAt, teamColor, teamCss, relation, approach
 const OVERLAY_DEPTH = D.numbers - 1;
 import { ensureMobaLooks, costumeLayout, costumeKeys, lookMeta, SCOOTER_LIFT } from './looks.js';
 import { loopFb } from './SkillFx.js';
-import { CHAMP_ATLAS, ANIM, FEET, champAtlasReady, champFrame, champIndex, champScale, dirRow, CELL } from './champUiKit.js';
-
-const PUNY_PX = 156; // displayed size of one 32 px champion frame (nearest-neighbour upscale)
 
 export const POSE_KEYS = {
   idle: 'stick-idle', run: 'stick-run', run2: 'stick-run2', smash: 'stick-smash', kick: 'stick-kick',
@@ -94,16 +89,7 @@ export class ChampionView {
     this.outlineColor = isMe ? ME_COLOR : col;
     const c = scene.add.container(ch.x, ch.y).setDepth(depthAt(ch.y));
     this.c = c;
-    this._puny = champAtlasReady(scene);
-    this._ci = champIndex(ch.champ);
-    this._fvx = this.facing; this._fvy = 0.6; this._dirRow = dirRow(this._fvx, this._fvy); this._frameKey = '';
-    this._kind = this.def.role === 'Marksman' ? 'bow' : (this.def.ranged ? 'cast' : 'melee');
-    this._actStart = 0; this._actDur = 400; this._deathUntil = 0;
-    this._sc = (PUNY_PX / CELL) * champScale(ch.champ);
-    // soft contact shadow (radial glow tinted black) instead of a hard ellipse
-    const shadow = scene.textures.exists('moba-glow')
-      ? scene.add.image(0, 3, 'moba-glow').setTint(0x000000).setDisplaySize(84, 34).setAlpha(0.62)
-      : scene.add.ellipse(0, 3, 62, 18, 0x000000, 0.42);
+    const shadow = scene.add.ellipse(0, 3, 62, 18, 0x000000, 0.42);
     this.shadow = shadow;
     ensureMobaLooks(scene);
     this._buildCostume(scene);
@@ -113,17 +99,9 @@ export class ChampionView {
     this.rootFx = scene.add.ellipse(0, 2, 92, 34).setStrokeStyle(5, 0x2ecc71, 0.95).setVisible(false);
     this.recallG = scene.add.graphics().setVisible(false);
     this.light = scene.add.image(0, -46, 'moba-glow').setTint(this.outlineColor).setDisplaySize(118, 140).setAlpha(0.26);
-    if (this._puny) {
-      const f0 = champFrame(scene, this._ci, this._dirRow, 0);
-      this.outlines = OUTLINE.map(([dx, dy]) => scene.add.image(dx, dy, CHAMP_ATLAS, f0)
-        .setOrigin(0.5, FEET).setScale(this._sc).setTintFill(this.outlineColor).setAlpha(0.95));
-      this.sprite = scene.add.image(0, 0, CHAMP_ATLAS, f0).setOrigin(0.5, FEET).setScale(this._sc);
-      this._frameKey = f0;
-    } else {
-      this.outlines = OUTLINE.map(([dx, dy]) => scene.add.image(dx, dy, POSE_KEYS.idle)
-        .setOrigin(0.5, 0.85).setDisplaySize(SPR_W, SPR_H).setTintFill(this.outlineColor).setAlpha(0.95));
-      this.sprite = scene.add.image(0, 0, POSE_KEYS.idle).setOrigin(0.5, 0.85).setDisplaySize(SPR_W, SPR_H);
-    }
+    this.outlines = OUTLINE.map(([dx, dy]) => scene.add.image(dx, dy, POSE_KEYS.idle)
+      .setOrigin(0.5, 0.85).setDisplaySize(SPR_W, SPR_H).setTintFill(this.outlineColor).setAlpha(0.95));
+    this.sprite = scene.add.image(0, 0, POSE_KEYS.idle).setOrigin(0.5, 0.85).setDisplaySize(SPR_W, SPR_H);
     // Emoji legend at the right end of the HP bar (the costume now marks the head).
     this.emoji = scene.add.text(BAR_W / 2 + 15, BAR_Y - 1, this.def.emoji, { fontSize: 17, padding: { y: 3 } }).setOrigin(0.5);
     this.shieldFx = scene.add.image(0, -42, 'moba-ring').setDisplaySize(116, 116).setTint(0xbfe6ff)
@@ -134,21 +112,20 @@ export class ChampionView {
     this.ccIcon = scene.add.text(0, BAR_Y - 66, '', { fontSize: 28, padding: { y: 4 } }).setOrigin(0.5).setVisible(false); // v6.1: top CC icon above the plate
     this.status = scene.add.text(BAR_W / 2 + 6, BAR_Y + 20, '', { fontSize: 15 }).setOrigin(0, 0.5);
     // Bars
-    this.hpBg = scene.add.rectangle(0, BAR_Y, BAR_W + 4, 11, 0x05080e, 0.9).setStrokeStyle(1.5, this.outlineColor, 0.9);
-    this.hpGloss = scene.add.rectangle(0, BAR_Y - 1.5, BAR_W, 3, 0xffffff, 0.22);
+    this.hpBg = scene.add.rectangle(0, BAR_Y, BAR_W + 4, 11, 0x000000, 0.82);
     this.hpFill = scene.add.rectangle(-BAR_W / 2, BAR_Y, BAR_W, 7, BAR[this.rel] || BAR.enemy, 1).setOrigin(0, 0.5);
     this.shieldFill = scene.add.rectangle(-BAR_W / 2, BAR_Y, 0, 7, 0xffffff, 0.95).setOrigin(0, 0.5);
     this.ticks = scene.add.graphics();
     const parts = [shadow, this.aura, this.rootFx, this.ring, this.recallG, this.light, ...this._cBack, ...this.outlines,
       ...this._cMid, this.sprite, ...this._cFront,
       this.shieldFx, this.spellBubble, this.silenceFx];
-    const over = [this.emoji, this.hpBg, this.hpFill, this.shieldFill, this.hpGloss, this.ticks];
+    const over = [this.emoji, this.hpBg, this.hpFill, this.shieldFill, this.ticks];
     if (isMe) {
-      this.mpBg = scene.add.rectangle(0, BAR_Y + 8, BAR_W + 4, 6, 0x05080e, 0.9).setStrokeStyle(1, 0x2f86e8, 0.7);
+      this.mpBg = scene.add.rectangle(0, BAR_Y + 8, BAR_W + 4, 6, 0x000000, 0.82);
       this.mpFill = scene.add.rectangle(-BAR_W / 2, BAR_Y + 8, BAR_W, 3, 0x4aa8ff, 1).setOrigin(0, 0.5);
       over.push(this.mpBg, this.mpFill);
     }
-    this.lvBg = scene.add.circle(-BAR_W / 2 - 13, BAR_Y + 1, 11.5, 0x0a0d14, 0.97).setStrokeStyle(2.5, this.outlineColor, 1);
+    this.lvBg = scene.add.circle(-BAR_W / 2 - 13, BAR_Y + 1, 11, 0x0a0d14, 0.95).setStrokeStyle(2, this.outlineColor, 1);
     this.lvText = scene.add.text(-BAR_W / 2 - 13, BAR_Y + 1, '1', {
       fontFamily: FONT, fontSize: 11, color: '#ffd23f', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5);
@@ -156,13 +133,11 @@ export class ChampionView {
     this.name = scene.add.text(0, BAR_Y - 17, ch.isBot ? `🤖 ${nm}` : nm, {
       fontFamily: FONT, fontSize: 13, color: isMe ? '#ffd23f' : teamCss(ch.team), stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5);
-    this.nameBg = scene.add.rectangle(0, BAR_Y - 17, this.name.width + 12, 17, 0x05080e, 0.55);
     this._isBot = !!ch.isBot;
     // EP-11: the player's cosmetic hat (TeamChamp.hat → emoji) floats above the nameplate.
     this._hat = null;
     this.hatT = scene.add.text(0, BAR_Y - 40, '', { fontSize: 20, padding: { y: 4 } }).setOrigin(0.5).setVisible(false);
     this._setHat(ch.hat);
-    over.unshift(this.nameBg);
     over.push(this.lvBg, this.lvText, this.name, this.status, this.stunFx, this.hatT, this.ccIcon);
     c.add(parts);
     this.ov = scene.add.container(ch.x, ch.y, over).setDepth(OVERLAY_DEPTH);
@@ -274,15 +249,13 @@ export class ChampionView {
       this._isBot = !!ch.isBot;
       const nm = String(ch.name || this.def.name).slice(0, 18);
       this.name.setText(this._isBot ? `🤖 ${nm}` : nm);
-      this.nameBg.width = this.name.width + 12;
     }
     if ((ch.hat || '') !== this._hat) this._setHat(ch.hat || '');
     this.tx = ch.x; this.ty = ch.y;
     const dead = !!ch.dead;
     if (dead !== this.dead) {
       this.dead = dead;
-      // puny: the body stays up for a short death animation (update() hides it); the plates hide at once
-      if (dead && this._puny) this._deathUntil = now + 900; else { this.c.setVisible(!dead); this._deathUntil = 0; }
+      this.c.setVisible(!dead);
       this.ov.setVisible(!dead);
       if (!dead) { this.x = this._px = ch.x; this.y = this._py = ch.y; } // respawn → snap
     }
@@ -312,10 +285,7 @@ export class ChampionView {
       this.actionSeq = seq;
       this._alt = !this._alt;
       const pose = poseForAction(ch.action, this.def, this._alt, this._kit?.stance);
-      if (pose) {
-        this.actionPose = pose; this._actStart = now; this._actDur = pose === 'punch' || pose === 'kick' ? 320 : 430;
-        this.actionUntil = now + this._actDur;
-      }
+      if (pose) { this.actionPose = pose; this.actionUntil = now + (pose === 'punch' || pose === 'kick' ? 320 : 430); }
     }
     // Status effects (server timestamps → compare against the server clock).
     const stunned = (ch.stunnedUntil || 0) > srvNow;
@@ -337,13 +307,7 @@ export class ChampionView {
   setDisplayPos(x, y) { this.x = x; this.y = y; }
 
   update(dt, now, srvNow, predicted) {
-    if (this.dead) {
-      if (this._deathUntil) {
-        if (now < this._deathUntil) { this._setFrame(this._dirRow, ANIM.dead[now - (this._deathUntil - 900) > 260 ? 1 : 0]); this.sprite.y = 0; for (const o of this.outlines) o.y = 0; }
-        else { this._deathUntil = 0; this.c.setVisible(false); }
-      }
-      return;
-    }
+    if (this.dead) return;
     if (!predicted) {
       const dx = this.tx - this.x, dy = this.ty - this.y;
       if (dx * dx + dy * dy > 320 * 320) { this.x = this.tx; this.y = this.ty; } else {
@@ -364,22 +328,7 @@ export class ChampionView {
     else pose = 'idle';                         // Rush rides: idle stance on the deck
     this._setPose(pose);
     const flip = this.facing < 0;
-    if (this._puny) {
-      // 8-way facing from the (smoothed) travel vector; attacks turn toward the target (screen side)
-      if (acting && this.faceTo != null && Math.abs(this.faceTo - this.x) > 4) { this._fvx = this.faceTo < this.x ? -1 : 1; this._fvy = 0; }
-      else if (this.moving && !this._vehicle) {
-        const l = Math.hypot(mdx, mdy) || 1, k = approach(dt, 12);
-        this._fvx += (mdx / l - this._fvx) * k; this._fvy += (mdy / l - this._fvy) * k;
-      } else if (this._vehicle && Math.abs(mdx) > 0.4) { this._fvx = mdx < 0 ? -1 : 1; this._fvy = 0.3; }
-      this._dirRow = dirRow(this._fvx, this._fvy);
-      let col = 0;
-      if (this._flashUntil && now < this._flashUntil) col = ANIM.flash;
-      else if (acting) {
-        const a = ANIM[pose === 'parry' ? 'cast' : this._kind], p = Math.max(0, Math.min(0.999, (now - this._actStart) / this._actDur));
-        col = a[Math.floor(p * a.length)];
-      } else if (this.moving && !this._vehicle) col = ANIM.walk[Math.floor((now + this._phase) / 115) % 4];
-      this._setFrame(this._dirRow, col);
-    } else if (this.sprite.flipX !== flip) {
+    if (this.sprite.flipX !== flip) {
       this.sprite.setFlipX(flip);
       for (const o of this.outlines) o.setFlipX(flip);
     }
@@ -390,7 +339,7 @@ export class ChampionView {
       this._lean += (lean - this._lean) * approach(dt, 10);
       if (this.moving) this._wheelRot += (Math.hypot(mdx, mdy) / 5.5) * this.facing;
     } else {
-      bob = (!this.moving && !acting) ? Math.sin((now + this._phase) / 480) * 1.6 : (this._puny && this.moving && !acting ? -Math.abs(Math.sin((now + this._phase) / 115 * 0.5 * Math.PI)) * 3 : 0);
+      bob = (!this.moving && !acting) ? Math.sin((now + this._phase) / 480) * 1.6 : 0;
       this._lean = 0;
     }
     const lift = (this._vehicle ? -SCOOTER_LIFT : 0) - this._airY;
@@ -600,7 +549,7 @@ export class ChampionView {
       this._cBack.push(...this._wheels);
       this._deck = deck;
     }
-    for (const p of (this._puny ? [] : costumeLayout(this.champ, 'idle'))) {
+    for (const p of costumeLayout(this.champ, 'idle')) {
       const img = mk(p.key);
       if (!img) continue;
       this._costume.set(p.slot, img);
@@ -633,17 +582,7 @@ export class ChampionView {
     }
   }
 
-  /** Swap the atlas frame of the body + its 4 outline copies (only on change). */
-  _setFrame(row, col) {
-    const k = champFrame(this.scene, this._ci, row, col);
-    if (k === this._frameKey) return;
-    this._frameKey = k;
-    this.sprite.setFrame(k);
-    for (const o of this.outlines) o.setFrame(k);
-  }
-
   _setPose(pose) {
-    if (this._puny) { this.pose = pose; return; }
     if (pose === this.pose) return;
     const key = POSE_KEYS[pose] || POSE_KEYS.idle;
     if (!this.scene.textures.exists(key)) return;

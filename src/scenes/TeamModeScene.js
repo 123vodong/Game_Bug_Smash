@@ -155,8 +155,6 @@ export default class TeamModeScene extends Phaser.Scene {
     try { lowPref = (new URLSearchParams(window.location.search).get('fx') || window.localStorage?.getItem(FX_PREF_KEY)) === 'low'; } catch (_) { /* storage blocked */ }
     if (!lowPref) loadFb(this);
     loadIcons(this); // Kenney game icons used as glyph art by SkillFx (replaces emoji)
-    MobaMap.preload(this); // [env]
-    LOOKS.loadChampUiAssets(this); // [champ-ui] champion sprite atlas + HUD UI atlas/font
   }
 
   /** The skill spec a cast `fx` message belongs to (needs sid + slot), or null. */

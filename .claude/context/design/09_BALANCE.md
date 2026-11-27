@@ -52,7 +52,7 @@ Sources of truth in code:
 | Lever | Value | Where |
 |---|---|---|
 | Quick-play queue | waits 30 s from the first join · a later join keeps ≥ 10 s on the clock · never past 45 s · full (10) → 3 s · START NOW = READY (starts when every human is ready; alone = now) | `shared/moba/rules.js` LOBBY_* |
-| Sell | 70 % of the cost · 100 % within 10 s of buying ("undo") · fountain or dead only | `shared/moba/rules.js` SELL_REFUND_PCT / SELL_UNDO_MS |
+| Sell | 75 % of the cost (every item loses 25 %, no undo window) · fountain or dead only | `shared/moba/rules.js` SELL_REFUND_PCT / SELL_UNDO_MS |
 | Rejoin | seat held for the whole match (Colyseus manual reconnection); the client auto-retries 300 s, then REJOIN from the menu / Team hub (saved token) | TeamRoom._holdSeat · tuning TEAM_RECONNECT_GRACE_S |
 | Abandon | no human connected for 5 min (held seats) / 10 s (everyone pressed LEAVE) → match ends; side ahead wins, abandoners lose | `shared/moba/rules.js` ABANDON_MS / ABANDON_EMPTY_MS |
 | Rating (two numbers, LoL-style) | **hidden MMR** starts 1000 (bots 1000) — Elo on team averages, K 48 for 5 placement games then 24 · **visible rank** starts at Intern IV 0 LP (700, also the floor) and moves by the MMR change × catch-up (below MMR: wins ×1…3, losses ×1…¼; above: wins ×½, losses ×2; a win ≥ +8 LP) | `shared/moba/ranks.js` visibleDelta |
