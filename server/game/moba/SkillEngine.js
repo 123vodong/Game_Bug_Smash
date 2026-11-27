@@ -157,7 +157,7 @@ export class SkillEngine {
       const x0 = ch.x, y0 = ch.y;
       const end = nearestFree(rc.x0, rc.y0, CHAMP_RADIUS);
       this.room._teleport(ch, end.x, end.y);
-      this.room._fx({ k: 'blink', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
+      this.room._fx({ k: 'blink', sid: ch.id, slot, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
       return true;
     }
     if (mode === 'again') return this.cast(ch, slot, { ...spec, recast: null }, aim, now);
@@ -178,8 +178,7 @@ export class SkillEngine {
     const ax = ally.x, ay = ally.y, cx = ch.x, cy = ch.y;
     this.room._teleport(ch, ax, ay);
     this.room._teleport(ally, cx, cy);
-    this.room._fx({ k: 'blink', sid: ch.id, x0: round(cx), y0: round(cy), x1: round(ch.x), y1: round(ch.y) });
-    this.room._fx({ k: 'blink', sid: ally.id, x0: round(ax), y0: round(ay), x1: round(ally.x), y1: round(ally.y) });
+    this.room._fx({ k: 'blink', sid: ch.id, slot, x0: round(cx), y0: round(cy), x1: round(ax), y1: round(ay) }); // one fx links both ends
     const sh = spec.shield ? this.amount(ch, spec.shield) : 0;
     for (const who of [ch, ally]) {
       if (sh) this.room._addShield(who, sh, until);
@@ -258,7 +257,7 @@ export class SkillEngine {
       return true;
     }
     const delay = Math.max(0, spec.delay || 0);
-    this.room._fx({ k: 'circle', x: round(x), y: round(y), r: spec.radius, delay, color: spec.color });
+    this.room._fx({ k: 'circle', sid: ch.id, slot, x: round(x), y: round(y), r: spec.radius, delay, color: spec.color });
     const zone = { at: now + delay, owner: ch, team: ch.team, slot, x, y, r: spec.radius, spec, amount: this.amount(ch, spec.dmg), color: spec.color };
     if (delay > 0) this.zones.push(zone);
     else this._resolveZone(zone, now);
@@ -290,6 +289,7 @@ export class SkillEngine {
     const d = Math.hypot(t.x - x0, t.y - y0) || 1;
     const ux = (t.x - x0) / d, uy = (t.y - y0) / d;
     ch.faceX = ux; ch.faceY = uy;
+    this.room._fx({ k: 'tgt', sid: ch.id, slot, x0: round(x0), y0: round(y0), x1: round(t.x), y1: round(t.y), color: spec.color });
     if (spec.behindTarget) {
       const behind = clampToMap(t.x + ux * (t.radius + CHAMP_RADIUS + 14), t.y + uy * (t.radius + CHAMP_RADIUS + 14));
       const end = nearestFree(behind.x, behind.y, CHAMP_RADIUS);
@@ -338,7 +338,7 @@ export class SkillEngine {
     this.room._teleport(ch, end.x, end.y);
     ch.faceX = dx; ch.faceY = dy;
     if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
-    this.room._fx({ k: 'dash', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y), color: spec.color });
+    this.room._fx({ k: 'dash', sid: ch.id, slot, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y), color: spec.color });
     if (spec.trail) {
       const tz = { ...spec.trail, type: 'zone', color: spec.trail.color || spec.color, _slot: slot };
       this._spawnArea(ch, slot, tz, (x0 + ch.x) / 2, (y0 + ch.y) / 2, now);
@@ -360,7 +360,7 @@ export class SkillEngine {
     this.room._teleport(ch, end.x, end.y);
     ch.faceX = dx; ch.faceY = dy;
     if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
-    this.room._fx({ k: 'blink', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
+    this.room._fx({ k: 'blink', sid: ch.id, slot, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
     return true;
   }
 
@@ -393,7 +393,7 @@ export class SkillEngine {
       if (spec.buff) this.room._addBuff(a, slot, spec.buff, until);
       if (spec.spellShieldMs > 0) a._spellShieldUntil = Math.max(a._spellShieldUntil || 0, now + spec.spellShieldMs);
     }
-    if (heal) this.room._fx({ k: 'heal', x: round(ch.x), y: round(ch.y), r: spec.radius, color: spec.color });
+    if (heal) this.room._fx({ k: 'heal', sid: ch.id, slot, x: round(ch.x), y: round(ch.y), r: spec.radius, color: spec.color });
     this.room._fx({ k: 'buff', sid: ch.id, slot, color: spec.color });
     return true;
   }

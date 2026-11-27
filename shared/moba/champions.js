@@ -520,6 +520,35 @@ export const CHAMPIONS = {
   },
 };
 
+/**
+ * v5 visual identity: the render style of every skill (client only — resolved by src/entities/moba/SkillFx.js).
+ * A string applies to every effect kind of the skill; an object picks one per kind (dash / zone / ...).
+ * Skills without an entry (trap skills, Swipe's phone fans) use the generic MobaFx look.
+ */
+export const SKILL_FX = {
+  pixel:    { q: 'prism', w: 'pixelOrb', e: 'glitch', r: 'rune' },
+  stack:    { q: 'hook', w: 'hexDome', e: 'throttle', r: 'vortex' },
+  ops:      { q: 'scan', w: 'plusRain', e: 'swap', r: 'deploy' },
+  tester:   { q: 'sniper', e: 'vault', r: 'rail' },
+  zero:     { q: 'shadowStep', w: 'smoke', e: 'bladeSpin', r: 'execute' },
+  model:    { q: 'dataSphere', w: 'hourglass', e: 'roots', r: 'singularity' },
+  guard:    { q: 'crescent', w: 'shieldPlate', e: 'charge', r: 'lockdown' },
+  cleaner:  { q: 'broomSweep', w: 'bubble', e: { dash: 'skid', zone: 'puddle' }, r: 'flood' },
+  courier:  { q: 'tire', w: 'noodles', e: 'parcelDrop', r: 'priceTag' },
+  embedded: { q: 'tesla', w: 'overclock', r: 'emp' },
+  dev:      { q: 'keyboardSpin', w: 'pair', e: 'branch', r: 'mergeLock' },
+  appdev:   { w: 'darkMode', e: 'swipeLeft' },
+  sprint:   { q: 'standup', w: 'burndown', e: 'leap', r: 'rally' },
+  cache:    { q: 'batch', w: 'stale', e: 'failover', r: 'tableScan' },
+  hr:       { q: 'invite', w: 'cheer', e: 'policy', r: 'allHands' },
+  lint:     { q: 'nitpick', w: 'stopSign', e: 'freeze', r: 'hardReset' },
+  barista:  { q: 'coffee', w: 'espresso', e: 'sleepZ', r: 'breakRoom' },
+  oncall:   { q: 'ping', w: 'pageWave', e: 'postmortem', r: 'onMyWay' },
+};
+for (const [id, slots] of Object.entries(SKILL_FX)) {
+  for (const [slot, fx] of Object.entries(slots)) CHAMPIONS[id].skills[slot].fx = fx;
+}
+
 export const CHAMPION_IDS = Object.keys(CHAMPIONS);
 
 /** Role order bots fill a team in (the human's pick takes its role first). */
