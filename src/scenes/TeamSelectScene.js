@@ -24,6 +24,7 @@ import {
   TEAM_INFO, TEAM_SIZE, SELECT_MS, SELECT_BOT_PICK_MS, SELECT_ALL_LOCKED_MS, LOADING_MS, PICK_RATE_MS,
 } from '../../shared/moba/rules.js';
 import { ensureMobaLooks, drawChampionPortrait } from '../entities/moba/looks.js';
+import { showSkillTipPanel } from '../entities/moba/MobaHud.js';
 import { hatEmoji } from '../entities/moba/mobaGfx.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
@@ -629,6 +630,7 @@ export default class TeamSelectScene extends Phaser.Scene {
 
   _renderDetail(id) {
     if (this._detailFor === id) return;
+    this._hideSkillTip();
     this._detailFor = id;
     if (this._dyn) { this.tweens.killTweensOf(this._dyn); this._dyn.destroy(); this._dyn = null; }
     const D = DET;
@@ -707,6 +709,24 @@ export default class TeamSelectScene extends Phaser.Scene {
         fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', lineSpacing: 0,
         wordWrap: { width: sw - 54, useAdvancedWrap: true }, fixedHeight: 30,
       }));
+      const paintRow = (lit) => {
+        rg.clear();
+        rg.fillStyle(lit ? 0x13223c : 0x0b1322, 0.96); fillRR(rg, sx, y, sw, 56, 9);
+        rg.lineStyle(lit ? 2 : 1.2, lit ? 0xffffff : (slot === 'r' ? NEON.yellow : sc), lit ? 0.9 : (slot === 'r' ? 0.6 : 0.35));
+        strokeRR(rg, sx, y, sw, 56, 9);
+        rg.fillStyle(sc, lit ? 0.36 : 0.24); fillRR(rg, sx + 8, y + 8, 26, 26, 6);
+        rg.lineStyle(2, sc, 1); strokeRR(rg, sx + 8, y + 8, 26, 26, 6);
+      };
+      const rowHit = add(this.add.rectangle(sx + sw / 2, y + 28, sw, 56, 0xffffff, 0).setInteractive({ useHandCursor: true }));
+      rowHit.on('pointerover', () => {
+        paintRow(true);
+        this._showSkillTip(c, slot, sx + sw / 2, y - 6);
+        AudioManager.uiHover?.();
+      });
+      rowHit.on('pointerout', () => {
+        paintRow(false);
+        this._hideSkillTip();
+      });
     });
     dyn.setAlpha(0);
     this.tweens.add({ targets: dyn, alpha: 1, duration: 140 });
@@ -1214,8 +1234,15 @@ export default class TeamSelectScene extends Phaser.Scene {
     }
   }
 
+  _showSkillTip(c, slot, x, y) {
+    this._hideSkillTip();
+    this._skillTip = showSkillTipPanel(this, c, slot, { x, y, W: this.W, H: this.H, depth: 95 });
+  }
+  _hideSkillTip() { this._skillTip?.destroy(); this._skillTip = null; }
+
   // ───────────────────────── loading screen ─────────────────────────
   _showLoading() {
+    this._hideSkillTip();
     this._phaseShown = 'loading';
     this._closePicker();
     if (this._selRoot) {
@@ -1360,6 +1387,7 @@ export default class TeamSelectScene extends Phaser.Scene {
   _cleanup() {
     if (this._shuttingDown) return;
     this._shuttingDown = true;
+    this._hideSkillTip();
     try { this._reconn?.loop?.cancel(); } catch (_) { /* ignore */ }
     this._reconn = null;
     if (this._msgState && !this._handedOff) this._msgState.dead = true;

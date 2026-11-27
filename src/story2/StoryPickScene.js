@@ -11,6 +11,7 @@
 import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, isChampionId } from '../../shared/moba/champions.js';
 import { SPELLS, validSpellPair } from '../../shared/moba/spells.js';
 import { drawChampionPortrait } from '../entities/moba/looks.js';
+import { showSkillTipPanel } from '../entities/moba/MobaHud.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { tText } from '../core/I18n.js';
@@ -250,6 +251,7 @@ export default class StoryPickScene extends Phaser.Scene {
   _renderDetail() {
     const id = this._inspect || this._sel;
     if (this._detailFor === id) return;
+    this._hideSkillTip();
     this._detailFor = id;
     if (this._dyn) { this.tweens.killTweensOf(this._dyn); this._dyn.destroy(); this._dyn = null; }
     const D = DET, g = this._detailG, c = CHAMPIONS[id];
@@ -313,10 +315,34 @@ export default class StoryPickScene extends Phaser.Scene {
       add(this.add.text(sx + 44, y + 24, tText(`skill.${c.id}.${slot}`, s.desc || ''), {
         fontFamily: FONT_MONO, fontSize: 11, color: '#cfe3f5', wordWrap: { width: sw - 54, useAdvancedWrap: true }, fixedHeight: 30,
       }));
+      const paintRow = (lit) => {
+        rg.clear();
+        rg.fillStyle(lit ? 0x13223c : 0x0b1322, 0.96); fillRR(rg, sx, y, sw, 56, 9);
+        rg.lineStyle(lit ? 2 : 1.2, lit ? 0xffffff : (slot === 'r' ? NEON.yellow : sc), lit ? 0.9 : (slot === 'r' ? 0.6 : 0.35));
+        strokeRR(rg, sx, y, sw, 56, 9);
+        rg.fillStyle(sc, lit ? 0.36 : 0.24); fillRR(rg, sx + 8, y + 8, 26, 26, 6);
+        rg.lineStyle(2, sc, 1); strokeRR(rg, sx + 8, y + 8, 26, 26, 6);
+      };
+      const rowHit = add(this.add.rectangle(sx + sw / 2, y + 28, sw, 56, 0xffffff, 0).setInteractive({ useHandCursor: true }));
+      rowHit.on('pointerover', () => {
+        paintRow(true);
+        this._showSkillTip(c, slot, sx + sw / 2, y - 6);
+        AudioManager.uiHover?.();
+      });
+      rowHit.on('pointerout', () => {
+        paintRow(false);
+        this._hideSkillTip();
+      });
     });
     dyn.setAlpha(0);
     this.tweens.add({ targets: dyn, alpha: 1, duration: 120 });
   }
+
+  _showSkillTip(c, slot, x, y) {
+    this._hideSkillTip();
+    this._skillTip = showSkillTipPanel(this, c, slot, { x, y, W: this.W, H: this.H, depth: 95 });
+  }
+  _hideSkillTip() { this._skillTip?.destroy(); this._skillTip = null; }
 
   // ───────────────────────── summoner spells ─────────────────────────
   _initialSpells(saved) {
@@ -377,6 +403,7 @@ export default class StoryPickScene extends Phaser.Scene {
   _start() {
     if (this._leaving || !isChampionId(this._sel)) return;
     this._leaving = true;
+    this._hideSkillTip();
     const champ = this._sel, spells = this._spells.slice(0, 2);
     SaveManager.setStory2Pick(champ, spells);
     AudioManager.reward?.();
@@ -388,6 +415,7 @@ export default class StoryPickScene extends Phaser.Scene {
   _back() {
     if (this._leaving) return;
     this._leaving = true;
+    this._hideSkillTip();
     AudioManager.uiClick();
     this._go('MenuScene');
   }

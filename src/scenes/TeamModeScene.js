@@ -587,19 +587,31 @@ export default class TeamModeScene extends Phaser.Scene {
 
   _buildPracticeBar() {
     if (!this._sim || this._pracBar) return;
-    const x0 = 10, y0 = (this.hud?.mm?.y || 10) + (this.hud?.mm?.size || 200) + 34;
-    const mk = (x, y, w, label, color, fn) => this.hud._button(x + w / 2, y, w, 26, label, color, fn, 52, 11);
-    const swap = mk(x0, y0, 102, t('prac.swap'), 0xffb347, () => { AudioManager.uiClick?.(); this._openChampSwapModal(); });
-    const cd = mk(x0 + 108, y0, 86, '', 0x39ff14, () => { this._sim.receive('setNoCd', { enabled: !this._sim.noCd }); this._syncPracticeBar(); AudioManager.uiClick?.(); });
-    const mp = mk(x0 + 200, y0, 96, '', 0x39c2ff, () => { this._sim.receive('setNoMana', { enabled: !this._sim.noMana }); this._syncPracticeBar(); AudioManager.uiClick?.(); });
-    const hp = mk(x0 + 302, y0, 92, '', 0x7ed957, () => { this._sim.receive('setGodMode', { enabled: !this._sim.godMode }); this._syncPracticeBar(); AudioManager.uiClick?.(); });
-    const lv = mk(x0, y0 + 32, 62, t('prac.lvUp'), 0xffd23f, () => {
-      const me = this._me(); if (me) this._sim.debug('level', Math.min(R.MAX_LEVEL, (me.level || 1) + 1));
-      AudioManager.uiClick?.();
-    });
-    const gold = mk(x0 + 68, y0 + 32, 76, t('prac.gold'), 0xffd23f, () => { this._sim.debug('gold', 5000); AudioManager.uiClick?.(); });
-    const wave = mk(x0 + 150, y0 + 32, 64, '+30s', 0xb084ff, () => { for (let i = 0; i < 300; i++) this._sim.update(100); AudioManager.uiClick?.(); });
-    this._pracBar = { swap, cd, mp, hp, lv, gold, wave, all: [swap, cd, mp, hp, lv, gold, wave] };
+    const right = (this.scale?.width || 1280) - 10, gap = 6;
+    const mkRow = (y, specs) => {
+      let rx = right;
+      return specs.map(([key, w, label, color, fn]) => {
+        const cx = rx - w / 2;
+        rx -= w + gap;
+        return [key, this.hud._button(cx, y, w, 24, label, color, fn, 52, 10)];
+      });
+    };
+    const row1 = mkRow(22, [
+      ['hp', 94, '', 0x7ed957, () => { this._sim.receive('setGodMode', { enabled: !this._sim.godMode }); this._syncPracticeBar(); AudioManager.uiClick?.(); }],
+      ['mp', 118, '', 0x39c2ff, () => { this._sim.receive('setNoMana', { enabled: !this._sim.noMana }); this._syncPracticeBar(); AudioManager.uiClick?.(); }],
+      ['cd', 118, '', 0x39ff14, () => { this._sim.receive('setNoCd', { enabled: !this._sim.noCd }); this._syncPracticeBar(); AudioManager.uiClick?.(); }],
+      ['swap', 104, t('prac.swap'), 0xffb347, () => { AudioManager.uiClick?.(); this._openChampSwapModal(); }],
+    ]);
+    const row2 = mkRow(50, [
+      ['wave', 56, '+30s', 0xb084ff, () => { for (let i = 0; i < 300; i++) this._sim.update(100); AudioManager.uiClick?.(); }],
+      ['gold', 74, t('prac.gold'), 0xffd23f, () => { this._sim.debug('gold', 5000); AudioManager.uiClick?.(); }],
+      ['lv', 62, t('prac.lvUp'), 0xffd23f, () => {
+        const me = this._me(); if (me) this._sim.debug('level', Math.min(R.MAX_LEVEL, (me.level || 1) + 1));
+        AudioManager.uiClick?.();
+      }],
+    ]);
+    const map = Object.fromEntries([...row1, ...row2]);
+    this._pracBar = { ...map, all: Object.values(map) };
     this._pracLangUnsub = onLangChange(() => this._syncPracticeBar());
     this._syncPracticeBar();
   }
@@ -610,9 +622,14 @@ export default class TeamModeScene extends Phaser.Scene {
     p.swap?._label?.setText(t('prac.swap'));
     p.lv?._label?.setText(t('prac.lvUp'));
     p.gold?._label?.setText(t('prac.gold'));
-    p.cd?._label?.setText(`${t('prac.noCd')}:${this._sim.noCd ? 'ON' : 'OFF'}`);
-    p.mp?._label?.setText(`${t('prac.noMana')}:${this._sim.noMana ? 'ON' : 'OFF'}`);
-    p.hp?._label?.setText(`${t('prac.noDmg')}:${this._sim.godMode ? 'ON' : 'OFF'}`);
+    const syncToggle = (btn, label, on, onColor, onCss) => {
+      if (!btn) return;
+      btn._label?.setText(`${label}:${on ? 'ON' : 'OFF'}`).setColor(on ? onCss : '#8a98b0');
+      btn._bg?.setStrokeStyle(1.8, on ? onColor : 0x4b5a73, on ? 0.95 : 0.7);
+    };
+    syncToggle(p.cd, t('prac.noCd'), this._sim.noCd, 0x39ff14, '#39ff14');
+    syncToggle(p.mp, t('prac.noMana'), this._sim.noMana, 0x39c2ff, '#39c2ff');
+    syncToggle(p.hp, t('prac.noDmg'), this._sim.godMode, 0x7ed957, '#7ed957');
     this.hud?.setStatus(t('prac.status'), '#ffb347');
   }
 
@@ -788,6 +805,7 @@ export default class TeamModeScene extends Phaser.Scene {
         this.fx.burstTex?.(m.x, m.y, 'moba-vfx-magic', Math.max(110, (m.r || 80) * 2.1), Number.isFinite(m.color) ? m.color : 0x39c2ff, 500, 90);
         break;
       }
+      case 'trapEnd': this.fx.endZoneByTid?.(m.tid); break;
       case 'knock': {
         const mine = !!this.localId && m.id === this.localId;
         this.fx.knock(m, mine);

@@ -379,7 +379,7 @@ export class MobaFx {
   /** Persistent area `fx {k:'zone', x, y, r, ms, tickMs, color}` — puddle + pulse each tick. */
   zone(m, icon) {
     const r = clamp(Number.isFinite(m.r) ? m.r : 200, 20, 1000);
-    const ms = clamp(Number.isFinite(m.ms) ? m.ms : 3000, 100, 20000);
+    const ms = clamp(Number.isFinite(m.ms) ? m.ms : 3000, 100, 30000);
     const tick = clamp(Number.isFinite(m.tickMs) && m.tickMs > 0 ? m.tickMs : 500, 100, 5000);
     const color = Number.isFinite(m.color) ? m.color : 0x7ec8ff;
     while (this.zones.length >= MAX_ZONES) this._endZone(this.zones.shift(), true);
@@ -388,7 +388,19 @@ export class MobaFx {
     const ring = s.add.image(m.x, m.y, 'moba-ring').setTint(color).setDepth(dep + 0.05).setAlpha(0).setDisplaySize(r * 2.02, r * 2.02);
     const inner = s.add.image(m.x, m.y, 'moba-ring').setTint(0xffffff).setDepth(dep + 0.05).setAlpha(0).setDisplaySize(r * 1.4, r * 1.4);
     const sign = icon ? s.add.text(m.x, m.y, icon, { fontSize: Math.round(clamp(r * 0.28, 24, 64)) }).setOrigin(0.5).setDepth(dep + 0.1).setAlpha(0) : null;
-    this.zones.push({ disc, ring, inner, sign, x: m.x, y: m.y, r, ms, tick, color, t: 0, nextTick: 0 });
+    this.zones.push({
+      disc, ring, inner, sign, x: m.x, y: m.y, r, ms, tick, color, t: 0, nextTick: 0,
+      tid: m.tid || null, stealthAfterMs: m.stealthAfterMs || 0, fadingStealth: !!m.fadingStealth,
+    });
+  }
+  endZoneByTid(tid) {
+    if (!tid) return;
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      if (this.zones[i].tid === tid) {
+        this._endZone(this.zones[i], false);
+        this.zones.splice(i, 1);
+      }
+    }
   }
   _endZone(z, now) {
     if (!z || z.done) return;
@@ -586,11 +598,17 @@ export class MobaFx {
       z.t += dt * 1000;
       if (z.t >= z.ms) { this._endZone(z, false); zones.splice(i, 1); continue; }
       const fadeIn = Math.min(1, z.t / 180);
+      let vis = fadeIn;
+      if (z.fadingStealth && z.ms > 600 && z.t > z.ms - 600) {
+        vis *= Math.max(0, (z.ms - z.t) / 600);
+      } else if (z.stealthAfterMs > 0 && z.t >= z.stealthAfterMs) {
+        vis *= Math.max(0.52, 1 - ((z.t - z.stealthAfterMs) / 400) * 0.48);
+      }
       const k = (z.t % z.tick) / z.tick;
-      z.disc.setAlpha(0.2 * fadeIn + 0.06 * (1 - k));
-      z.ring.setAlpha(0.85 * fadeIn);
-      z.inner.setAlpha(0.35 * fadeIn * (1 - k)).setDisplaySize(z.r * (1.1 + 0.8 * k), z.r * (1.1 + 0.8 * k));
-      if (z.sign) z.sign.setAlpha(0.75 * fadeIn);
+      z.disc.setAlpha((0.2 + 0.06 * (1 - k)) * vis);
+      z.ring.setAlpha(0.85 * vis);
+      z.inner.setAlpha(0.35 * vis * (1 - k)).setDisplaySize(z.r * (1.1 + 0.8 * k), z.r * (1.1 + 0.8 * k));
+      if (z.sign) z.sign.setAlpha(0.75 * vis);
       if (z.t >= z.nextTick) { z.nextTick += z.tick; this._zoneTick(z); }
     }
     const parts = this.parts;

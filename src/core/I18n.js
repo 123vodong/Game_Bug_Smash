@@ -72,7 +72,7 @@ const EN = {
   'prac.noDmg': 'NO DMG',
   'prac.lvUp': '+LV',
   'prac.gold': '+5000g',
-  'prac.status': 'PRACTICE MODE · sandbox controls on left / ESC',
+  'prac.status': 'PRACTICE MODE · sandbox controls top-right / ESC',
   // Main Menu & Settings
   'main.play': 'PLAY',
   'main.multiplayer': 'TEAM & ONLINE',
