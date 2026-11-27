@@ -20,7 +20,7 @@
 // modalSet() updates an open modal (reconnect countdown), a 🏳 ROLLBACK button + team vote panel
 // (EP-08), a coaching tip card under the minimap (EP-10) and a pulsing "🛒 Buy <item> (P)" nudge
 // (EP-21). The left column (under the minimap) never overlaps the skill buttons.
-import { CHAMPIONS, CHAMPION_PASSIVES } from '../../../shared/moba/champions.js';
+import { CHAMPIONS, CHAMPION_PASSIVES, resolveSkill, nextStance, parseKitTags, parseCcTags, CC_TYPES } from '../../../shared/moba/champions.js';
 import { ITEMS } from '../../../shared/moba/items.js';
 import {
   TEAM_INFO, TEAM_SIZE, XP_TABLE, MAX_LEVEL, ULT_UNLOCK_LEVEL, RECALL_MS, EPICS,
@@ -29,6 +29,8 @@ import { MAP_W, MAP_H } from '../../../shared/moba/map.js';
 import { SPELLS, spellCooldownMs } from '../../../shared/moba/spells.js';
 import { t, tText, onLangChange } from '../../core/I18n.js';
 import { FONT, MONO, ME_COLOR, LOOKS, teamColor, teamCss, css, fmtTime, toArr } from './mobaGfx.js';
+
+const CC_ICON = 34, CC_ICON_STEP = 42, CC_ICONS_MAX = 4; // v6.1 status row geometry (px)
 
 const sec = (ms) => `${+(Math.max(0, ms || 0) / 1000).toFixed(1)}s`;
 /** "60 (+15/lv) +70% AP" for an amount spec. */
@@ -78,7 +80,52 @@ export function skillMechanics(sk, def) {
   if (sk.stasis) L.push(`⏳ Stasis ${sec(sk.stasis.ms)}: invulnerable, cannot act`);
   if (sk.type === 'dash') L.push('🧱 stops at walls');
   if (sk.type === 'blink') L.push('🧱 lands beside walls');
+  kitMechanics(sk, L);
   return L;
+}
+
+const pctMul = (a) => `x${+a[0].toFixed(2)} to x${+a[1].toFixed(2)}`;
+/** v6 primitives, one generic line per spec field (no per-champion branches; plain text, no emoji). */
+function kitMechanics(sk, L) {
+  const hd = sk.hold;
+  if (sk.input === 'hold' && hd) {
+    L.push(`Hold ${sec(hd.minMs)} to ${sec(hd.maxMs)} to charge (you move ${Math.round((hd.moveSlow || 0) * 100)}% slower), release to fire. Tap = quick cast at ${Math.round((hd.quick || 0) * 100)}% charge.`);
+    const sc = Object.entries(hd.scale || {}).map(([k, v]) => `${k} ${pctMul(v)}`).join(', ');
+    if (sc) L.push(`Charge scales: ${sc}`);
+  }
+  if (sk.input === 'drag') L.push('Drag: press at the first point, release at the second.');
+  if (sk.targets === 'ally') L.push('Targets an ally (hover one, or the nearest is chosen).');
+  const sp = sk.spend;
+  if (sp) {
+    const per = Object.entries(sp.per || {}).map(([k, v]) => (v && typeof v === 'object' ? `${k} per unit` : `${k} +${v}`)).join(', ');
+    L.push(`Spends ${sp.min}-${sp.max} ${sp.res}${per ? `: ${per} each` : ''}`);
+  }
+  const ob = sk.obj;
+  if (ob) {
+    L.push(`Places a ${ob.pin ? `${ob.pin} pin` : ob.kind}${ob.ms ? ` for ${sec(ob.ms)}` : ''}${ob.maxActive ? ` (max ${ob.maxActive})` : ''}${ob.hp ? ', has HP' : ''}`);
+    if (ob.kind === 'wall') L.push(`Wall length up to ${ob.len}px, hits every ${sec(ob.rehitMs)}`);
+    if (ob.kind === 'portal') L.push(`Second press within ${sec(sk.recast?.ms)} places the exit; ${sec(ob.gapMs)} between uses`);
+    if (ob.kind === 'turret') L.push(`Fires every ${sec(ob.atkMs)} (range ${ob.range}); heat +${ob.heat?.perShot} per shot, explodes at ${ob.heat?.max}`);
+    if (ob.kind === 'beacon') L.push(`Allies recall to it in ${sec(ob.allyRecallMs)}`);
+    if (ob.trigger) L.push(`Triggers on the first ${ob.trigger === 'ally' ? 'ally' : 'enemy'} that enters`);
+  }
+  if (sk.rewind) L.push(`Rewinds ${sk.rewind.allies ? `you and allies within ${sk.rewind.radius}px` : 'you'} by ${sec(sk.rewind.lookbackMs)}${sk.rewind.hp ? ' (position and HP)' : ' (position)'}${sk.rewind.cleanse ? ', cleanses' : ''}`);
+  if (sk.tether) L.push(`Heal link for ${sec(sk.tether.durationMs)}: ${Math.round((sk.tether.selfPct || 0) * 100)}% back to you, you move ${Math.round((sk.tether.casterSlow || 0) * 100)}% slower${sk.tether.recastEnds ? '. Press again to cut it' : ''}`);
+  if (sk.link) L.push(`Shares ${Math.round(sk.link.sharePct * 100)}% of damage between two allies for ${sec(sk.link.ms)} (breaks past ${sk.link.breakRange}px)`);
+  if (sk.type === 'stance' && sk.cycle) L.push(`Cycles: ${sk.cycle.join(' > ')}`);
+  if (sk.shadow) L.push(sk.shadow.mode === 'swap' ? 'Swaps places with your shadow' : `Places a shadow clone for ${sec(sk.shadow.ms)}`);
+  if (sk.alsoAtShadow) L.push('Also strikes around your shadow');
+  if (sk.shadowAt === 'origin') L.push('Leaves a shadow where you stood');
+  if (sk.summon) L.push(`Sends a drone for ${sec(sk.summon.ms)} (vision ${sk.summon.vision}px, marks ${sk.summon.mark?.tag})`);
+  if (sk.echo) L.push(`Stores your next ${['q', 'w', 'e', 'r'].filter((x) => !(sk.echo.exclude || []).includes(x)).join('/').toUpperCase()}: a copy fires ${sec(sk.echo.delayMs)} later at ${Math.round(sk.echo.mulPct * 100)}% power`);
+  if (sk.timebox) L.push(`${sec(sk.timebox.ms)} timebox: ${Math.round(sk.timebox.refundPct * 100)}% of the cooldown of skills cast inside is refunded`);
+  if (sk.reload) L.push(`Reload ${sec(sk.reload.ms)}. Press again in the gold window for an instant reload; a miss jams (+${sec(sk.reload.jamMs)})`);
+  if (sk.pickup) L.push('Loads a package; the farther you travel, the bigger the tip');
+  if (sk.deliver) L.push('Needs a package: delivers to an ally or allied tower; reward scales with the tip');
+  if (sk.serve) L.push('Outcome depends on your mix; fewer ingredients = weaker serve');
+  if (sk.addMix) L.push(`Adds ${{ S: 'SHOT', M: 'MILK', G: 'SYRUP' }[sk.addMix] || sk.addMix} to your mix`);
+  if (sk.resolve) L.push('Detonates every pin you have placed');
+  if (sk.objcmd) L.push(`Command for all your turrets: ${sk.objcmd.cmd}`);
 }
 
 /** Shared screen-pinned floating tooltip box used by MobaHud and pick scenes. */
@@ -100,13 +147,15 @@ export function showFloatingTip(s, { x, y, title, body, color = 0x39c2ff, W, H, 
 
 /** Shared detailed Q/W/E/R skill tooltip for HUD and champion pick screens. */
 export function showSkillTipPanel(s, def, slot, opts = {}) {
-  const sk = def?.skills?.[slot];
+  const sk = resolveSkill(def, slot, opts.stance); // v6: stance-resolved spec (pick screens pass no stance = base)
   if (!sk) return null;
+  const variant = sk !== def.skills[slot] && opts.stance ? `.${opts.stance}` : '';
   const range = sk.at === 'pet' ? ` · radius ${sk.radius}` : sk.range ? ` · range ${sk.range}${sk.radius ? ` · radius ${sk.radius}` : ''}` : (sk.radius ? ` · radius ${sk.radius}` : '');
   const mech = skillMechanics(sk, def);
-  const desc = tText(`skill.${def.id}.${slot}`, sk.desc || '');
+  const desc = tText(`skill.${def.id}.${slot}${variant}`, sk.desc || '');
   const title = `${sk.icon || '✨'} ${sk.name}  [${slot.toUpperCase()}]${slot === 'r' ? `  (Lv ${ULT_UNLOCK_LEVEL}+)` : ''}`;
-  const body = `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${desc}${mech.length ? `\n${mech.join('\n')}` : ''}`;
+  const nextSt = sk.type === 'stance' && opts.stance ? `\nNext stance: ${nextStance(sk, opts.stance)}` : '';
+  const body = `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${desc}${nextSt}${mech.length ? `\n${mech.join('\n')}` : ''}`;
   return showFloatingTip(s, { ...opts, title, body, color: sk.color ?? 0x39c2ff });
 }
 
@@ -255,11 +304,39 @@ export class MobaHud {
       if (this.touch) {
         frame.setInteractive({ useHandCursor: true });
         frame.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); this.o.onSkill?.(slot, true); });
+        const up = () => this.o.onSkillUp?.(slot); // hold / drag skills fire on release
+        frame.on('pointerup', up); frame.on('pointerupoutside', up);
       }
-      c.add([frame, icon, noMana, dim, pie, cd, lock, key, mana, pips, flash, upBg, upTxt]);
+      // v6: next stance label (stance toggle keys) + charge ring for held skills
+      const sub = s.add.text(26, -27, '', { fontFamily: FONT, fontSize: 9, color: '#bfe6ff', backgroundColor: '#000000cc', padding: { x: 2, y: 0 } }).setOrigin(1, 0).setVisible(false);
+      const ring = s.add.graphics();
+      c.add([frame, icon, noMana, dim, pie, cd, lock, key, mana, pips, flash, upBg, upTxt, sub, ring]);
       root.add(c);
-      this.slots[slot] = { c, frame, icon, noMana, dim, pie, cd, lock, mana, pips, flash, upBg, upTxt, x, y };
+      this.slots[slot] = { c, frame, icon, noMana, dim, pie, cd, lock, mana, pips, flash, upBg, upTxt, sub, ring, x, y, spec: null };
     });
+
+    // v6 kit chips: one generic row (built from parsed `kit:` tags) above the skills; text pool + one graphics for bars.
+    this._kitRow = s.add.container(L + 10, T - 14);
+    this._kitG = s.add.graphics();
+    this._kitRow.add(this._kitG);
+    root.add(this._kitRow);
+    this._kitTxt = [];
+    this._kitSince = {};
+
+    // v6.1 status row: up to 4 CC icons (parseCcTags, priority order) with a timer ring, above the kit chips / skill bar.
+    this._ccRow = s.add.container(L + 10, T - 56);
+    this._ccG = s.add.graphics();
+    this._ccRow.add(this._ccG);
+    this._ccIcons = [];
+    for (let i = 0; i < 4; i++) {
+      const bg = s.add.rectangle(i * CC_ICON_STEP + CC_ICON / 2, CC_ICON / 2, CC_ICON, CC_ICON, 0x061220, 0.85).setStrokeStyle(2, 0xffffff, 0.9).setVisible(false);
+      const glyph = s.add.text(i * CC_ICON_STEP + CC_ICON / 2, CC_ICON / 2, '', { fontFamily: FONT, fontSize: 20 }).setOrigin(0.5).setVisible(false);
+      const lab = s.add.text(i * CC_ICON_STEP + CC_ICON / 2, CC_ICON + 1, '', { fontFamily: FONT, fontSize: 9, color: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 0).setVisible(false);
+      this._ccRow.add([bg, glyph, lab]);
+      this._ccIcons.push({ bg, glyph, lab });
+    }
+    root.add(this._ccRow);
+    this._ccBuffs = null; this._ccList = []; this._ccSince = {}; this._ccFx = {}; this._ccShown = 0;
 
     // HP / mana bars.
     const bx = L + 114, bw = 270 + SP - 10;
@@ -452,13 +529,8 @@ export class MobaHud {
       } catch (e) { console.warn('[MobaHud] drawChampionPortrait failed:', e?.message); this.portrait.setVisible(true); }
     }
     this.portraitRing.setStrokeStyle(3, ME_COLOR, 1).setFillStyle(teamColor(team) & 0x3f3f3f | 0x101010, 1);
-    for (const slot of SLOTS) {
-      const sk = def.skills[slot], sl = this.slots[slot];
-      sl.icon.setText(sk.icon);
-      sl.mana.setText(String(sk.mana));
-      sl.frame.setStrokeStyle(2, sk.color, 0.85);
-    }
-    for (const b of this._touchSkills || []) b.icon.setText(def.skills[b.slot].icon);
+    this._kit = {}; this._kitBuffs = null; this._kitSince = {};
+    for (const slot of SLOTS) this._applySlotSpec(slot, resolveSkill(def, slot, null));
     if (this._hoverKey?.startsWith('skill:')) this._showSkillTip(this._hoverKey.slice(6));
     else if (this._hoverKey === 'champ') this._showChampTip();
   }
@@ -474,11 +546,12 @@ export class MobaHud {
   }
 
   _showSkillTip(slot) {
-    const def = this.def, sk = def?.skills?.[slot];
+    const def = this.def, stance = this._kit?.stance, sk = resolveSkill(def, slot, stance);
     if (!sk) return;
     const sl = this.slots[slot], sc = this._hudScale || 1;
     this._hideTip();
     this._tip = showSkillTipPanel(this.s, def, slot, {
+      stance,
       x: this.px + sl.x * sc, y: this._panelTop() - 8, W: this.W, H: this.H, depth: 60,
     });
   }
@@ -535,7 +608,7 @@ export class MobaHud {
     const size = this.touch ? 168 : 200;
     // 2026-11-25: the floor size comes from the world (Story Mode floors are not 6000 square)
     const WW = this.o.world?.w || MAP_W, WH = this.o.world?.h || MAP_H;
-    this.mm = { x: 10, y: 10, size, k: size / Math.max(WW, WH) };
+    this.mm = { x: 10, y: 10, size, k: size / Math.max(WW, WH), ww: WW, wh: WH };
     // Static minimap baked once into a small texture (Graphics would re-tessellate every frame).
     if (map) {
       const g = s.make.graphics({}, false);
@@ -609,6 +682,10 @@ export class MobaHud {
     if (view) {
       g.lineStyle(1, 0xffffff, 0.85);
       g.strokeRect(x0 + view.x * k, y0 + view.y * k, view.width * k, view.height * k);
+    }
+    if (this._mmAim) { // v6.1 global skill aim dot
+      const ax = x0 + this._mmAim.x * k, ay = y0 + this._mmAim.y * k;
+      g.lineStyle(2, 0xff5e5e, 1); g.strokeCircle(ax, ay, 6); g.fillStyle(0xff5e5e, 1); g.fillRect(ax - 1.5, ay - 1.5, 3, 3);
     }
   }
 
@@ -1136,7 +1213,10 @@ export class MobaHud {
       b.slot = slot;
       b.cd = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 16, color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
       b.dim = s.add.circle(0, 0, 31, 0x000000, 0.55).setVisible(false);
-      b.c.add([b.dim, b.cd]);
+      b.ring = s.add.graphics(); // v6 charge ring
+      b.c.add([b.dim, b.cd, b.ring]);
+      const up = () => this.o.onSkillUp?.(slot); // pointer up = key up (hold / drag)
+      b.bg.on('pointerup', up); b.bg.on('pointerupoutside', up);
       this._touchSkills.push(b);
       this._touchSkillMap[slot] = b;
     });
@@ -1233,8 +1313,158 @@ export class MobaHud {
     this._setHidden(me && !me.dead && ctx.phase === 'playing' ? (ctx.hidden || null) : null);
   }
 
+  /** Slot icon / mana / frame (+ touch icon) from a resolved spec; refreshes an open tooltip on that slot. */
+  _applySlotSpec(slot, sk) {
+    const sl = this.slots[slot];
+    if (!sl || !sk) return;
+    sl.spec = sk;
+    sl.icon.setText(sk.icon);
+    sl.mana.setText(String(sk.mana));
+    sl.frame.setStrokeStyle(2, sk.color, 0.85);
+    const tb = this._touchSkillMap?.[slot];
+    if (tb?.icon) tb.icon.setText(sk.icon);
+    if (this._hoverKey === `skill:${slot}`) this._showSkillTip(slot);
+  }
+
+  /** Next-stance label on a toggle key + the charge ring on the held slot (panel slot and touch button). */
+  _slotExtras(slot, sl, sk, ctx) {
+    const nxt = sk.type === 'stance' && this._kit?.stance ? nextStance(sk, this._kit.stance) : '';
+    sl.sub.setVisible(!!nxt);
+    if (nxt) this._set(`sub_${slot}`, sl.sub, `> ${nxt.slice(0, 6)}`);
+    const h = ctx.held && ctx.held.slot === slot && ctx.held.mode === 'hold' ? ctx.held : null;
+    const tb = this._touchSkillMap?.[slot];
+    if (!h && !sl._ringOn) return;
+    for (const [g, r] of [[sl.ring, 33], [tb?.ring, 36]]) {
+      if (!g) continue;
+      g.clear();
+      if (!h) continue;
+      const hd = h.spec.hold, el = ctx.now - h.since, f = Math.max(0, Math.min(1, el / hd.maxMs));
+      const col = el < hd.minMs ? 0x9fb0c8 : f >= 1 ? 0xff5e5e : 0xffd23f; // grey until the minimum charge, gold, red at full
+      g.lineStyle(4, col, 0.95); g.beginPath(); g.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); g.strokePath();
+    }
+    sl._ringOn = !!h;
+  }
+
+  /** v6 kit chips: generic list built from the parsed `kit:` tags (stance, resources, mix, package, objects, timed states). */
+  _updateKit(me, srvNow, ctx) {
+    const def = this.def;
+    const buffs = me.buffs || '';
+    if (buffs !== this._kitBuffs) {
+      this._kitBuffs = buffs; this._kit = parseKitTags(buffs);
+      for (const k of Object.keys(this._kitSince)) if (!(k in this._kit)) delete this._kitSince[k];
+      for (const k of Object.keys(this._kit)) if (!(k in this._kitSince)) this._kitSince[k] = ctx.now; // timers start when a tag appears
+    }
+    const kit = this._kit, g = this._kitG;
+    g.clear();
+    let x = 0, n = 0;
+    const kt = (key, d) => { const s = t(key); return s === key ? d : s; };
+    const chip = (str, color, bar, barCol, win) => {
+      let tx = this._kitTxt[n];
+      if (!tx) { tx = this.s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 12, color: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0, 1); this._kitRow.add(tx); this._kitTxt[n] = tx; }
+      n++;
+      tx.setVisible(true).setPosition(x, 0).setColor(css(color));
+      this._set(`kc${n}`, tx, str);
+      let w = tx.width;
+      if (bar !== undefined) {
+        g.fillStyle(0x000000, 0.7); g.fillRect(x + w + 4, -10, 54, 7);
+        g.fillStyle(barCol ?? color, 1); g.fillRect(x + w + 4, -10, 54 * Math.max(0, Math.min(1, bar)), 7);
+        if (win) { g.fillStyle(0xffd23f, 0.9); g.fillRect(x + w + 4 + 54 * win[0], -11, 54 * (win[1] - win[0]), 9); }
+        w += 62;
+      }
+      x += w + 12;
+    };
+    // remaining fraction of a timed tag from the champion's own spec durations (generic: first skill that defines it)
+    const dur = (get) => { for (const s of Object.values(def?.skills || {})) { const v = get(s); if (v) return v; } return 0; };
+    const timed = (tag, get) => { const d = dur(get); return d > 0 ? 1 - (ctx.now - (this._kitSince[tag] || ctx.now)) / d : undefined; };
+    if (def) {
+      if (kit.stance !== undefined) chip(kt(`kit.stance.${kit.stance}`, `Stance: ${kit.stance}`), 0xbfe6ff);
+      const rs = def.kit?.res;
+      if (rs && kit[rs.key] !== undefined) {
+        const v = Math.max(0, Math.min(rs.max, Number(kit[rs.key]) || 0));
+        chip(`${kt(`kit.res.${rs.key}`, rs.key)} ${'●'.repeat(v)}${'○'.repeat(rs.max - v)}`, rs.key === 'orbs' ? 0x6cffd6 : 0xff8ac8);
+      }
+      if (def.kit?.mix) {
+        const mx = def.kit.mix.max, L = kit.mix || '', slots = [];
+        for (let i = 0; i < mx; i++) slots.push(L[i] || '_');
+        chip(`${kt('kit.res.mix', 'mix')} ${slots.join(' ')}`, 0xc8864a);
+      }
+      if (kit.pkg !== undefined) { const p = Number(kit.pkg) || 0; chip(`${kt('kit.res.pkg', 'tip')} ${p}%`, 0xffc04d, p / 100, 0xffc04d); }
+      if (kit.turrets) chip(`turrets ${kit.turrets}`, 0x00e5ff);
+      if (kit.pins) chip(`pins ${kit.pins}`, 0xff7675);
+      if (kit.shadow) chip('shadow', 0xb084ff, timed('shadow', (s) => s.shadow?.mode === 'place' && s.shadow.ms));
+      if (kit.echo) chip('echo armed', 0x91a7ff, timed('echo', (s) => s.echo?.armMs));
+      if (kit.tbox) chip('timebox', 0xffe066, timed('tbox', (s) => s.timebox?.ms));
+      if (kit.tether) chip('tether', 0x7ed957, timed('tether', (s) => s.tether?.durationMs));
+      if (kit.link) chip(`link: ${ctx.st?.champions?.get?.(kit.link)?.name || '?'}`, 0x7ed957, timed('link', (s) => s.link?.ms));
+      if (kit.reload) {
+        const sp = Object.values(def.skills).find((s) => s.reload)?.reload;
+        const f = sp ? Math.min(1, (ctx.now - (this._kitSince.reload || ctx.now)) / sp.ms) : 0;
+        chip(kt('kit.reloading', 'Reloading'), 0xffffff, f, 0xffffff, sp?.perfect); // gold window = the perfect-press range
+      }
+    }
+    for (let i = n; i < this._kitTxt.length; i++) this._kitTxt[i].setVisible(false);
+  }
+
+  /** v6.1: a `cc` / `ccBreak` fx about the local champion (forwarded by the scene): sets / clears the timer ring length. */
+  onCcFx(m) {
+    if (!m?.type) return;
+    if (m.k === 'cc') this._ccFx[m.type] = { at: this.s.time.now, ms: Math.max(1, Number(m.ms) || CC_TYPES[m.type]?.typMs || 1000) };
+    else if (m.k === 'ccBreak') delete this._ccFx[m.type];
+  }
+
+  /** v6.1 status row: up to 4 icons from the `cc:` tags (CC_PRIORITY order) with a draining ring; ring length = last `cc` fx ms, else CC_TYPES.typMs. */
+  _updateCc(me, ctx) {
+    const buffs = me.buffs || '';
+    if (buffs !== this._ccBuffs) {
+      this._ccBuffs = buffs;
+      const list = parseCcTags(buffs).slice(0, CC_ICONS_MAX);
+      for (const k of Object.keys(this._ccSince)) if (!list.includes(k)) { delete this._ccSince[k]; delete this._ccFx[k]; }
+      for (const k of list) if (!(k in this._ccSince)) this._ccSince[k] = ctx.now; // ring starts when the tag appears
+      this._ccList = list;
+      const kt = (key, d) => { const s = t(key); return s === key ? d : s; };
+      this._ccIcons.forEach((ic, i) => {
+        const k = list[i], on = !!k;
+        ic.bg.setVisible(on); ic.glyph.setVisible(on); ic.lab.setVisible(on);
+        if (!on) return;
+        const ty = CC_TYPES[k];
+        ic.bg.setStrokeStyle(2, ty.color, 0.95);
+        ic.glyph.setText(ty.icon);
+        ic.lab.setText(kt(`cc.${k}`, ty.label));
+      });
+    }
+    const n = this._ccList.length, g = this._ccG;
+    if (!n) { if (this._ccShown) { g.clear(); this._ccShown = 0; } return; }
+    this._ccShown = n;
+    g.clear();
+    this._ccList.forEach((k, i) => {
+      const ty = CC_TYPES[k], fx = this._ccFx[k], since = this._ccSince[k] ?? ctx.now;
+      const useFx = fx && fx.at >= since - 600; // a cc fx may arrive just before the tag
+      const start = useFx ? fx.at : since, ms = useFx ? fx.ms : ty.typMs;
+      const f = Math.max(0, Math.min(1, 1 - (ctx.now - start) / ms));
+      const cx = i * CC_ICON_STEP + CC_ICON / 2, cy = CC_ICON / 2, r = CC_ICON / 2 + 3;
+      g.lineStyle(4, 0x000000, 0.6); g.strokeCircle(cx, cy, r);
+      if (f > 0) { g.lineStyle(3, ty.color, 1); g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); g.strokePath(); }
+    });
+  }
+
+  /** v6.1: world point under a screen point if it is on the minimap, else null (aims global skills with the pointer). */
+  minimapWorld(px, py) {
+    const m = this.mm;
+    if (!m || px < m.x || py < m.y || px > m.x + m.size || py > m.y + m.size) return null;
+    return { x: Math.min(m.ww, (px - m.x) / m.k), y: Math.min(m.wh, (py - m.y) / m.k) };
+  }
+  /** v6.1: aim dot of a previewed global skill on the minimap (null clears). */
+  setMmAim(pt) {
+    const a = this._mmAim;
+    if ((!a && !pt) || (a && pt && a.x === pt.x && a.y === pt.y)) return;
+    this._mmAim = pt ? { x: pt.x, y: pt.y } : null;
+    this._mmAt = 0; // redraw the dynamic minimap on the next update
+  }
+
   _updatePanel(me, srvNow, ctx) {
     if (!me) return;
+    this._updateKit(me, srvNow, ctx);
+    this._updateCc(me, ctx);
     // Bars.
     const maxHp = Math.max(1, me.maxHp || 1), hp = Math.max(0, me.hp || 0), sh = me.shield || 0;
     const p = Math.min(1, hp / maxHp);
@@ -1262,8 +1492,10 @@ export class MobaHud {
     // Skills.
     const def = this.def;
     for (const slot of SLOTS) {
-      const sl = this.slots[slot], sk = def?.skills?.[slot];
+      const sl = this.slots[slot], sk = resolveSkill(def, slot, this._kit?.stance);
       if (!sk) continue;
+      if (sl.spec !== sk) this._applySlotSpec(slot, sk); // stance changed: icon / mana / frame / tooltip follow the resolved spec
+      this._slotExtras(slot, sl, sk, ctx);
       const readyAt = me['cd' + slot.toUpperCase()] || 0;
       const left = readyAt > srvNow ? readyAt - srvNow : 0;
       if (readyAt !== this._cdPrev[slot]) {

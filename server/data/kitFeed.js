@@ -1,0 +1,33 @@
+// server/data/kitFeed.js — v6 kit humor lines for the kill feed (docs/02_CHAMPIONS_AND_SKILLS.md [v6 numbering] section 10).
+// Author: Duke Nguyen
+export const KIT_FEED = {
+  rewind: ['{a} pressed Ctrl+Z on reality.'],
+  rollback: ['{a} rolled the team back 3 seconds. Nobody remembers what happened.'],
+  portal: ['{a} opened a port. Security is concerned.'],
+  beacon: ['{a} deployed a beacon. Please file a ticket before teleporting.'],
+  overheat: ["{a}'s turret hit 100% CPU."],
+  detonate: ['Controlled burst. Terms and conditions apply.'],
+  jam: ["{a}'s gun: app not responding."],
+  perfect: ['{a} shipped the hotfix in one take.'],
+  deliver: ['{a} delivered. 5 stars, tip included.'],
+  pkgLost: ['Customer not home. Package returned.'],
+  echo: ['{a} served a stale copy.'],
+  timebox: ['Sprint closed on time. Velocity looks suspicious.'],
+  link: ['{a} scheduled a team bonding. Damage is now a shared resource.'],
+  serve: ['{a} serves a {b}. Nobody asked about decaf.'],
+  pins: ['{a} left 5 comments. All of them are nits.'],
+  resolve: ['Merge when resolved. Resolving. All of them.'],
+  stance: ['{a} switched to {b}.'],
+  drone: ['{a} sent a scout. It is filing bugs on your base.'],
+  // v6.1 CC and states (docs/02_CHAMPIONS_AND_SKILLS.md [v6.1 numbering] section 6)
+  charm: ['{a} sent a calendar invite. Nobody can decline.'],
+  fear: ['{a} read out the incident report. Everyone left.'],
+  taunt: ['{a} read the rules out loud. Everyone must listen.'],
+  blind: ['{a} hit someone with decaf and rage.'],
+  disarm: ['{a} requested changes. No commits allowed.'],
+  suppress: ['{a} scheduled a 1:1 with no agenda.'],
+  airborne: ['{a} locked the table. Rows went airborne.'],
+  revive: ['{a} failed over. Nobody noticed the downtime.'],
+  global: ['{a} filed a bug from across the map.'],
+  untarget: ['{a} is in the other region.'],
+};

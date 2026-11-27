@@ -12,11 +12,12 @@
 // fixed-size pools — nothing grows without bound. Rare effects (telegraphs,
 // skull popups) are created and destroyed.
 import { D, FONT, clamp, LOOKS, shakeCam, calmPrefs } from './mobaGfx.js';
-import { PROJ } from './SkillFx.js';
+import { PROJ, LIVE, V6, SUPPRESS, CCFX, castFx, segDist } from './SkillFx.js';
 
 const MAX_PARTS = 260, MAX_PARTS_LOW = 110;
 const MAX_NUMS = 44, MAX_NUMS_LOW = 22;
 const MAX_ZONES = 14;
+const MAX_OBJ_PER_TEAM = 14; // V4: persistent fx-only objects (walls, portals, pins, beacons) per team
 const ADD = 1; // Phaser.BlendModes.ADD
 const NORMAL = 0;
 
@@ -40,6 +41,18 @@ export class MobaFx {
     this.shots = [];
     this.zones = [];
     this.low = false; this._maxParts = MAX_PARTS; this._maxNums = MAX_NUMS; this._skip = 0;
+    // v6 kit fx: persistent entities keyed by oid / tid / lid / sid (`obj:ob_3`, `tether:t1` ...)
+    this.live = new Map();
+    this.alias = new Map();      // oid / pair id -> live key (portal pairs share one entity)
+    this.objState = new Map();   // turret oid -> { h (heat tenths), ang, kick } read by UnitView
+    this.serveStyle = 'servePlain';
+    // v6.1: CC bookkeeping. ccInfo `${id}|${type}` -> { sid, until, ms } (read by ChampionView for the charm / taunt line to the source);
+    // ccFxAt / missAt throttle apply and MISS visuals; gpings = active global warning lines (the HUD may draw the minimap line from them);
+    // ghostUntil = champion id -> scene time until which the body is drawn at 35% alpha (dash / blink `ghost:1`).
+    this.ccInfo = new Map(); this.ccFxAt = new Map(); this.missAt = new Map(); this.gpings = []; this.ghostUntil = new Map();
+    this._lastBoom = null; this._boomN = 0;
+    scene.events?.once?.('shutdown', () => this.destroyAll());
+    scene.events?.once?.('destroy', () => this.destroyAll());
   }
 
   /** v4 quality: low effects → smaller caps, every other spark / dust particle dropped. */
@@ -175,7 +188,7 @@ export class MobaFx {
     this.shots.push({
       kind: 'skill', head, core, trail, x0: m.x, y0: m.y, x: m.x, y: m.y, ux, uy, speed, range, dist: 0,
       width, color, pierce: !!(pierce || m.boomerang), boomerang: !!m.boomerang, sid: m.sid || '', returning: false, t: 0, spin,
-      deco: L && L.deco ? L.deco : null, headSpin: !!(L && L.head && L.spin),
+      deco: L && L.deco ? L.deco : null, end: L && L.end ? L.end : null, headSpin: !!(L && L.head && L.spin), orient: !!(L && L.orient),
     });
   }
 
@@ -207,6 +220,7 @@ export class MobaFx {
     s.gfx?.destroy();
     this._release(s.head); this._release(s.core); this._release(s.trail);
     s.head = s.core = s.trail = null;
+    if (s.end && this.onScreen(x, y)) s.end(this, s, x, y);
     if (this.onScreen(x, y)) {
       this.part(x, y, { tint: s.color, add: true, s0: (s.width || s.size * 2) * 1.4, s1: (s.width || s.size * 2) * 2.2, a0: 0.9, life: 0.18 });
       this.sparks(x, y, s.color, s.kind === 'skill' ? 6 : 3, s.kind === 'skill' ? 160 : 90);
@@ -225,6 +239,7 @@ export class MobaFx {
   }
 
   hit(x, y, color) {
+    if (this.live.size) this._wallHit(x, y);
     if (!this.onScreen(x, y)) return;
     this.part(x, y, { tint: color ?? 0xffffff, add: true, s0: 46, s1: 70, a0: 0.85, life: 0.16 });
     this.sparks(x, y, color ?? 0xffffff, 6, 150);
@@ -250,7 +265,9 @@ export class MobaFx {
     const g = s.add.graphics().setDepth(D.ground + 0.3);
     g.fillStyle(color, 0.1); g.fillCircle(m.x, m.y, r);
     g.lineStyle(4, color, 0.95); g.strokeCircle(m.x, m.y, r);
-    const fill = s.add.image(m.x, m.y, 'moba-disc').setTint(color).setDepth(D.ground + 0.4).setAlpha(0.3).setScale(0.01);
+    const inner = Number.isFinite(m.inner) && m.inner > 0 ? clamp(m.inner, 10, r - 10) : 0; // v6.1 donut: dashed inner outline, centre is safe
+    if (inner) { g.lineStyle(3, color, 0.9); for (let i = 0; i < 24; i += 2) { g.beginPath(); g.arc(m.x, m.y, inner, (i / 24) * Math.PI * 2, ((i + 1) / 24) * Math.PI * 2); g.strokePath(); } }
+    const fill = s.add.image(m.x, m.y, 'moba-disc').setTint(color).setDepth(D.ground + 0.4).setAlpha(inner ? 0.16 : 0.3).setScale(0.01);
     s.tweens.add({
       targets: fill, scale: (2 * r) / 128, duration: delay, ease: 'Linear',
       onComplete: () => { fill.destroy(); g.destroy(); if (!noBurst) this.burst(m.x, m.y, r, color); },
@@ -273,6 +290,7 @@ export class MobaFx {
   }
 
   dash(m) {
+    this.markGhost(m);
     const { x0, y0, x1, y1 } = m;
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
     if (!this.onScreen(x0, y0, 400) && !this.onScreen(x1, y1, 400)) return;
@@ -291,6 +309,7 @@ export class MobaFx {
   }
 
   blink(m) {
+    this.markGhost(m);
     const { x0, y0, x1, y1 } = m;
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
     for (const [x, y, big] of [[x0, y0, false], [x1, y1, true]]) {
@@ -608,8 +627,225 @@ export class MobaFx {
     this.part(x, y - 50, { tint: color, add: true, s0: 40, s1: 160, w: 0.45, h: 1.4, a0: 0.9, life: 0.5 });
   }
 
+
+  // ───────────────────────── v6 kit fx (section 3.4 of docs/02_CHAMPIONS_AND_SKILLS.md [v6 numbering]) ─────────────────────────
+  /** Entry point for every fx kind the scene does not know. Unknown kinds / malformed fields never throw. */
+  handle(m) {
+    if (!m || typeof m.k !== 'string' || this.scene._shuttingDown) return;
+    try { this._v6(m); } catch (_) { /* a bad fx message must never break the frame */ }
+  }
+
+  _mkLive(key, m, ms, capped) {
+    this._endLive(key, true);
+    if (capped) {
+      let n = 0;
+      for (const e of this.live.values()) if (e.capped && e.team === (m.team || '')) n++;
+      for (const e of [...this.live.values()]) { if (n < MAX_OBJ_PER_TEAM) break; if (e.capped && e.team === (m.team || '')) { this._drop(e); n--; } }
+    }
+    const e = { key, m, team: m.team || '', ms: ms > 0 ? ms : 0, t: 0, vis: 0, endT: -1, fade: 300, capped: !!capped, imgs: [], objs: [], ids: new Set(), upd: null, end: null };
+    e.img = (name, tint = 0xffffff, add = true, depth = D.fx) => {
+      const k = `vfx-${name}`, img = this._img(this.scene.textures.exists(k) ? k : 'moba-glow', tint, add ? ADD : NORMAL, depth);
+      e.imgs.push(img); return img;
+    };
+    e.gfx = (depth = D.fx, add = true) => { const g = this.scene.add.graphics().setDepth(depth); if (add) g.setBlendMode(ADD); e.objs.push(g); return g; };
+    e.add = (o) => { e.objs.push(o); return o; };
+    this.live.set(key, e);
+    return e;
+  }
+  /** Graceful end: fade 260 ms (the builder's e.end(boom) may add a one-shot burst). instant = drop now. */
+  _endLive(key, instant, boom) {
+    const e = this.live.get(key);
+    if (!e) return null;
+    if (instant) { this._drop(e); return e; }
+    if (e.endT < 0) { e.endT = 0; try { e.end?.(!!boom); } catch (_) { /* ignore */ } }
+    return e;
+  }
+  _drop(e) {
+    if (e.dropped) return;
+    e.dropped = true;
+    for (const o of e.objs) o.destroy();
+    for (const i of e.imgs) this._release(i);
+    for (const id of e.ids) if (this.alias.get(id) === e.key) this.alias.delete(id);
+    e.objs.length = 0; e.imgs.length = 0;
+    if (this.live.get(e.key) === e) this.live.delete(e.key);
+  }
+  _updateLive(dt) {
+    if (!this.live.size) return;
+    for (const e of [...this.live.values()]) {
+      e.t += dt * 1000;
+      if (e.endT >= 0) e.endT += dt * 1000;
+      if ((e.ms && e.t >= e.ms) || e.endT >= 260) { this._drop(e); continue; }
+      e.vis = Math.min(1, e.t / 160) * (e.ms ? Math.min(1, (e.ms - e.t) / e.fade) : 1) * (e.endT >= 0 ? Math.max(0, 1 - e.endT / 260) : 1);
+      try { e.upd?.(dt); } catch (_) { this._drop(e); }
+    }
+  }
+  /** Scene shutdown / match end: every persistent v6 fx, alias and turret state goes away. */
+  destroyAll() {
+    for (const e of [...this.live.values()]) this._drop(e);
+    this.live.clear(); this.alias.clear(); this.objState.clear();
+    this._clearGpings(true);
+    for (const ev of this._loops || []) ev.remove(false); // style loops (SkillFx.loop) still running
+    this._loops = [];
+    this.ccInfo.clear(); this.ccFxAt.clear(); this.missAt.clear(); this.ghostUntil.clear();
+  }
+
+  _clearGpings(all) {
+    const now = this.scene.time?.now ?? 0;
+    for (let i = this.gpings.length - 1; i >= 0; i--) {
+      const gp = this.gpings[i];
+      if (!all && gp.until > now) continue;
+      try { gp.g._tw?.remove?.(); gp.g.destroy(); } catch (_) { /* already gone */ }
+      this.gpings.splice(i, 1);
+    }
+  }
+
+  /** v6.1: a CC was applied: remember the source (for the line to it) and play the apply VFX (max one per target per 300 ms). */
+  _cc(m) {
+    if (!m.id || typeof m.type !== 'string') return;
+    const now = this.scene.time.now, ms = Number.isFinite(m.ms) ? clamp(m.ms, 0, 5000) : 1000;
+    this.ccInfo.set(`${m.id}|${m.type}`, { sid: m.sid || '', until: now + ms, ms });
+    if (this.ccInfo.size > 80) this.ccInfo.delete(this.ccInfo.keys().next().value);
+    if (now - (this.ccFxAt.get(m.id) || -1e9) < 300) return;
+    this.ccFxAt.set(m.id, now);
+    if (this.ccFxAt.size > 80) this.ccFxAt.delete(this.ccFxAt.keys().next().value);
+    const p = this.posOf(m.id) || (Number.isFinite(m.x) && Number.isFinite(m.y) ? { x: m.x, y: m.y } : null);
+    CCFX.apply(this, m, p, m.sid ? this.posOf(m.sid) : null);
+  }
+
+  /** v6.1 `area` (cone / line / arc telegraph + hit moment): the named style, else a generic shape look. */
+  _area(m) {
+    if (![m.x, m.y, m.a, m.len].every(Number.isFinite) || !(m.len > 0)) return;
+    const c = { x: m.x, y: m.y, a: m.a, len: m.len, w: m.w, ang: m.ang, inner: m.inner, delay: Number.isFinite(m.delay) ? m.delay : 0, sweep: m.sweep, color: Number.isFinite(m.color) ? m.color : 0xffffff, r: m.len };
+    if (!(m.fx && castFx(this, 'area', m.fx, c))) castFx(this, 'area', `_${m.shape}`, c);
+  }
+
+  /** v6.1: `dash` / `blink` with ghost:1 render the champion at 35% alpha for the travel (ChampionView reads ghostUntil). */
+  markGhost(m) {
+    if (!m || !m.ghost || !m.sid) return;
+    this.ghostUntil.set(m.sid, this.scene.time.now + 700);
+    if (this.ghostUntil.size > 40) this.ghostUntil.delete(this.ghostUntil.keys().next().value);
+  }
+
+  /** A `hit` landed: brighten any live laser wall it overlaps. */
+  _wallHit(x, y) {
+    for (const e of this.live.values()) if (e.kind === 'wall' && segDist(x, y, e.A.x, e.A.y, e.B.x, e.B.y) < 90) e.flash = 1;
+  }
+
+  _obj(m) {
+    if (!['wall', 'portal', 'beacon', 'pin', 'barrier'].includes(m.kind) || !LIVE[m.kind]) return; // barricade / turret are units
+    if (![m.x, m.y].every(Number.isFinite) || !m.oid) return;
+    const prev = this.alias.get(m.oid) || (m.pair && this.alias.get(m.pair)) || null;
+    const old = prev && this.live.get(prev);
+    if (m.kind === 'portal' && old && old.kind === 'portal') {
+      old.setB?.(m);
+      old.ids.add(m.oid); this.alias.set(m.oid, old.key);
+      if (m.pair) { old.ids.add(m.pair); this.alias.set(m.pair, old.key); }
+      return;
+    }
+    const e = this._mkLive(`obj:${m.oid}`, m, m.ms > 0 ? m.ms : 30000, true);
+    e.ids.add(m.oid); this.alias.set(m.oid, e.key);
+    if (m.pair) { e.ids.add(m.pair); this.alias.set(m.pair, e.key); }
+    LIVE[m.kind](this, m, e);
+  }
+
+  _v6(m) {
+    switch (m.k) {
+      case 'obj': this._obj(m); break;
+      case 'objUpd': { const e = this.live.get(this.alias.get(m.oid)); if (e && m.filter) e.filter = m.filter; break; }
+      case 'objEnd': {
+        const key = this.alias.get(m.oid);
+        if (key) { this._endLive(key, false, !!m.boom); break; }
+        const p = this.posOf(m.oid); // a unit-backed object (barricade / turret) that blew up
+        if (m.boom && p) { this.explosion(p.x, p.y, false); this.sparks(p.x, p.y, 0xffb347, 10, 260); }
+        this.objState.delete(m.oid);
+        break;
+      }
+      case 'objHeat': {
+        if (!m.oid) break;
+        const s = this.objState.get(m.oid) || { h: 0, ang: 0, kick: 0 };
+        s.h = clamp(Number(m.h) || 0, 0, 10); this.objState.set(m.oid, s);
+        if (this.objState.size > 80) this.objState.delete(this.objState.keys().next().value);
+        break;
+      }
+      case 'shot': {
+        const s = this.objState.get(m.oid) || { h: 0, ang: 0, kick: 0 };
+        if ([m.x, m.y, m.tx, m.ty].every(Number.isFinite)) s.ang = Math.atan2(m.ty - m.y, m.tx - m.x);
+        s.kick = 1; this.objState.set(m.oid, s);
+        V6.shot(this, m); break;
+      }
+      case 'tp': V6.tp(this, m); break;
+      case 'charge': if (m.sid) { const e = this._mkLive(`charge:${m.sid}`, m, 0, false); LIVE.charge(this, m, e); } break;
+      case 'chargeEnd': { const e = this.live.get(`charge:${m.sid}`); if (e) { e.rel?.(); this._endLive(e.key, false); } break; }
+      case 'tether': if (m.tid) { const e = this._mkLive(`tether:${m.tid}`, m, m.ms, false); LIVE.tether(this, m, e); } break;
+      case 'tetherEnd': this._endLive(`tether:${m.tid}`, false); break;
+      case 'link': if (m.lid) { const e = this._mkLive(`link:${m.lid}`, m, m.ms, false); LIVE.link(this, m, e); } break;
+      case 'linkEnd': this._endLive(`link:${m.lid}`, false); break;
+      case 'linkShare': {
+        const e = this.live.get(`link:${m.lid}`);
+        if (e) e.pulse = 1;
+        const a = this.posOf(m.a), b = this.posOf(m.b);
+        if (a && b && this.onScreen(a.x, a.y, 400)) this.part(a.x, a.y, { tint: 0xffb088, add: true, vx: (b.x - a.x) * 4, vy: (b.y - a.y) * 4, s0: 18, s1: 8, a0: 0.9, life: 0.25, depth: D.fxTop });
+        break;
+      }
+      case 'shadow': if (m.sid && Number.isFinite(m.x) && Number.isFinite(m.y)) { const e = this._mkLive(`shadow:${m.sid}`, m, m.ms, false); LIVE.shadow(this, m, e); } break;
+      case 'shadowEnd': this._endLive(`shadow:${m.sid}`, false); break;
+      case 'rewind': V6.rewind(this, m); break;
+      case 'timebox': if (m.sid) { const e = this._mkLive(`timebox:${m.sid}`, m, m.ms, false); LIVE.timebox(this, m, e); } break;
+      case 'timeboxEnd': this._endLive(`timebox:${m.sid}`, false); V6.timeboxEnd(this, m); break;
+      case 'echo': if (m.sid) { const e = this._mkLive(`echo:${m.sid}`, m, m.ms, false); LIVE.echo(this, m, e); } break;
+      case 'echoFire': this._endLive(`echo:${m.sid}`, false); V6.echoFire(this, m); break;
+      case 'reload': if (m.sid) { const e = this._mkLive(`reload:${m.sid}`, m, m.ms, false); LIVE.reload(this, m, e); } break;
+      case 'reloadEnd': { const e = this.live.get(`reload:${m.sid}`); if (e) { e.endMsg?.(m); this._endLive(e.key, false); } break; }
+      case 'pkg': V6.pkg(this, m); break;
+      case 'deliver': V6.deliver(this, m); break;
+      case 'serve': V6.serve(this, m); break;
+      case 'stance': V6.stance(this, m); break;
+      // ── v6.1 ──
+      case 'cc': this._cc(m); break;
+      case 'ccBlock': CCFX.block(this, m); break;
+      case 'ccBreak': {
+        this.ccInfo.delete(`${m.id}|${m.type}`);
+        if (m.type === 'suppress') this._endLive(`suppress:${m.id}`, false);
+        if (m.why !== 'revive') CCFX.end(this, m, this.posOf(m.id)); // 'revive' is shown by the `revive` fx itself
+        break;
+      }
+      case 'miss': {
+        const now = this.scene.time.now;
+        if (m.id && now - (this.missAt.get(m.id) || -1e9) < 350) break;
+        if (m.id) { this.missAt.set(m.id, now); if (this.missAt.size > 60) this.missAt.delete(this.missAt.keys().next().value); }
+        CCFX.miss(this, m); break;
+      }
+      case 'suppress': if (m.tid) { const e = this._mkLive(`suppress:${m.tid}`, m, Number.isFinite(m.ms) ? m.ms + 300 : 2300, false); SUPPRESS.live(this, m, e); } break;
+      case 'suppressEnd': { const p = this.posOf(m.tid); this._endLive(`suppress:${m.tid}`, false); SUPPRESS.end(this, m, p, m.why !== 'cancel'); break; }
+      case 'revive': CCFX.revive(this, m, this.posOf(m.id) || (Number.isFinite(m.x) ? { x: m.x, y: m.y } : null)); break;
+      case 'untarget': CCFX.untarget(this, m, this.posOf(m.id) || (Number.isFinite(m.x) ? { x: m.x, y: m.y } : null)); break;
+      case 'area': this._area(m); break;
+      case 'gping': {
+        if (![m.x0, m.y0, m.x1, m.y1].every(Number.isFinite)) break;
+        this._clearGpings(false);
+        while (this.gpings.length >= 4) { const o = this.gpings.shift(); try { o.g._tw?.remove?.(); o.g.destroy(); } catch (_) { /* gone */ } }
+        const ms = Number.isFinite(m.ms) ? clamp(m.ms, 100, 2000) : 450;
+        this.gpings.push({ x0: m.x0, y0: m.y0, x1: m.x1, y1: m.y1, until: this.scene.time.now + ms, g: CCFX.gping(this, m) });
+        break;
+      }
+      case 'pinBoom': {
+        const e = this.live.get(this.alias.get(m.oid));
+        const p = e ? { x: e.m.x, y: e.m.y } : null, now = this.scene.time.now;
+        if (!this._lastBoom || now - this._lastBoom.t > 400) this._boomN = 0; else this._boomN++;
+        V6.pinBoom(this, m, p, this._boomN, this._lastBoom && now - this._lastBoom.t <= 400 ? this._lastBoom.p : null);
+        if (p) this._lastBoom = { t: now, p };
+        if (e) this._endLive(e.key, false);
+        break;
+      }
+      default: break; // unknown kind: ignored on purpose
+    }
+  }
+
   // ───────────────────────── per frame ─────────────────────────
   update(dt) {
+    this._updateLive(dt);
+    if (this.gpings.length) this._clearGpings(false);
+    if (this.ccInfo.size) { const now = this.scene.time.now; for (const [k, v] of this.ccInfo) if (v.until < now - 200) this.ccInfo.delete(k); }
     const zones = this.zones;
     for (let i = zones.length - 1; i >= 0; i--) {
       const z = zones[i];
@@ -693,6 +929,7 @@ export class MobaFx {
           const ex = s.x, ey = s.y;
           s.gfx?.destroy();
           this._release(s.head); this._release(s.core); this._release(s.trail);
+          if (s.end && this.onScreen(ex, ey)) s.end(this, s, ex, ey);
           if (this.onScreen(ex, ey)) this.part(ex, ey, { tint: s.color, add: true, s0: s.width * 1.6, s1: s.width * 0.4, a0: 0.8, life: 0.2 });
           shots.splice(i, 1);
           continue;
@@ -701,6 +938,7 @@ export class MobaFx {
         s.head.setPosition(s.x, s.y); s.core.setPosition(s.x, s.y);
         if (s.spin) s.core.rotation += s.spin * dt;
         if (s.headSpin) s.head.rotation -= s.spin * 0.6 * dt;
+        if (s.orient && s.returning) { const ra = Math.atan2(s.uy, s.ux); s.head.setRotation(ra); s.core.setRotation(ra); } // boomerang heads follow the return leg
         if (s.deco && this.onScreen(s.x, s.y, 200)) s.deco(this, s, dt);
         const tl = Math.min(s.dist, 150 + s.width * 1.5);
         s.trail.setPosition(s.x, s.y).setRotation(Math.atan2(s.uy, s.ux)).setDisplaySize(Math.max(8, tl), s.width * 0.85).setAlpha(0.75);

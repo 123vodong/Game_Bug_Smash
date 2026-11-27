@@ -55,12 +55,16 @@ import {
   FOUNTAIN, STRUCTURES, STRUCTURE_RADIUS, unlockedBy, CAMPS as CAMP_SPOTS, EPIC_SPOTS,
   CHAMP_RADIUS, MINION_RADIUS, clampToMap,
 } from '../../shared/moba/map.js';
-import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, ROLE_PICKS, isChampionId, autoAimsAtEnemy, autoAimReach, championPassive } from '../../shared/moba/champions.js';
+import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, ROLE_PICKS, isChampionId, autoAimsAtEnemy, autoAimReach, championPassive, resolveSkill, KIT_TUNING } from '../../shared/moba/champions.js';
 import { ITEMS, isItemId, itemStats, itemPassives, ownedActiveItem, buyBlocker, recipePlan, applyBuy } from '../../shared/moba/items.js';
 import { AUGMENTS, AUGMENT_LEVELS, rollAugmentChoices, rollSingleAugment } from '../../shared/moba/augments.js';
 import { SPELLS, DEFAULT_SPELLS, ROLE_SPELLS, isSpellId, validSpellPair, spellCooldownMs, spellInitialCharges } from '../../shared/moba/spells.js';
 import { TeamState, TeamChamp, TeamUnit, TeamStructure, TeamScore } from '../game/moba/schema.js';
 import { SkillEngine, MIN_AIM_DIST } from '../game/moba/SkillEngine.js';
+import { Kits } from '../game/moba/Kits.js';
+import { Objects } from '../game/moba/Objects.js';
+import { Cc } from '../game/moba/Cc.js';
+import { Rewind } from '../game/moba/Rewind.js';
 import { MobaBots, BOT_SKILL, botSkillFor } from '../game/moba/MobaBots.js';
 import { LANE_IDS, otherTeam, dist, minionPath, bushAtFast } from '../game/moba/geo.js';
 import { Mover, freeSpot, resolveWalls, nearWall } from '../game/moba/Mover.js';
@@ -123,8 +127,47 @@ function cleanText(raw, max) {
 }
 
 // v4 auto-aim (§3.3): skill types whose aim falls back to the nearest visible enemy.
-const AUTO_AIM_SKILLS = new Set(['projectile', 'circle', 'zone', 'dash', 'target']);
+const AUTO_AIM_SKILLS = new Set(['projectile', 'circle', 'zone', 'dash', 'target', 'cone', 'line', 'arc']);
 const VIEW_TEAMS = ['blue', 'red'];
+
+/**
+ * CC table (extension point): spec key -> handler(room, target, ccSpec, now, src). `src` = the casting champion
+ * (or the object owner), possibly null. Hard CC durations go through applyHardCcDuration for champions
+ * (tenacity / chain-CC diminishing). v6.1 types are one-line wrappers around Cc.apply (pipeline in Cc.js).
+ */
+const hardMs = (t, ms, now) => (t.etype === 'champ' ? applyHardCcDuration(t, ms || 0, now) : (ms || 0));
+const CC_HANDLERS = {
+  slow(room, t, s, now) {
+    // Stronger (or no active) slow takes over; a weaker one never extends a stronger one.
+    if (!(s.pct > 0)) return;
+    if (!(now < t.slowUntil) || s.pct >= t.slowPct) {
+      t.slowPct = Math.min(0.9, s.pct);
+      t.slowUntil = Math.max(now < t.slowUntil ? t.slowUntil : 0, now + (s.ms || 0));
+    }
+  },
+  root(room, t, s, now) {
+    const ms = hardMs(t, s.ms, now);
+    if (ms > 0) t.rootedUntil = Math.max(t.rootedUntil || 0, now + ms);
+  },
+  stun(room, t, s, now) {
+    const ms = hardMs(t, s.ms, now);
+    if (ms > 0) {
+      t.stunnedUntil = Math.max(t.stunnedUntil || 0, now + ms);
+      if (t.etype === 'champ') room._cancelRecall(t);
+    }
+  },
+  silence(room, t, s, now) {
+    if (t.etype === 'champ') t.silencedUntil = Math.max(t.silencedUntil || 0, now + (s.ms || 0));
+  },
+  airborne: (room, t, s, now, src) => room.cc.apply(t, 'airborne', s, now, src),
+  charm: (room, t, s, now, src) => room.cc.apply(t, 'charm', s, now, src),
+  fear: (room, t, s, now, src) => room.cc.apply(t, 'fear', s, now, src),
+  taunt: (room, t, s, now, src) => room.cc.apply(t, 'taunt', s, now, src),
+  blind: (room, t, s, now, src) => room.cc.apply(t, 'blind', s, now, src),
+  disarm: (room, t, s, now, src) => room.cc.apply(t, 'disarm', s, now, src),
+  suppress: (room, t, s, now, src) => room.cc.apply(t, 'suppress', s, now, src),
+};
+const CC_KEYS = Object.keys(CC_HANDLERS);
 
 export class TeamRoom extends Room {
   // ───────────────────────── lifecycle ─────────────────────────
@@ -207,6 +250,10 @@ export class TeamRoom extends Room {
 
     this._buildStructures();             // before the bots: they precompute lane towers
     this.skills = new SkillEngine(this);
+    this.kits = new Kits(this);        // v6 kit systems: resources, stances, mix, echo, timebox, reload, package, tags
+    this.cc = new Cc(this);            // v6.1 CC + states: airborne, charm, fear, taunt, blind, disarm, suppress, untarget, revive
+    this.objects = new Objects(this);  // v6 placed objects: wall, portal, barricade, turret, beacon, pin, barrier
+    this.rewind = new Rewind(this);    // v6 history, rewind, tether, link, shadow, drone, deliver
     this.bots = new MobaBots(this);
 
     // ── Client intent → shared handlers (bots call the same _do* methods) ──
@@ -475,6 +522,8 @@ export class TeamRoom extends Room {
     Presence.unregisterRoom(this);
     this._timers.length = 0;
     this.skills.clear();
+    this.objects.clear(true);
+    this.rewind.clear();
     console.log('[TeamRoom] disposed', this.roomId);
   }
 
@@ -821,6 +870,8 @@ export class TeamRoom extends Room {
     ch.augments = []; ch.augmentOffer = null; ch._augNextIdx = 0; ch._augVer = (ch._augVer || 0) + 1;
     ch.skillPoints = 0; ch.ranks = { q: 1, w: 1, e: 1, r: 0 };
     ch._activeCd = 0; ch._stasisUntil = 0; ch._stealthUntil = 0; ch._wardCd = 0;
+    this.kits.reset(ch); // v6 kit state (stance, resources, mix, package, shadow ...)
+    ch._ntur = 0; ch._npin = 0; ch._drone = ''; ch._recallBeacon = '';
     if (ch.isBot) this._autoSpendSkills(ch);
     ch.shields.length = 0; ch.buffs.length = 0; ch.regens.length = 0;
     ch.recallUntil = 0; ch.order = null; ch.atkTarget = ''; ch.atkReadyAt = 0;
@@ -972,8 +1023,10 @@ export class TeamRoom extends Room {
     for (const t of this._knocked) t.knock = null;
     this._knocked.clear();
     // Pets leave with the match (no ticks run in 'ended', so remove them right away).
-    for (const ch of this.champs.values()) this._removePet(ch, true);
+    for (const ch of this.champs.values()) { this._removePet(ch, true); this.rewind.removeDrone(ch, true); }
     this.skills.clear();
+    this.objects.clear(); // v6: no object leaks past the match (obj units leave state.units, objEnd fx go out)
+    this.rewind.clear();
     this._shots.length = 0;
     if (st.winReason === 'abandon') {
       this._announce({ title: '🏳 MATCH ABANDONED', sub: `Nobody came back to the office — ${teamLabel(winner)} takes it`, color: w.css, big: true });
@@ -1103,23 +1156,44 @@ export class TeamRoom extends Room {
     return true;
   }
 
-  /** cast {slot, x, y, id?} — generic checks here, type-specific ones in SkillEngine. */
+  /**
+   * cast {slot, x, y, id?, x2?, y2?, ph?} — generic checks here, type-specific ones in SkillEngine.
+   * v6: `ph` 'down' | 'up' | 'cancel' is the hold protocol (a missing `ph` is a tap; a tap on a hold skill
+   * quick-casts at hold.quick); drag skills carry the second point in x2,y2; ally skills carry `id`.
+   */
   _doCast(sid, msg) {
     if (this.state.phase !== 'playing' || !msg || typeof msg !== 'object') return false;
     const ch = this.champs.get(sid);
     if (!ch || ch.dead) return false;
     const slot = msg.slot;
     if (slot !== 'q' && slot !== 'w' && slot !== 'e' && slot !== 'r') return false;
+    const ph = msg.ph === 'down' || msg.ph === 'up' || msg.ph === 'cancel' ? msg.ph : '';
     const now = Date.now();
-    if (now - ch.lastCastAt < CAST_RATE_MS) return false;
-    if (now < ch.stunnedUntil || ch.knock) return false; // stunned / being knocked back
+    if (ph === 'cancel') return this.kits.holdCancel(ch); // free, exempt from the cast rate
+    let held = null;
+    if (ph === 'up') { held = ch._hold; this.kits.holdCancel(ch); if (!held || held.slot !== slot) return false; } // exempt from the cast rate
+    else if (now - ch.lastCastAt < CAST_RATE_MS) return false;
+    if (this.cc.stunLike(ch, now) || ch.knock) return false; // stunned / airborne / suppressed / being knocked back
     if (slot === 'r' && ch.level < ULT_UNLOCK_LEVEL) return false;
     const rank = ch.ranks?.[slot] || 0;
     if (rank <= 0) return false;
-    if (now < (ch.silencedUntil || 0)) return false; // silenced: no skills
-    const spec = ch.def.skills[slot];
+    if (this.cc.cantCast(ch, now)) return false; // silenced / charmed / feared / taunted / global windup: no skills
+    const spec = resolveSkill(ch.def, slot, ch._stance); // v6: the stance's spec fully replaces the base one
+    if (!spec) return false;
+    if (ch._reload?.lock && slot !== ch._reload.slot) return false; // reloading: Q W R are locked
+    // v6 second presses that are free state actions (no cooldown, mana or rate use)
+    if (spec.type === 'reload' && ch._reload) {
+      if (!this.kits.reloadPress(ch, now)) return false;
+      ch.lastCastAt = now; ch.action = slot; ch.actionSeq++;
+      return true;
+    }
+    if (spec.type === 'tether' && ch._tether && spec.tether?.recastEnds) {
+      this.rewind.endTether(ch);
+      ch.lastCastAt = now; ch.action = slot; ch.actionSeq++;
+      return true;
+    }
     // v5 recast: the second press of a recast skill is free and ignores cooldown/mana.
-    const rc = spec && spec.recast ? ch._recast?.[slot] : null;
+    const rc = spec.recast ? ch._recast?.[slot] : null;
     if (rc && rc.until > now) {
       const raim = clampToMap(Number.isFinite(msg.x) ? msg.x : ch.x, Number.isFinite(msg.y) ? msg.y : ch.y, 0);
       const rid = (typeof msg.id === 'string' && msg.id.length <= 64 && this.units.get(msg.id)?.utype !== 'pet') ? msg.id : '';
@@ -1130,8 +1204,48 @@ export class TeamRoom extends Room {
       ch.actionSeq++;
       return true;
     }
+    if (ph === 'down') {
+      // Hold start: validates like a cast, spends nothing.
+      if (spec.input !== 'hold' || !spec.hold) return false;
+      if (now < ch.cd[slot] || !(ch.mana >= spec.mana) || !this.kits.prepare(ch, spec)) return false;
+      const a = clampToMap(Number.isFinite(msg.x) ? msg.x : ch.x, Number.isFinite(msg.y) ? msg.y : ch.y, 0);
+      return this.kits.holdStart(ch, slot, spec, { x: a.x, y: a.y, id: typeof msg.id === 'string' ? msg.id.slice(0, 64) : '' }, now);
+    }
+    const o = {};
+    if (held) o.f = this.kits.holdFraction(held, now);
+    else if (spec.input === 'hold' && spec.hold) o.f = spec.hold.quick; // tap = quick-cast
+    return this._castCore(ch, slot, spec, msg, now, o);
+  }
+
+  /** The hold timed out (maxMs + HOLD_GRACE_MS): release with the aim sent at key down. */
+  _holdRelease(ch, now) {
+    const h = ch._hold;
+    this.kits.holdCancel(ch);
+    if (!h || ch.knock || this.cc.cantCast(ch, now)) return false;
+    return this._castCore(ch, h.slot, h.spec, { ...h.aim }, now, { f: 1 });
+  }
+
+  /** A queued Cache echo fires: free copy of the slot, same direction and distance from the NEW position, x mulPct. */
+  _echoFire(ch, e, now) {
+    const spec = resolveSkill(ch.def, e.slot, ch._stance);
+    if (!spec || spec.type === 'echo') return;
+    const aim = clampToMap(ch.x + e.dx, ch.y + e.dy, 0);
+    this._fx({ k: 'echoFire', sid: ch.id, slot: e.slot });
+    const prev = ch._kitMul || 1;
+    ch._kitMul = prev * e.mul;
+    this._echoing = true;
+    try { this.skills.cast(ch, e.slot, spec, { x: aim.x, y: aim.y, id: '' }, now); } finally { this._echoing = false; ch._kitMul = prev; }
+  }
+
+  /** The shared pipeline: cooldown / mana / spend gate, aim, scaled cast, then cost + post-cast hooks. */
+  _castCore(ch, slot, spec0, msg, now, o) {
+    const rank = ch.ranks?.[slot] || 0;
+    let spec = spec0;
     if (now < ch.cd[slot]) return false;
-    if (!spec || !(ch.mana >= spec.mana)) return false;
+    if (!(ch.mana >= spec.mana)) return false;
+    const prep = this.kits.prepare(ch, spec0, o); // hold scale + spend gate (null = not enough of the resource)
+    if (!prep) return false;
+    spec = prep.spec;
     let aim = clampToMap(Number.isFinite(msg.x) ? msg.x : ch.x, Number.isFinite(msg.y) ? msg.y : ch.y, 0);
     let id = (typeof msg.id === 'string' && msg.id.length <= 64) ? msg.id : '';
     if (id && this.units.get(id)?.utype === 'pet') return false; // pets are never valid targets
@@ -1154,10 +1268,17 @@ export class TeamRoom extends Room {
     ch._stealthUntil = 0;
     ch.cd[slot] = now + skillCooldownMs(spec.cd, ch.haste + ((ch._blueBuffUntil || 0) > now ? 0.15 : 0), rank);
     const ox = ch.x, oy = ch.y;
-    if (!this.skills.cast(ch, slot, spec, { x: aim.x, y: aim.y, id }, now)) {
+    const castAim = { x: aim.x, y: aim.y, id };
+    if (spec.input === 'drag') { castAim.x2 = Number(msg.x2); castAim.y2 = Number(msg.y2); } // drag: second point (validated by Objects)
+    const prevKit = ch._kitMul || 1;
+    ch._kitMul = prep.mul;
+    let okCast = false;
+    try { okCast = this.skills.cast(ch, slot, spec, castAim, now); } finally { ch._kitMul = prevKit; }
+    if (!okCast) {
       ch.revealUntil = prevReveal; ch._stealthUntil = prevStealth; ch.cd[slot] = prevCd;
       ch._overloadCast = false; return false;
     }
+    if (ch._hold) this.kits.holdCancel(ch); // casting any other skill cancels an open charge, free
     if (spec.recast) ch._recast[slot] = { until: now + (spec.recast.ms || 3000), x0: ox, y0: oy };
     ch._castCount = nextCastCount;
     ch.lastCastAt = now;
@@ -1165,6 +1286,7 @@ export class TeamRoom extends Room {
     ch.action = slot;
     ch.actionSeq++;
     this._cancelRecall(ch);
+    this.kits.commit(ch, slot, spec0, prep, now, ch.cd[slot] - now, castAim, { ox, oy });
     if (augs.includes('evo_dev_cleave')) ch._cleaveReady = true;
     if (augs.includes('evo_sprint_surge') && (spec.type === 'dash' || spec.type === 'blink')) {
       this._addBuff(ch, 'aug_ms', { msPct: 0.25 }, now + 2000, true);
@@ -1174,8 +1296,10 @@ export class TeamRoom extends Room {
       ch.cd.r = Math.max(now, now + Math.round(Math.max(0, (ch.cd.r || 0) - now) * 0.65));
     }
     if (slot === 'r' && augs.includes('evo_volt_overdrive')) ch._servoOverdriveUntil = now + 4000;
-    if ((spec.heal || spec.shield || spec.type === 'allies') && augs.includes('shared_resources')) this._heal(ch, 40);
-    if ((spec.heal || spec.type === 'allies') && augs.includes('evo_ops_field')) {
+    const selfSh = spec.self && spec.self.shield; // v6.1: self{ shield } on an area skill counts as a shield for passives and augments
+    const selfHl = spec.self && spec.self.heal;
+    if ((spec.heal || spec.shield || selfSh || selfHl || spec.tether || spec.link || spec.type === 'allies') && augs.includes('shared_resources')) this._heal(ch, 40);
+    if ((spec.heal || selfHl || spec.tether || spec.link || spec.type === 'allies') && augs.includes('evo_ops_field')) {
       for (const al of this.champs.values()) {
         if (al.team === ch.team && !al.dead && dist(al, ch) <= 450) this._heal(al, 70);
       }
@@ -1194,9 +1318,7 @@ export class TeamRoom extends Room {
       }
       if (nearAl) this._heal(nearAl, nearAl.maxHp * 0.06);
     }
-    if (ch.champ === 'pixel' && slot === 'e') ch._empowerUntil = now + 3500;
-    if (ch.champ === 'model' && slot === 'w') ch._overfitUntil = now + 4500;
-    if (roleP === 'uptime_pulse' && (spec.heal || spec.shield || spec.type === 'allies')) {
+    if (roleP === 'uptime_pulse' && (spec.heal || spec.shield || selfSh || selfHl || spec.tether || spec.link || spec.type === 'allies')) {
       ch.cd.r = Math.max(now, (ch.cd.r || 0) - 2000);
       this._addBuff(ch, 'passive_ms', { msPct: 0.15 }, now + 1500, true);
     }
@@ -1263,9 +1385,13 @@ export class TeamRoom extends Room {
     const ch = this.champs.get(sid);
     if (!ch || ch.dead || ch.recallUntil > 0) return false;
     const now = Date.now();
-    if (now - ch.lastRecallAt < RECALL_RATE_MS || now < ch.stunnedUntil || ch.knock) return false;
+    if (now - ch.lastRecallAt < RECALL_RATE_MS || this.cc.stunLike(ch, now) || ch.knock) return false;
     ch.lastRecallAt = now;
-    ch.recallUntil = now + ((ch.augments || []).includes('recall_opt') ? 2600 : RECALL_MS);
+    let recallMs = (ch.augments || []).includes('recall_opt') ? 2600 : RECALL_MS;
+    const bc = this.objects.beaconFor(ch.team); // v6: a live allied beacon shortens the recall and is where it ends
+    ch._recallBeacon = bc ? bc.oid : '';
+    if (bc) recallMs = Math.min(recallMs, bc.obj.allyRecallMs || recallMs);
+    ch.recallUntil = now + recallMs;
     ch.order = null;
     ch.atkTarget = '';
     ch.action = 'recall';
@@ -1436,7 +1562,7 @@ export class TeamRoom extends Room {
     const now = Date.now();
     this._tickSpellCharges(ch, now);
     if (now - ch.lastSpellAt < CAST_RATE_MS) return false;
-    if (now < ch.stunnedUntil || ch.knock) return false;
+    if (this.cc.stunLike(ch, now) || ch.knock) return false; // summoner spells stay usable under charm / fear / taunt / silence
     if (now < ch.spellCd[slot]) return false;
     const spellId = ch.spells[slot];
     if (!isSpellId(spellId)) return false;
@@ -1579,7 +1705,7 @@ export class TeamRoom extends Room {
     const maxD = range + AUTO_AIM_SLACK;
     let best = null, bestD = Infinity;
     for (const c of this.champs.values()) {
-      if (c.dead || c.team === ch.team || !this.canSee(ch.team, c, now)) continue;
+      if (c.dead || c.team === ch.team || !this.canSee(ch.team, c, now) || (c._untargetUntil || 0) > now) continue;
       const d = Math.hypot(c.x - ch.x, c.y - ch.y) - c.radius;
       if (d <= maxD && d < bestD) { best = c; bestD = d; }
     }
@@ -1780,7 +1906,8 @@ export class TeamRoom extends Room {
       if (st.phase !== 'playing') break; // the core can fall mid-tick
       if (!u.alive) continue;
       if (u.utype === 'minion') this._tickMinion(u, dt, now);
-      else if (u.utype === 'pet') this._tickPet(u, dt, now);
+      else if (u.utype === 'pet') { if (!u.drone) this._tickPet(u, dt, now); } // the scout drone is driven by Rewind
+      else if (u.utype === 'obj') { /* barricade / turret: driven by Objects.tick */ }
       else if (u.utype === 'ward') { if (now >= u.expiresAt) { u.alive = false; u.removeAt = now + UNIT_REMOVE_MS; } }
       else this._tickMonster(u, dt, now);
     }
@@ -1789,7 +1916,11 @@ export class TeamRoom extends Room {
       this._separateUnits();
       for (const s of this.structs.values()) if (s.alive && (s.kind === 'tower' || s.kind === 'core')) this._tickTower(s, now);
       if (st.phase === 'playing') this._tickShots(now);
+      if (st.phase === 'playing') this.cc.tick(now);          // v6.1: Zero suppress channels
       if (st.phase === 'playing') this.skills.tick(dt, now);
+      if (st.phase === 'playing') this.kits.tick(now, dt);   // v6: resources, echo, timebox, reload, package, holds
+      if (st.phase === 'playing') this.rewind.tick(now);     // v6: history, tether, link, shadow, drone
+      if (st.phase === 'playing') this.objects.tick(now);    // v6: wall, portal, barricade, turret, pin
       if (st.phase === 'playing') this._tickFountains(dt, now);
     }
     if (st.phase !== 'playing') this._atkBatch.length = 0;
@@ -1903,7 +2034,9 @@ export class TeamRoom extends Room {
     // Recall channel
     if (ch.recallUntil > 0 && now >= ch.recallUntil) {
       ch.recallUntil = 0;
-      const spot = this._fountainSpot(ch.team, ch.slot);
+      const bcn = ch._recallBeacon ? this.objects.list.get(ch._recallBeacon) : null;
+      ch._recallBeacon = '';
+      const spot = bcn ? bcn : this._fountainSpot(ch.team, ch.slot); // beacon arrival: no fountain heal
       this._teleport(ch, spot.x, spot.y);
       ch.order = null;
       ch.atkTarget = '';
@@ -1914,7 +2047,8 @@ export class TeamRoom extends Room {
     }
 
     const x0 = ch.x, y0 = ch.y;
-    if (now >= ch.stunnedUntil && ch.recallUntil === 0 && !ch.knock) this._champAct(ch, dt, now);
+    // v6.1 priority: suppress > airborne > stun (all stunLike) > charm | fear | taunt (forced) > root > normal.
+    if (ch.recallUntil === 0 && !ch.knock && !this.cc.stunLike(ch, now) && !this.cc.forced(ch, dt, now)) this._champAct(ch, dt, now);
     const k = dt > 0 ? 1000 / dt : 0;
     ch.vx = (ch.x - x0) * k;
     ch.vy = (ch.y - y0) * k;
@@ -1951,13 +2085,13 @@ export class TeamRoom extends Room {
   _acquireIdle(ch, now = Date.now()) {
     let best = null, bestD = Infinity;
     for (const u of this.units.values()) {
-      if (!u.alive || u.resetting || u.team === ch.team || u.utype === 'pet' || !this.canSee(ch.team, u, now)) continue;
+      if (!u.alive || u.resetting || u.team === ch.team || u.utype === 'pet' || u.utype === 'obj' || !this.canSee(ch.team, u, now)) continue; // objs: order-attack only
       if (u.team === 'neutral' && u.target !== ch.id) continue;
       const d = dist(ch, u);
       if (d < bestD && this._inAttackRange(ch, u)) { best = u; bestD = d; }
     }
     for (const c of this.champs.values()) {
-      if (c.dead || c.team === ch.team || !this.canSee(ch.team, c, now)) continue;
+      if (c.dead || c.team === ch.team || !this.canSee(ch.team, c, now) || (c._untargetUntil || 0) > now) continue;
       const d = dist(ch, c);
       if (d < bestD && this._inAttackRange(ch, c)) { best = c; bestD = d; }
     }
@@ -1971,6 +2105,8 @@ export class TeamRoom extends Room {
 
   _tryChampAttack(ch, t, now) {
     if (now < ch.atkReadyAt) return;
+    if (now < (ch.disarmUntil || 0)) return; // v6.1 disarm: no basic attacks
+    if (now < (ch.tauntUntil || 0) && ch._ccSrc?.taunt !== t.id) return; // taunted: only the source may be hit
     ch.atkReadyAt = now + 1000 / Math.max(0.1, ch.as);
     ch.revealUntil = now + BUSH_REVEAL_MS; // v4: attacking reveals you
     ch._stealthUntil = 0;
@@ -1981,7 +2117,8 @@ export class TeamRoom extends Room {
     ch.faceX = (t.x - ch.x) / d; ch.faceY = (t.y - ch.y) / d;
     const ranged = !!ch.def.ranged;
     this._atkBatch.push({ f: ch.id, t: t.id, r: ranged ? 1 : 0 });
-    if (ranged) this._queueShot(ch, t, ch.ad, now, { kind: 'atk' });
+    if (now < (ch.blindUntil || 0)) this.cc.missFx(ch, now); // v6.1 blind: the swing plays, deals 0 and applies no on-hit
+    else if (ranged) this._queueShot(ch, t, ch.ad, now, { kind: 'atk' });
     else this._dealDamage(ch, t, ch.ad, { kind: 'atk' });
   }
 
@@ -1996,6 +2133,7 @@ export class TeamRoom extends Room {
     ch.nav = null; ch.knock = null; ch.burns = [];
     ch.action = 'idle';
     ch.actionSeq++;
+    this.kits.reset(ch); // v6: stance back to default, resources refilled (also on respawn)
     this._recalc(ch, now);
     ch.hp = ch.maxHp;
     ch.mana = ch.maxMana;
@@ -2138,7 +2276,7 @@ export class TeamRoom extends Room {
     const speed = m.speed * (now < m.slowUntil ? 1 - m.slowPct : 1);
     if (t) {
       if (dist(m, t) <= m.range + t.radius) {
-        if (now >= m.atkReadyAt) {
+        if (now >= m.atkReadyAt && now >= (m.disarmUntil || 0)) { // v6.1 blind / disarm: no attack
           m.atkReadyAt = now + m.atkMs;
           m.revealUntil = now + BUSH_REVEAL_MS;
           this._atkBatch.push({ f: m.id, t: t.id, r: m.ranged ? 1 : 0 });
@@ -2176,6 +2314,7 @@ export class TeamRoom extends Room {
   _minionCanHit(m, t) {
     if (t.team === m.team || t.team === 'neutral') return false;
     if (t.etype === 'struct') return !t.invulnerable;
+    if ((t._untargetUntil || 0) > Date.now()) return false; // v6.1 untargetable
     return true;
   }
 
@@ -2189,7 +2328,7 @@ export class TeamRoom extends Room {
     }
     if (best) return best;
     for (const c of this.champs.values()) {
-      if (c.dead || c.team === m.team || !this.canSee(m.team, c, now)) continue;
+      if (c.dead || c.team === m.team || !this.canSee(m.team, c, now) || (c._untargetUntil || 0) > now) continue;
       const d = dist(m, c);
       if (d <= bestD) { best = c; bestD = d; }
     }
@@ -2325,7 +2464,7 @@ export class TeamRoom extends Room {
     }
     if (dist(mo, home) > mo.leash) { this._resetCamp(mo.campId); return; }
     if (dist(mo, t) <= mo.range + mo.radius + t.radius) {
-      if (now >= mo.atkReadyAt) {
+      if (now >= mo.atkReadyAt && now >= (mo.disarmUntil || 0)) { // v6.1 blind / disarm: no attack
         mo.atkReadyAt = now + mo.atkMs;
         mo.revealUntil = now + BUSH_REVEAL_MS;
         this._atkBatch.push({ f: mo.id, t: t.id, r: 0 });
@@ -2443,7 +2582,7 @@ export class TeamRoom extends Room {
   _towerTarget(tw, now, range = TOWER.range) {
     let best = null, bestD = Infinity;
     for (const c of this.champs.values()) {
-      if (c.dead || c.team === tw.team || now - c.aggroAt > TOWER_AGGRO_MS || !this.canSee(tw.team, c, now)) continue;
+      if (c.dead || c.team === tw.team || now - c.aggroAt > TOWER_AGGRO_MS || !this.canSee(tw.team, c, now) || (c._untargetUntil || 0) > now) continue;
       const d = dist(tw, c);
       if (d > range + c.radius || d >= bestD) continue;
       const v = this.champs.get(c.aggroVictim);
@@ -2452,7 +2591,7 @@ export class TeamRoom extends Room {
     }
     if (best) return best;
     const cur = tw.target ? this._ent(tw.target) : null;
-    if (cur && this._isAlive(cur) && cur.team !== tw.team && cur.team !== 'neutral' && dist(tw, cur) <= range + cur.radius && this.canSee(tw.team, cur, now)) return cur;
+    if (cur && this._isAlive(cur) && cur.team !== tw.team && cur.team !== 'neutral' && dist(tw, cur) <= range + cur.radius && this.canSee(tw.team, cur, now) && !((cur._untargetUntil || 0) > now)) return cur;
     for (const u of this._unitsNear(tw.x, tw.y, range + 60)) {
       if (!u.alive || u.utype !== 'minion' || u.team === tw.team || !this.canSee(tw.team, u, now)) continue;
       const d = dist(tw, u);
@@ -2460,7 +2599,7 @@ export class TeamRoom extends Room {
     }
     if (best) return best;
     for (const c of this.champs.values()) {
-      if (c.dead || c.team === tw.team || !this.canSee(tw.team, c, now)) continue;
+      if (c.dead || c.team === tw.team || !this.canSee(tw.team, c, now) || (c._untargetUntil || 0) > now) continue;
       const d = dist(tw, c);
       if (d <= range + c.radius && d < bestD) { best = c; bestD = d; }
     }
@@ -2517,7 +2656,7 @@ export class TeamRoom extends Room {
   _separateUnits() {
     const arr = this._sepList;
     arr.length = 0;
-    for (const u of this.units.values()) if (u.alive && !u.resetting && !u.epic && !u.knock && u.utype !== 'pet') arr.push(u);
+    for (const u of this.units.values()) if (u.alive && !u.resetting && !u.epic && !u.knock && u.utype !== 'pet' && u.utype !== 'obj') arr.push(u);
     // v4: sweep over units sorted by x + y — stop once b is further along than any overlap.
     arr.sort(byDiag);
     let maxR = 0;
@@ -2568,6 +2707,7 @@ export class TeamRoom extends Room {
     if (t.team === ch.team || t.utype === 'pet') return false; // pets are untargetable
     if (t.etype === 'struct' && t.invulnerable) return false;
     if (t.etype === 'unit' && t.resetting) return false;
+    if ((t._untargetUntil || 0) > Date.now()) return false; // v6.1 untargetable
     return true;
   }
 
@@ -2588,12 +2728,15 @@ export class TeamRoom extends Room {
    * monsters, structures and pets are immune. The map edge just clamps.
    */
   _knockback(t, ux, uy, distPx, stunMs, now) {
-    if (!this._isAlive(t) || t.etype === 'struct' || t.epic || t.utype === 'pet' || t.resetting) return false;
+    if (!this._isAlive(t) || t.etype === 'struct' || t.epic || t.utype === 'pet' || t.utype === 'obj' || t.resetting) return false;
     if (!(distPx > 0) || !Number.isFinite(ux) || !Number.isFinite(uy)) return false;
+    if ((t.suppressUntil || 0) > now) return false; // v6.1: a suppressed champion cannot be displaced
     const r = t.radius || 0;
     const want = clampToMap(t.x + ux * distPx, t.y + uy * distPx, Math.max(30, r));
-    const c = clipMove(t.x, t.y, want.x, want.y, r);
-    const wall = !!c.hit;
+    let c = clipMove(t.x, t.y, want.x, want.y, r);
+    let wall = !!c.hit;
+    const bc = this.objects.clip(t.x, t.y, c.x, c.y, r || CHAMP_RADIUS); // v6: a barricade edge stops it and counts as a WALL
+    if (bc.hit) { c = bc; wall = true; }
     t.knock = { x0: t.x, y0: t.y, x1: c.x, y1: c.y, at: now, until: now + KNOCKBACK_MS };
     t.nav = null;
     this._knocked.add(t);
@@ -2733,7 +2876,7 @@ export class TeamRoom extends Room {
     const maxD = range + TARGET_CAST_SLACK;
     const now = Date.now();
     const valid = (e) => e && this._isAlive(e) && e.etype !== 'struct' && e.utype !== 'pet' && e.team !== ch.team && !e.resetting
-      && (!champOnly || e.etype === 'champ') && dist(ch, e) <= maxD + e.radius && this.canSee(ch.team, e, now); // v4: hidden = untargetable
+      && (!champOnly || e.etype === 'champ') && dist(ch, e) <= maxD + e.radius && this.canSee(ch.team, e, now) && !((e._untargetUntil || 0) > now); // v4: hidden = untargetable; v6.1 untarget too
     if (aim.id) {
       const e = this._ent(aim.id);
       if (valid(e)) return e;
@@ -2758,7 +2901,7 @@ export class TeamRoom extends Room {
   _dealDamage(src, t, raw, { kind = 'atk', trueDmg = false, dmgType = 'physical' } = {}) {
     if (this.state.phase !== 'playing' || !this._isAlive(t) || !(raw > 0)) return 0;
     if (t.utype === 'pet') return 0; // pets are invulnerable
-    if (t.etype === 'champ' && (t._stasisUntil || 0) > Date.now()) return 0;
+    if (t.etype === 'champ' && ((t._stasisUntil || 0) > Date.now() || (t._untargetUntil || 0) > Date.now())) return 0;
     if (t.etype === 'struct' && t.invulnerable) return 0;
     if (t.etype === 'unit' && t.resetting) return 0;
     const now = Date.now();
@@ -2784,17 +2927,7 @@ export class TeamRoom extends Room {
         src._atkCount = (src._atkCount || 0) + 1;
         didCrit = (srcP.has('crit3') && src._atkCount % 3 === 0) || (srcP.has('crit') && Math.random() < 0.2);
         if (didCrit) dmg *= 1.6;
-        if (roleP === 'regression_mark') {
-          if (src._lastTargetId === t.id) t._bugStacks = Math.min(4, (t._bugStacks || 0) + 1);
-          else { src._lastTargetId = t.id; t._bugStacks = 1; }
-          t._bugUntil = now + 5000;
-          if (src._atkCount % 3 === 0) dmg *= 1.35;
-        }
-        if (src.champ === 'zero' && t.etype === 'champ' && (t._vulnUntil || 0) > now) {
-          t._vulnUntil = 0;
-          dmg *= 1.3;
-          src.cd.q = Math.max(now, (src.cd.q || 0) - 1500);
-        }
+        if (roleP === 'regression_mark' && src._atkCount % 3 === 0) dmg *= 1.35; // v6: _bugStacks / _vulnUntil specials are now skill marks
         if (roleP === 'zero_day' && (now - (src._lastCombatAt || 0) > 4500)) dmg *= 1.3;
         if (roleP === 'servo_emp' && src._atkCount % 4 === 0 && t.etype !== 'struct') dmg += 40;
         if (roleP === 'swipe_combo' && src._swipeReady) { src._swipeReady = false; dmg *= 1.28; }
@@ -2909,6 +3042,7 @@ export class TeamRoom extends Room {
         }
         t.shields = t.shields.filter((sh) => sh.amt > 0.5);
       }
+      if (this.rewind.links.size) dmg = this.rewind.shareDamage(t, dmg, now); // v6 Buddy System: share, never lethal
       t.hp -= dmg;
       t.lastDamagedAt = now;
       this._cancelRecall(t);
@@ -2938,6 +3072,7 @@ export class TeamRoom extends Room {
       src.hp = Math.min(src.maxHp, src.hp + dealt * src.lifesteal * this._healMul(src, now));
     }
     if (t.hp <= 0) {
+      if (t.etype === 'champ' && this.cc.tryRevive(t, now)) return dealt; // v6.1 revive guard: a lethal hit reboots the ally once
       t.hp = 0;
       if (t.etype === 'champ') this._onChampDeath(t, src, now);
       else if (t.etype === 'unit') this._onUnitDeath(t, src, now);
@@ -2976,27 +3111,13 @@ export class TeamRoom extends Room {
   }
 
   /** slow / root / stun from a skill spec onto a champion or unit. */
-  _applyCC(t, spec, now) {
-    if (t.etype === 'struct') return;
-    if (spec.slow && spec.slow.pct > 0) {
-      // Stronger (or no active) slow takes over; a weaker one never extends a stronger one.
-      if (!(now < t.slowUntil) || spec.slow.pct >= t.slowPct) {
-        t.slowPct = Math.min(0.9, spec.slow.pct);
-        t.slowUntil = Math.max(now < t.slowUntil ? t.slowUntil : 0, now + (spec.slow.ms || 0));
-      }
+  _applyCC(t, spec, now, src = null) {
+    if (t.etype === 'struct' || t.utype === 'obj') return; // v6: placed objects are immune to CC
+    if ((t._untargetUntil || 0) > now) return; // v6.1: untargetable units take no CC
+    for (let i = 0; i < CC_KEYS.length; i++) { // table-driven: a new CC type = one CC_HANDLERS entry + its key in CC_KEYS
+      const k = CC_KEYS[i];
+      if (spec[k]) CC_HANDLERS[k](this, t, spec[k], now, src);
     }
-    if (spec.root) {
-      const rms = t.etype === 'champ' ? applyHardCcDuration(t, spec.root.ms || 0, now) : (spec.root.ms || 0);
-      if (rms > 0) t.rootedUntil = Math.max(t.rootedUntil || 0, now + rms);
-    }
-    if (spec.stun) {
-      const sms = t.etype === 'champ' ? applyHardCcDuration(t, spec.stun.ms || 0, now) : (spec.stun.ms || 0);
-      if (sms > 0) {
-        t.stunnedUntil = Math.max(t.stunnedUntil || 0, now + sms);
-        if (t.etype === 'champ') this._cancelRecall(t);
-      }
-    }
-    if (spec.silence && t.etype === 'champ') t.silencedUntil = Math.max(t.silencedUntil || 0, now + (spec.silence.ms || 0));
   }
 
   _cancelRecall(ch) {
@@ -3107,6 +3228,7 @@ export class TeamRoom extends Room {
     if (!it || !it.active || (ch._activeCd || 0) > now) return false;
     const act = it.active;
     if (now < ch.stunnedUntil && !act.usableWhileStunned) return false;
+    if (now < (ch.airUntil || 0) || now < (ch.suppressUntil || 0)) return false; // never under airborne / suppress
     ch._activeCd = now + act.cd * 1000;
     if (act.id === 'stasis') {
       ch._stasisUntil = now + act.ms;
@@ -3114,7 +3236,7 @@ export class TeamRoom extends Room {
       ch.order = null;
       this._fx({ k: 'buff', sid: ch.id, color: 0xffd23f });
     } else if (act.id === 'cleanse') {
-      ch.stunnedUntil = 0; ch.rootedUntil = 0; ch.slowUntil = 0; ch.slowPct = 0;
+      this.cc.cleanse(ch, now); // v6.1: stun root slow silence knock + every cleanse:true CC (airborne / suppress stay)
       this._addBuff(ch, 'cleanse_ms', { msPct: 0.35 }, now + act.ms, true);
       this._fx({ k: 'buff', sid: ch.id, color: 0x39ff14 });
     } else if (act.id === 'veil') {
@@ -3209,6 +3331,8 @@ export class TeamRoom extends Room {
     v.stunnedUntil = 0; v.rootedUntil = 0; v.slowUntil = 0; v.slowPct = 0;
     v.knock = null; v.nav = null; v.burns = [];
     this._removePet(v); // despawns while the owner is dead
+    this.rewind.onDeath(v); // v6: tether, link, shadow end; history cleared (the drone and placed objects persist)
+    this.kits.onDeath(v);   // v6: hold / package / timebox / reload end (no refunds), then every kit field resets
     v.action = 'dead';
     v.actionSeq++;
 
@@ -3274,6 +3398,7 @@ export class TeamRoom extends Room {
 
   _onUnitDeath(u, src, now) {
     if (!u.alive) return;
+    if (u.utype === 'obj') { this.objects.onUnitDeath(u, now); return; } // v6 barricade / turret: no gold, xp or credit
     u.alive = false;
     u.hp = 0;
     u.target = '';
@@ -3604,6 +3729,10 @@ export class TeamRoom extends Room {
     if ((ch._spellShieldUntil || 0) > now) add('spellshield');
     if ((ch._stealthUntil || 0) > now) add('stealth');
     if ((ch.silencedUntil || 0) > now) add('silenced');
+    const cct = this.cc.tags(ch, now); // v6.1: `cc:<tag>` in CC_PRIORITY order, after `silenced`, before every `kit:` tag
+    if (cct) out = out ? `${out},${cct}` : cct;
+    const kt = this.kits.tags(ch, now); // v6: `kit:<key>:<value>` tags go LAST, in the order of the contract
+    if (kt) out = out ? `${out},${kt}` : kt;
     return out;
   }
 
@@ -3678,8 +3807,9 @@ export class TeamRoom extends Room {
    * INTEREST_RADIUS of where it happens (or whose own entity is involved). Spectators get all.
    */
   _fx(entry) {
+    if (this._echoing) entry.echo = true; // v6: fx of a Cache echo copy render ghosted
     if (this.state.phase !== 'playing') { this.broadcast('fx', entry); return; }
-    if (entry.k === 'trapEnd') {
+    if (entry.k === 'trapEnd' || entry.k === 'gping') { // gping: the global-shot warning goes to BOTH teams
       for (const team of VIEW_TEAMS) this._sendTeam(team, 'fx', entry);
       this._sendTeam('all', 'fx', entry);
       return;
@@ -3701,7 +3831,8 @@ export class TeamRoom extends Room {
         this._sendTeam(team, 'fx', { ...entry, ms: entry.enemyRevealMs || 3000, fadingStealth: true, stealthAfterMs: 0 });
         continue;
       }
-      if (!this.canSee(team, a, now) || !this.canSee(team, b, now) || !this.canSee(team, c, now)) continue;
+      // `cc` (v6.1): the victim's team always learns of it, even when the source hides in a bush
+      if ((entry.k !== 'cc' && !this.canSee(team, a, now)) || !this.canSee(team, b, now) || !this.canSee(team, c, now)) continue;
       const own = (a && a.team === team) || (b && b.team === team) || (c && c.team === team);
       if (!own && Number.isFinite(x) && !this._nearTeam(team, x, y) && !(Number.isFinite(x2) && this._nearTeam(team, x2, y2))) continue;
       this._sendTeam(team, 'fx', entry);
@@ -3788,6 +3919,7 @@ export class TeamRoom extends Room {
     // Wards reveal enemies inside the same bush within WARD.sightRadius (750 px).
     for (const u of this.units.values()) {
       if (u.alive && u.utype === 'ward' && u.team === team && u.bush === b && dist(u, e) <= WARD.sightRadius) return true;
+      if (u.alive && u.drone && u.team === team && dist(u, e) <= u.sightRadius) return true; // v6 scout drone: flies over bushes
     }
     // Towers and Production Server see into bushes within their attack range.
     for (const s of this.structs.values()) {
