@@ -1,0 +1,11 @@
+Champion sprite sources (Team Mode)
+
+champs.png - 18 palette-swapped variants (hue shift of cloth, skin tone multiply) of the
+  "Puny Characters" sheets (Character-Base, Mage-Cyan, Mage-Red, Archer-Green, Archer-Purple,
+  Soldier-Blue/Red/Yellow, Warrior-Blue/Red) by Shade (merchant-shade.com).
+  Source: https://opengameart.org/content/puny-characters
+  License: CC0 1.0 Universal (Public Domain). Processing: per-pixel recolour with PIL, 2 variants packed per atlas row; no new art drawn.
+
+Candidates evaluated but not shipped: "Isometric Sci-Fi Character Spritesheet (Super Clone)" (CC0), "Isometric heavy armor" (CC0).
+
+Curated by Duke Nguyen (duc.nguyen@onethesis.com).

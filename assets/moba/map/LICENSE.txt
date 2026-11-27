@@ -1,0 +1,19 @@
+All files in this folder are CC0 1.0 Universal (public domain). Processing (resize, JPEG re-encode, trim, recolor, streak filter) by Duke Nguyen.
+
+Textures (Poly Haven, CC0, https://polyhaven.com/textures, 1k diffuse maps downscaled to 512 px JPEG):
+- floor.jpg    large_grey_tiles
+- carpet.jpg   dirty_carpet
+- riverbed.jpg blue_metal_plate
+- moss.jpg     concrete_moss
+- grass.jpg    leafy_grass
+- plate.jpg    metal_plate
+- base.jpg     brushed_concrete
+- plaster.jpg  grey_plaster
+- wood.jpg     dark_wood
+- leaves.jpg   forest_leaves_02
+- flow.png     derived from brushed_concrete (horizontal stretch + threshold, cyan alpha) for the animated river overlay
+
+Sprites (props.png / props.json, trimmed from the original 128 px retina PNGs):
+- plant1, plant2, tree1-3, rock1-4, rack1-2, pod1-2, tank, relay: Kenney "RTS Pack: Sci-Fi" (CC0 1.0, https://kenney.nl/assets/rts-pack-sci-fi)
+- crate1-2, barrel1-2, sandbag: Kenney "Top-down Tanks Redux" (CC0 1.0, https://kenney.nl/assets/top-down-tanks-redux)
+- bush1-5: Kenney "Tower Defense (top-down)" (CC0 1.0, https://kenney.nl/assets/tower-defense-top-down)

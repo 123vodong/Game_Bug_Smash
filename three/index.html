@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug Smash Team Mode - Three.js spike</title>
+<style>
+  :root { --ink:#e8eefc; --dim:#8fa0c4; --panel:rgba(10,14,28,.78); --edge:rgba(120,150,220,.35); --hp:#7ed957; --mp:#39c2ff; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; background:#070a14; color:var(--ink); font:12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  canvas#gl { position:fixed; inset:0; width:100%; height:100%; display:block; cursor:crosshair; }
+  .panel { position:fixed; background:var(--panel); border:1px solid var(--edge); border-radius:6px; padding:8px 10px; backdrop-filter:blur(3px); }
+  #stats { left:8px; top:8px; font:11px/1.45 Consolas, monospace; min-width:210px; white-space:pre; }
+  #quality { right:8px; top:8px; width:230px; }
+  #quality h4, #stats h4 { margin:0 0 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  #quality label { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:3px 0; }
+  #quality select, #quality input[type=range] { width:110px; }
+  #quality select { background:#10162c; color:var(--ink); border:1px solid var(--edge); border-radius:4px; }
+  #quality button { background:#1a2447; color:var(--ink); border:1px solid var(--edge); border-radius:4px; padding:3px 8px; cursor:pointer; }
+  #minimap { right:8px; bottom:8px; padding:4px; }
+  #minimap canvas { display:block; width:200px; height:200px; }
+  #bar { left:50%; bottom:10px; transform:translateX(-50%); display:flex; gap:12px; align-items:flex-end; padding:8px 12px; }
+  #bars { width:240px; }
+  .bar { position:relative; height:16px; background:#0a0f20; border:1px solid var(--edge); border-radius:3px; overflow:hidden; margin-top:4px; }
+  .bar i { position:absolute; inset:0 auto 0 0; width:100%; transition:width .08s linear; }
+  .bar span { position:absolute; inset:0; text-align:center; line-height:15px; font-size:11px; text-shadow:0 1px 2px #000; }
+  #hpf { background:linear-gradient(#9cf06f,#4fa02e); } #mpf { background:linear-gradient(#6fd2ff,#1f7fc0); }
+  #name { font-weight:600; }
+  #slots { display:flex; gap:6px; }
+  .slot { position:relative; width:52px; height:52px; border-radius:6px; background:#10162c; border:1px solid var(--edge); display:grid; place-items:center; overflow:hidden; font-weight:700; font-size:18px; }
+  .slot small { position:absolute; left:3px; top:1px; font-size:10px; color:var(--dim); }
+  .slot .cd { position:absolute; inset:0; background:rgba(0,0,0,.7); display:grid; place-items:center; font-size:14px; }
+  .slot.off { opacity:.45; }
+  #help { left:8px; bottom:8px; color:var(--dim); font-size:11px; max-width:300px; }
+  #toast { position:fixed; left:50%; top:14px; transform:translateX(-50%); padding:6px 12px; background:var(--panel); border:1px solid var(--edge); border-radius:6px; display:none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="stats" class="panel"><h4>Renderer stats</h4><span id="statsTxt">starting...</span></div>
+
+<div id="quality" class="panel">
+  <h4>Quality</h4>
+  <label>Shadows <select id="qShadow"><option selected>off</option><option>low</option><option>medium</option><option>high</option></select></label>
+  <label>Bloom + grade <input id="qBloom" type="checkbox"></label>
+  <label>Pixel ratio <input id="qScale" type="range" min="0.5" max="2" step="0.25" value="0.75"></label>
+  <label>Instanced units <input id="qInst" type="checkbox" checked></label>
+  <label>Auto-reduce <input id="qAuto" type="checkbox" checked></label>
+  <label>Champion <select id="qChamp"></select></label>
+  <label><span>Bench scene</span> <button id="qBench">Mid fight</button></label>
+  <h4 style="margin-top:8px">Practice</h4>
+  <label>0s cooldowns <input id="pCd" type="checkbox" checked></label>
+  <label>No mana cost <input id="pMana" type="checkbox" checked></label>
+  <label>Invincible <input id="pGod" type="checkbox" checked></label>
+  <label><span>Level / skills</span> <button id="pLvl">+1 lv, max</button></label>
+  <label><span>Dummy</span> <span><button id="pDummy">+ spawn</button> <button id="pClear">clear</button></span></label>
+</div>
+
+<div id="bar" class="panel">
+  <div id="bars">
+    <div id="name">-</div>
+    <div class="bar"><i id="hpf"></i><span id="hpt"></span></div>
+    <div class="bar"><i id="mpf"></i><span id="mpt"></span></div>
+  </div>
+  <div id="slots"></div>
+</div>
+
+<div id="minimap" class="panel"><canvas id="mm" width="200" height="200"></canvas></div>
+<div id="help" class="panel">Right-click: move &middot; Left-click enemy: attack &middot; Q W E R: cast at cursor &middot; Arrow keys: pan (Space recenters) &middot; D F: summoner spells &middot; Wheel: zoom</div>
+<div id="toast"></div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>

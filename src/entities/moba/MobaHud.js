@@ -28,7 +28,9 @@ import {
 import { MAP_W, MAP_H } from '../../../shared/moba/map.js';
 import { SPELLS, spellCooldownMs } from '../../../shared/moba/spells.js';
 import { t, tText, onLangChange } from '../../core/I18n.js';
-import { FONT, MONO, ME_COLOR, LOOKS, teamColor, teamCss, css, fmtTime, toArr } from './mobaGfx.js';
+import { uiPanel, uiGloss } from './champUiKit.js';
+import { installScreenFx } from './champUiFx.js';
+import { FONT, FONT_UI, MONO, ME_COLOR, LOOKS, teamColor, teamCss, css, fmtTime, toArr } from './mobaGfx.js';
 
 const CC_ICON = 34, CC_ICON_STEP = 42, CC_ICONS_MAX = 4; // v6.1 status row geometry (px)
 
@@ -187,6 +189,8 @@ export class MobaHud {
     this.cdTotal = { q: 1, w: 1, e: 1, r: 1, d: 1, f: 1 };
     this._cdPrev = { q: 0, w: 0, e: 0, r: 0, d: 0, f: 0 };
     this._buildPanel();
+    this.fx = installScreenFx(scene);
+    this._hpPrev = -1;
     this._buildTop();
     this._buildMinimap(opts.map);
     this._buildMisc();
@@ -205,17 +209,18 @@ export class MobaHud {
     const s = this.s;
     const c = s.add.container(x, y).setScrollFactor(0).setDepth(depth);
     // Rectangle shapes cache their triangulation (Graphics re-tessellates every frame).
-    const bg = s.add.rectangle(0, 0, w, h, 0x111a28, 0.95).setStrokeStyle(2, color, 0.8).setScrollFactor(0);
-    const t = s.add.text(0, 0, label, { fontFamily: FONT, fontSize: size, color: css(color), stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0);
+    const skin = uiPanel(s, 0, 0, w, h, { frame: 'btn_rect', tint: 0x1a2740, alpha: 0.96, edge: 8 }).setScrollFactor(0);
+    const bg = s.add.rectangle(0, 0, w, h, 0x111a28, 0.22).setStrokeStyle(1.5, color, 0.85).setScrollFactor(0);
+    const t = s.add.text(0, 0, label, { fontFamily: /[^\x00-\x7f]/.test(label) ? FONT : FONT_UI, fontSize: size, color: css(color), stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0); // Kenney Future Narrow has no Vietnamese glyphs
     bg.setInteractive({ useHandCursor: true });
-    bg.on('pointerover', () => bg.setFillStyle(0x1d2a40, 0.98).setStrokeStyle(2, color, 1));
-    bg.on('pointerout', () => bg.setFillStyle(0x111a28, 0.95).setStrokeStyle(2, color, 0.8));
+    bg.on('pointerover', () => { bg.setFillStyle(color, 0.22).setStrokeStyle(2, color, 1); skin.setTint(0x2c4166); });
+    bg.on('pointerout', () => { bg.setFillStyle(0x111a28, 0.22).setStrokeStyle(1.5, color, 0.85); skin.setTint(0x1a2740); });
     bg.on('pointerdown', (p, lx, ly, ev) => {
       if (p?.rightButtonDown?.()) return;
       ev?.stopPropagation?.();
       fn();
     });
-    c.add([bg, t]);
+    c.add([skin, bg, t]);
     c._label = t;
     c._bg = bg;
     return c;
@@ -246,22 +251,24 @@ export class MobaHud {
     };
     const mkPanelBtn = (x, y, w, h, label, color, fn, size = 12) => {
       const c = s.add.container(x, y);
-      const bg = s.add.rectangle(0, 0, w, h, 0x111a28, 0.95).setStrokeStyle(2, color, 0.8);
-      const t = s.add.text(0, 0, label, { fontFamily: FONT, fontSize: size, color: css(color), stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+      const skin = uiPanel(s, 0, 0, w, h, { frame: 'btn_rect', tint: 0x1a2740, alpha: 0.96, edge: 8 });
+      const bg = s.add.rectangle(0, 0, w, h, 0x111a28, 0.22).setStrokeStyle(1.5, color, 0.85);
+      const t = s.add.text(0, 0, label, { fontFamily: /[^\x00-\x7f]/.test(label) ? FONT : FONT_UI, fontSize: size, color: css(color), stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
       if (this.touch) {
         bg.setInteractive({ useHandCursor: true });
         bg.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); fn(); });
       }
-      c.add([bg, t]);
+      c.add([skin, bg, t]);
       c._label = t;
       root.add(c);
       return c;
     };
 
     // Panel background — non-interactive on desktop so world right-clicks pass through.
-    const panelBg = addR(0, -PANEL_H / 2 + 4, PANEL_W, PANEL_H + 8, 0x0a0f18, 0.92).setStrokeStyle(2, 0x2c3a55, 1);
+    root.add(uiPanel(s, 0, -PANEL_H / 2 + 4, PANEL_W, PANEL_H + 8, { frame: 'panel_glass_screws', tint: 0x0c1424, alpha: 0.96, edge: 18 }));
+    const panelBg = addR(0, -PANEL_H / 2 + 4, PANEL_W - 16, PANEL_H - 8, 0x0a0f18, 0.55).setStrokeStyle(1, 0x2c3a55, 0.9);
     if (this.touch) panelBg.setInteractive();
-    addR(0, T + 1, PANEL_W - 28, 2, 0x39c2ff, 0.35);
+    addR(0, T + 3, PANEL_W - 40, 2, 0x39c2ff, 0.5);
 
     // Portrait + XP ring + level.
     const pcx = L + 52, pcy = T + 52;
@@ -278,12 +285,13 @@ export class MobaHud {
     SLOTS.forEach((slot, i) => {
       const x = L + 147 + i * 66, y = T + 36;
       const c = s.add.container(x, y);
-      const frame = s.add.rectangle(0, 0, 58, 58, 0x131b2a, 1).setStrokeStyle(2, 0x3a4a66, 1);
+      const skin = uiPanel(s, 0, 0, 66, 66, { frame: 'panel_sq', tint: 0x1a2640, alpha: 1, edge: 14 });
+      const frame = s.add.rectangle(0, 0, 58, 58, 0x131b2a, 0.35).setStrokeStyle(2.5, 0x3a4a66, 1);
       const icon = s.add.text(0, -1, '·', { fontSize: 28 }).setOrigin(0.5);
       const noMana = s.add.rectangle(0, 0, 56, 56, 0x1d4fb5, 0.4).setVisible(false);
       const dim = s.add.rectangle(0, 0, 56, 56, 0x000000, 0.55).setVisible(false);
       const pie = s.add.graphics();
-      const cd = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 20, color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
+      const cd = s.add.text(0, 0, '', { fontFamily: FONT_UI, fontSize: 20, color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
       const lock = s.add.text(0, 2, '', { fontFamily: FONT, fontSize: 12, color: '#c9d3e6', stroke: '#000', strokeThickness: 3, align: 'center' }).setOrigin(0.5);
       const key = s.add.text(-26, -27, slot.toUpperCase(), {
         fontFamily: FONT, fontSize: 11, color: '#ffffff', backgroundColor: '#000000aa', padding: { x: 3, y: 0 },
@@ -310,7 +318,7 @@ export class MobaHud {
       // v6: next stance label (stance toggle keys) + charge ring for held skills
       const sub = s.add.text(26, -27, '', { fontFamily: FONT, fontSize: 9, color: '#bfe6ff', backgroundColor: '#000000cc', padding: { x: 2, y: 0 } }).setOrigin(1, 0).setVisible(false);
       const ring = s.add.graphics();
-      c.add([frame, icon, noMana, dim, pie, cd, lock, key, mana, pips, flash, upBg, upTxt, sub, ring]);
+      c.add([skin, frame, icon, noMana, dim, pie, cd, lock, key, mana, pips, flash, upBg, upTxt, sub, ring]);
       root.add(c);
       this.slots[slot] = { c, frame, icon, noMana, dim, pie, cd, lock, mana, pips, flash, upBg, upTxt, sub, ring, x, y, spec: null };
     });
@@ -341,19 +349,22 @@ export class MobaHud {
     // HP / mana bars.
     const bx = L + 114, bw = 270 + SP - 10;
     this._bar = { x: bx, w: bw };
-    addR(bx + bw / 2, T + 81, bw + 4, 17, 0x000000, 0.9).setStrokeStyle(1, 0x7ed957, 0.4);
+    root.add(uiPanel(s, bx + bw / 2, T + 81, bw + 12, 21, { frame: 'bar_track', tint: 0x05080e, alpha: 1, edge: 10 }));
     this.hpFill = addR(bx, T + 81, bw, 13, 0x5fbf3a, 1).setOrigin(0, 0.5);
     this.shFill = addR(bx, T + 81, 0, 13, 0xffffff, 0.92).setOrigin(0, 0.5);
+    root.add(uiGloss(s, bx + bw / 2, T + 77.5, bw, 6, 0.28));
     this.hpText = addT(bx + bw / 2, T + 81, '', { fontSize: 11, stroke: '#000', strokeThickness: 3 });
-    addR(bx + bw / 2, T + 99, bw + 4, 13, 0x000000, 0.9).setStrokeStyle(1, 0x39c2ff, 0.4);
+    root.add(uiPanel(s, bx + bw / 2, T + 99, bw + 12, 17, { frame: 'bar_track', tint: 0x05080e, alpha: 1, edge: 8 }));
     this.mpFill = addR(bx, T + 99, bw, 9, 0x2f86e8, 1).setOrigin(0, 0.5);
+    root.add(uiGloss(s, bx + bw / 2, T + 96.5, bw, 4, 0.25));
     this.mpText = addT(bx + bw / 2, T + 99, '', { fontSize: 10, stroke: '#000', strokeThickness: 3 });
 
     // Items (3×2) + stat line.
     this.items = [];
     for (let i = 0; i < 6; i++) {
       const x = L + SP + 425 + (i % 3) * 43, y = T + 26 + Math.floor(i / 3) * 43;
-      const fr = addR(x, y, 38, 38, 0x0f1622, 1).setStrokeStyle(1, 0x2c3a55, 1);
+      root.add(uiPanel(s, x, y, 42, 42, { frame: 'panel_sq', tint: 0x1a2640, alpha: 1, edge: 10 }));
+      const fr = addR(x, y, 36, 36, 0x0f1622, 0.35).setStrokeStyle(1, 0x2c3a55, 1);
       const t = addT(x, y + 1, '', { fontSize: 22 });
       this.items.push({ fr, t, id: '', x, y });
     }
@@ -361,7 +372,7 @@ export class MobaHud {
 
     // Gold, K/D/A, indicators (non-interactive on desktop — use B / P / C keys).
     const rx = L + SP + 620;
-    this.gold = addT(rx, T + 20, '🪙 0', { fontSize: 19, color: '#ffd23f', stroke: '#000', strokeThickness: 4 });
+    this.gold = addT(rx, T + 20, '🪙 0', { fontFamily: FONT_UI, fontSize: 19, color: '#ffd23f', stroke: '#000', strokeThickness: 4 });
     this.kda = addT(rx, T + 45, '', { fontFamily: MONO, fontSize: 12, color: '#cfd8e8' });
     this.baseBtn = mkPanelBtn(rx - 50, T + 80, 46, 34, this.touch ? t('hud.base') : 'B', 0x39c2ff, () => this.o.onRecall?.(), 12);
     this.shopBtn = mkPanelBtn(rx, T + 80, 46, 34, this.touch ? t('hud.shop') : 'P', 0xffd23f, () => this.o.onShop?.(), 12);
@@ -380,7 +391,8 @@ export class MobaHud {
     SPELL_SLOTS.forEach((slot, i) => {
       const x = L + 147 + 4 * 66 + 2 + i * 54, y = T + 40;
       const c = s.add.container(x, y);
-      const frame = s.add.rectangle(0, 0, 48, 48, 0x131b2a, 1).setStrokeStyle(2, 0x3a4a66, 1);
+      const skin = uiPanel(s, 0, 0, 54, 54, { frame: 'panel_sq', tint: 0x1a2640, alpha: 1, edge: 12 });
+      const frame = s.add.rectangle(0, 0, 48, 48, 0x131b2a, 0.35).setStrokeStyle(2, 0x3a4a66, 1);
       const icon = s.add.text(0, 0, '·', { fontSize: 22 }).setOrigin(0.5);
       const dim = s.add.rectangle(0, 0, 46, 46, 0x000000, 0.55).setVisible(false);
       const pie = s.add.graphics();
@@ -396,7 +408,7 @@ export class MobaHud {
         frame.setInteractive({ useHandCursor: true });
         frame.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); this.o.onSpell?.(slot, true); });
       }
-      c.add([frame, icon, dim, pie, cd, key, charges, flash]);
+      c.add([skin, frame, icon, dim, pie, cd, key, charges, flash]);
       root.add(c);
       this.spellSlots[slot] = { c, frame, icon, dim, pie, cd, charges, flash, x, y, id: null };
     });
@@ -594,10 +606,10 @@ export class MobaHud {
   // ───────────────────────── top center ─────────────────────────
   _buildTop() {
     const s = this.s, cx = this.W / 2;
-    this._r(cx, 26, 236, 44, 0x0a0f18, 0.55).setStrokeStyle(1.5, 0x2c3a55, 0.55).setDepth(48);
+    uiPanel(s, cx, 26, 244, 50, { frame: 'panel_glass', tint: 0x0c1424, alpha: 0.85, edge: 14 }).setScrollFactor(0).setDepth(48);
     this.blueK = this._t(cx - 66, 19, `${TEAM_INFO.blue.emoji} 0`, { fontSize: 16, color: TEAM_INFO.blue.css, stroke: '#000', strokeThickness: 3 }).setAlpha(0.82).setDepth(49);
     this.redK = this._t(cx + 66, 19, `0 ${TEAM_INFO.red.emoji}`, { fontSize: 16, color: TEAM_INFO.red.css, stroke: '#000', strokeThickness: 3 }).setAlpha(0.82).setDepth(49);
-    this.clock = this._t(cx, 18, '0:00', { fontSize: 13, color: '#ffffff', stroke: '#000', strokeThickness: 2.5 }).setAlpha(0.82).setDepth(49);
+    this.clock = this._t(cx, 18, '0:00', { fontFamily: FONT_UI, fontSize: 13, color: '#ffffff', stroke: '#000', strokeThickness: 2.5 }).setAlpha(0.82).setDepth(49);
     this.epicT = this._t(cx, 37, '', { fontFamily: MONO, fontSize: 11, color: '#d5e0f2' }).setAlpha(0.82).setDepth(49);
     this.buffT = this._t(cx, 58, '', { fontSize: 11, stroke: '#000', strokeThickness: 3 }).setAlpha(0.85).setDepth(49);
   }
@@ -616,6 +628,7 @@ export class MobaHud {
       s.add.renderTexture(this.mm.x, this.mm.y, size, size).setOrigin(0, 0).setScrollFactor(0).setDepth(46).draw(g, 0, 0);
       g.destroy();
     }
+    uiPanel(s, this.mm.x + size / 2, this.mm.y + size / 2, size + 16, size + 16, { frame: 'panel_glass', tint: 0x0c1424, alpha: 1, edge: 14 }).setScrollFactor(0).setDepth(45);
     this.mmDyn = s.add.graphics().setScrollFactor(0).setDepth(47);
     // Pass 2 RP-08 (LoL): left-drag = look there (onMinimapView), right-click = move there
     // (onMinimap). Touch: a quick tap = move (as before), press + drag = look. Without an
@@ -907,6 +920,7 @@ export class MobaHud {
   }
 
   setFxMode(pref, low) {
+    this.fx?.setLow(low);
     const str = pref === 'auto' ? (low ? '✨AUTO·lo' : '✨AUTO') : (pref === 'low' ? '✨LOW' : '✨HIGH');
     if (this.fxBtn && this.fxBtn._label.text !== str) this.fxBtn._label.setText(str);
   }
@@ -1468,6 +1482,8 @@ export class MobaHud {
     // Bars.
     const maxHp = Math.max(1, me.maxHp || 1), hp = Math.max(0, me.hp || 0), sh = me.shield || 0;
     const p = Math.min(1, hp / maxHp);
+    if (this._hpPrev >= 0 && hp < this._hpPrev && hp > 0 && (this._hpPrev - hp) / maxHp >= 0.04) this.fx?.hit((this._hpPrev - hp) / maxHp);
+    this._hpPrev = hp;
     const bw = this._bar.w;
     this.hpFill.width = bw * p;
     this.shFill.x = this._bar.x + bw * p; this.shFill.width = bw * Math.max(0, Math.min(1 - p, sh / maxHp));

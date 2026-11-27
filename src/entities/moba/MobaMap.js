@@ -34,6 +34,8 @@ import {
 import { wallDist } from '../../../shared/moba/nav.js';
 import { FOUNTAIN_RADIUS, TEAM_INFO, EPICS } from '../../../shared/moba/rules.js';
 import { D, FONT, MONO, NEUTRAL, teamColor, teamCss, fmtTime, css, shade, depthAt, wallStyle, wallMapColor } from './mobaGfx.js';
+import { preloadEnvAssets, setEnvImages, ENV, texPattern, drawSprite, shadedSprite, drawShaded } from './envAssets.js';
+import { bakeFloor } from './envFloor.js';
 
 // Visual height (px the top face is lifted) and extra stuff sticking up above it.
 const WALL_H = {
@@ -92,19 +94,16 @@ export class MobaMap {
       for (let i = 0; i < pts.length - 1; i++) this._laneSegs.push([pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y]);
     }
     scene.cameras.main.setBackgroundColor(FLOOR);
-    const g = scene.make.graphics({}, false);
-    this._drawFloor(g);
-    this._drawRiver(g);
-    this._drawBasesAndLanes(g);
-    this._drawPads(g);
-    this._drawWallShadows(g);
-    this._drawBushSoil(g);
-    this._bake(g);
-    g.destroy();
+    this.lowFx = !!scene._lowFx;
+    setEnvImages(scene);
+    this._planProps();
+    this._bake();
     this._buildWalls();
     this._buildBushes();
     this._buildTexts();
     this._buildDecor();
+    this._buildProps();
+    this._buildFlow();
     this._buildGlyphs();
     this._buildFog();
     this._timerAt = 0;
@@ -152,156 +151,113 @@ export class MobaMap {
       }
     }
 
-    /** Bake the static vector layers into one RenderTexture (half-res on desktop, ~1/3 on mobile). */
-    _bake(g) {
+    /** Loads every CC0 texture / sprite atlas the environment uses (call from Scene.preload). */
+    static preload(scene) { preloadEnvAssets(scene); }
+
+    /** Bake the whole textured ground into one canvas texture (~0.6 px/unit on desktop, 1/3 on mobile / low fx). */
+    _bake() {
       const s = this.scene;
-      const size = s.sys.game.device.os.desktop ? 3000 : 2048;
-      const k = size / MAP_W;
-      g.setScale(k);
-      const rt = s.add.renderTexture(0, 0, size, size).setOrigin(0, 0).setDepth(D.river);
-      rt.draw(g, 0, 0);
-      rt.setScale(1 / k);
-      this.rt = rt;
-    }
-
-    // ───────────────────────── static layers (drawn into `g`, world coords) ─────────────────────────
-    _drawFloor(g) {
-      g.lineStyle(3, GRID, 1);
-      for (let x = 100; x < MAP_W; x += 100) g.lineBetween(x, 0, x, MAP_H);
-      for (let y = 100; y < MAP_H; y += 100) g.lineBetween(0, y, MAP_W, y);
-      g.fillStyle(0x000000, 0.32);
-      for (const t of JUNGLES) g.fillTriangle(t[0][0], t[0][1], t[1][0], t[1][1], t[2][0], t[2][1]);
-    }
-
-    _drawRiver(g) {
-      const { from, to, width } = RIVER, rv = this._river;
-      const band = (w, color, a) => {
-        g.lineStyle(w, color, a); g.lineBetween(from.x, from.y, to.x, to.y);
-        g.fillStyle(color, a); g.fillCircle(from.x, from.y, w / 2); g.fillCircle(to.x, to.y, w / 2);
-      };
-      // 2.5D Recessed River Channel: outer embankment rim + deep inner cliff shadow
-      band(width + 160, RIVER_GLOW, 0.05);
-      band(width + 58, 0x050a14, 0.72);
-      band(width + 24, 0x192b44, 0.9);
-      band(width, RIVER_DEEP, 1);
-      band(width * 0.78, 0x072642, 0.85);
-      band(width * 0.52, RIVER_MID, 0.78);
-      band(width * 0.14, 0x2278b5, 0.65);
-      const hw = width / 2;
-      // Steep north-east inner bank drop shadow (gives recessed depth)
-      g.lineStyle(22, 0x030812, 0.55);
-      g.lineBetween(from.x - rv.nx * (hw - 10), from.y - rv.ny * (hw - 10), to.x - rv.nx * (hw - 10), to.y - rv.ny * (hw - 10));
-      g.lineStyle(5, RIVER_GLOW, 0.65);
-      for (const sg of [-1, 1]) {
-        g.lineBetween(from.x + rv.nx * hw * sg, from.y + rv.ny * hw * sg, to.x + rv.nx * hw * sg, to.y + rv.ny * hw * sg);
+      const size = s.sys.game.device.os.desktop && !this.lowFx ? 3584 : 2048;
+      if (!ENV.ready) { // assets missing: plain floor so the game still runs
+        const rt = s.add.rectangle(0, 0, MAP_W, MAP_H, FLOOR).setOrigin(0, 0).setDepth(D.river);
+        this.rt = rt; return;
       }
+      const { key, k } = bakeFloor(s, { size, low: this.lowFx, props: this._propList });
+      this.rt = s.add.image(0, 0, key).setOrigin(0, 0).setScale(1 / k).setDepth(D.river);
+    }
+
+    /** Deterministic scenery plan (jungle foliage + map-edge clutter); shadows are baked, sprites y-sorted. */
+    _planProps() {
+      this._propList = [];
+      if (!ENV.ready) return;
+      const rand = rng(777);
+      const cores = STRUCTURES.filter((st) => st.kind === 'core');
+      const free = (x, y, wallM, laneM) => {
+        if (x < 70 || y < 70 || x > MAP_W - 70 || y > MAP_H - 70) return false;
+        for (const sg of this._laneSegs) if (distToSeg(x, y, sg[0], sg[1], sg[2], sg[3]) < LANE_WIDTH / 2 + laneM) return false;
+        if (distToSeg(x, y, RIVER.from.x, RIVER.from.y, RIVER.to.x, RIVER.to.y) < RIVER.width / 2 + 110) return false;
+        for (const c of CAMPS) if (Math.hypot(c.x - x, c.y - y) < 190) return false;
+        for (const p of Object.values(EPIC_SPOTS)) if (Math.hypot(p.x - x, p.y - y) < 300) return false;
+        for (const st of STRUCTURES) if (Math.hypot(st.x - x, st.y - y) < 200) return false;
+        for (const f of Object.values(FOUNTAIN)) if (Math.hypot(f.x - x, f.y - y) < 300) return false;
+        for (const w of WALLS) if (wallDist(x, y, w) < wallM) return false;
+        for (const b of BUSHES) if (wallDist(x, y, b) < 90) return false;
+        return true;
+      };
+      const out = this._propList;
+      const put = (x, y, name, w, minGap) => {
+        for (const p of out) if (Math.hypot(p.x - x, p.y - y) < minGap) return false;
+        out.push({ x, y, name, w: w * 0.85 * (0.9 + rand() * 0.25), flip: rand() < 0.5 }); return true;
+      };
+      // jungle foliage / rocks / legacy crates (blue quadrants; red = mirror)
+      const JUNGLE_SETS = [['plant1', 70], ['plant2', 84], ['tree1', 78], ['tree2', 54], ['tree3', 96], ['rock1', 60], ['rock2', 84], ['rock3', 74], ['crate1', 52], ['crate2', 52], ['barrel1', 40], ['barrel2', 40], ['rack1', 88], ['rack2', 88], ['pod1', 76]];
+      for (let tries = 0; tries < 3000 && out.length < 170; tries++) {
+        const t = JUNGLES[tries % 2];
+        let a = rand(), b = rand(); if (a + b > 1) { a = 1 - a; b = 1 - b; }
+        const x = t[0][0] + a * (t[1][0] - t[0][0]) + b * (t[2][0] - t[0][0]), y = t[0][1] + a * (t[1][1] - t[0][1]) + b * (t[2][1] - t[0][1]);
+        if (!free(x, y, 120, 80)) continue;
+        const [n, w] = JUNGLE_SETS[Math.floor(rand() * JUNGLE_SETS.length)];
+        if (put(x, y, n, w, 190)) { const m = mirror({ x, y }); out.push({ x: m.x, y: m.y, name: n, w: out[out.length - 1].w, flip: !out[out.length - 1].flip }); }
+      }
+      // map-edge + base clutter: racks, plants, crates, relays along the outer border
+      const EDGE = [['rack1', 92], ['rack2', 92], ['pod1', 80], ['pod2', 80], ['plant1', 74], ['plant2', 88], ['crate1', 56], ['crate2', 56], ['tank', 84], ['relay', 64], ['sandbag', 60]];
+      const n0 = out.length;
+      for (let tries = 0; tries < 2600 && out.length - n0 < 110; tries++) {
+        const along = rand() * MAP_W, depth = 100 + rand() * 170, side = Math.floor(rand() * 4);
+        const x = side === 0 ? along : side === 1 ? MAP_W - depth : side === 2 ? along : depth;
+        const y = side === 0 ? depth : side === 1 ? along : side === 2 ? MAP_H - depth : along;
+        if (!free(x, y, 110, 60)) continue;
+        const [n, w] = EDGE[Math.floor(rand() * EDGE.length)];
+        put(x, y, n, w, 200);
+      }
+      // inside the bases: servers + plants behind the structures (never near the lanes / fountain)
+      for (const c of cores) {
+        const sgn = c.team === 'blue' ? 1 : -1;
+        for (let tries = 0, got = 0; tries < 500 && got < 10; tries++) {
+          const ang = rand() * Math.PI * 2, r = 330 + rand() * 640;
+          const x = c.x + Math.cos(ang) * r, y = c.y + Math.sin(ang) * r;
+          if (!free(x, y, 110, 90) || Math.hypot(x - c.x, y - c.y) > BASE_RADIUS - 90) continue;
+          const [n, w] = EDGE[Math.floor(rand() * EDGE.length)];
+          if (put(x, y, n, w * 1.05, 240)) got++;
+        }
+      }
+    }
+
+    /** Scenery sprites: y-sorted images from the env-props atlas, culled by the static system. */
+    _buildProps() {
+      const s = this.scene;
+      this.propImgs = [];
+      if (!ENV.ready || !s.textures.exists('env-props')) return;
+      for (const p of this._propList || []) {
+        const im = s.add.image(p.x, p.y + 6, 'env-props', p.name).setOrigin(0.5, 1).setDepth(depthAt(p.y)).setFlipX(p.flip);
+        im.setScale(p.w / im.width);
+        this.propImgs.push(im);
+        this.walls.push(im);
+      }
+    }
+
+    /** Flowing data-stream: two scrolling additive streak layers over the river, cut where lanes cross it. */
+    _buildFlow() {
+      const s = this.scene;
+      this._flow = [];
+      if (!s.textures.exists('env-flow')) return;
+      const rv = this._river, W = RIVER.width;
+      const cuts = [[330, rv.len / 2 - 235], [rv.len / 2 + 235, rv.len - 330]];
       const ang = Math.atan2(rv.uy, rv.ux);
-      g.beginPath(); g.arc(from.x, from.y, hw, ang + Math.PI / 2, ang + Math.PI * 1.5); g.strokePath();
-      g.beginPath(); g.arc(to.x, to.y, hw, ang - Math.PI / 2, ang + Math.PI / 2); g.strokePath();
-    }
-
-    _drawBasesAndLanes(g) {
-      // 2.5D Elevated Base Terraces (2-tier stepped platform with cast drop shadow)
-      for (const team of ['blue', 'red']) {
-        const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
-        const col = teamColor(team);
-        g.fillStyle(0x000000, 0.42); g.fillCircle(core.x + 24, core.y + 28, BASE_RADIUS + 14);
-        g.fillStyle(0x162033, 0.95); g.fillCircle(core.x, core.y, BASE_RADIUS);
-        g.fillStyle(col, 0.08); g.fillCircle(core.x, core.y, BASE_RADIUS);
-        g.lineStyle(14, col, 0.52); g.strokeCircle(core.x, core.y, BASE_RADIUS);
-        g.lineStyle(4, 0xffffff, 0.22); g.strokeCircle(core.x, core.y, BASE_RADIUS - 14);
-        // Inner elevated core tier
-        g.fillStyle(0x000000, 0.35); g.fillCircle(core.x + 14, core.y + 18, BASE_RADIUS * 0.56);
-        g.fillStyle(0x1e2b42, 0.9); g.fillCircle(core.x, core.y, BASE_RADIUS * 0.55);
-        g.lineStyle(5, col, 0.42); g.strokeCircle(core.x, core.y, BASE_RADIUS * 0.55);
-      }
-      const poly = (pts, w, color, a, ox = 0, oy = 0) => {
-        g.lineStyle(w, color, a);
-        g.beginPath(); g.moveTo(pts[0].x + ox, pts[0].y + oy);
-        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x + ox, pts[i].y + oy);
-        g.strokePath();
-        g.fillStyle(color, a);
-        for (const p of pts) g.fillCircle(p.x + ox, p.y + oy, w / 2);
-      };
-      const lanes = Object.values(LANES);
-      // Raised 2.5D lane shadow + beveled stone curb + surface
-      for (const pts of lanes) poly(pts, LANE_WIDTH + 34, 0x000000, 0.36, 10, 14);
-      for (const pts of lanes) poly(pts, LANE_WIDTH + 22, CARPET_EDGE, 1);
-      for (const pts of lanes) poly(pts, LANE_WIDTH, CARPET, 1);
-      for (const pts of lanes) {
-        g.lineStyle(4, CARPET_LINE, 0.55);
-        g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-        g.strokePath();
-      }
-      // Break-room fountains (heal + shop zone).
-      for (const team of ['blue', 'red']) {
-        const f = FOUNTAIN[team], col = teamColor(team);
-        g.fillStyle(col, 0.13); g.fillCircle(f.x, f.y, FOUNTAIN_RADIUS);
-        g.lineStyle(8, col, 0.7); g.strokeCircle(f.x, f.y, FOUNTAIN_RADIUS);
-        g.lineStyle(3, 0xffffff, 0.25); g.strokeCircle(f.x, f.y, FOUNTAIN_RADIUS - 24);
-        g.fillStyle(col, 0.22); g.fillCircle(f.x, f.y, 120);
-      }
-      g.lineStyle(14, 0x39c2ff, 0.45); g.strokeRect(0, 0, MAP_W, MAP_H);
-    }
-
-    _drawPads(g) {
-      for (const c of CAMPS) {
-        g.fillStyle(NEUTRAL, 0.05); g.fillCircle(c.x, c.y, 110);
-        g.lineStyle(4, NEUTRAL, 0.3);
-        for (let i = 0; i < 12; i++) { // dashed ring
-          const a0 = (i / 12) * Math.PI * 2;
-          g.beginPath(); g.arc(c.x, c.y, 110, a0, a0 + 0.32); g.strokePath();
+      for (const [t0, t1] of cuts) {
+        for (const [i, o] of [[0, { sp: 70, h: 0.9, a: 0.5, sc: 0.8 }], [1, { sp: -38, h: 0.6, a: 0.28, sc: 1.4 }]]) {
+          const len = t1 - t0;
+          const ts = s.add.tileSprite(RIVER.from.x + rv.ux * t0, RIVER.from.y + rv.uy * t0, len, W * o.h, 'env-flow')
+            .setOrigin(0, 0.5).setRotation(ang).setDepth(D.glyphs - 0.1 + i * 0.01).setAlpha(o.a).setBlendMode(1);
+          ts.setTileScale(o.sc, o.sc);
+          ts._sp = o.sp; ts._i = i;
+          this._flow.push(ts);
         }
       }
-      for (const [kind, p] of Object.entries(EPIC_SPOTS)) {
-        const col = kind === 'golden' ? 0xffd700 : 0xff4a4a;
-        g.fillStyle(col, 0.07); g.fillCircle(p.x, p.y, 240);
-        g.lineStyle(7, col, 0.5); g.strokeCircle(p.x, p.y, 240);
-        g.lineStyle(3, col, 0.3); g.strokeCircle(p.x, p.y, 200);
-      }
+      for (const ts of this._flow) ts.setVisible(!(this.lowFx && ts._i));
     }
 
-    /** Soft floor shadows (light from the top-left) under every wall — baked with the floor. */
-    _drawWallShadows(g) {
-      for (const w of WALLS) {
-        const H = WALL_H[w.look] ?? 30;
-        if (w.kind === 'circle') {
-          g.fillStyle(0x000000, 0.16); g.fillCircle(w.x + H * 0.45 + 6, w.y + 8, w.r + 10);
-          g.fillStyle(0x000000, 0.26); g.fillCircle(w.x + 4, w.y + 3, w.r + 2);
-        } else if (w.kind === 'seg') {
-          const cap = (ox, oy, lw, a) => {
-            g.lineStyle(lw, 0x000000, a); g.lineBetween(w.x1 + ox, w.y1 + oy, w.x2 + ox, w.y2 + oy);
-            g.fillStyle(0x000000, a); g.fillCircle(w.x1 + ox, w.y1 + oy, lw / 2); g.fillCircle(w.x2 + ox, w.y2 + oy, lw / 2);
-          };
-          const glass = w.look === 'glass';
-          cap(H * 0.4 + 6, 10, w.w + 26, glass ? 0.08 : 0.15);
-          cap(3, 4, w.w + 8, glass ? 0.14 : 0.28);
-        } else {
-          g.fillStyle(0x000000, 0.16); g.fillRect(w.x + 4, w.y + 4, w.w + H * 0.5 + 10, w.h + 12);
-          g.fillStyle(0x000000, 0.28); g.fillRect(w.x - 3, w.y - 2, w.w + 9, w.h + 8);
-        }
-      }
-    }
 
-    /** v4: dark soil + leaf-litter patch under every bush (baked with the floor). */
-    _drawBushSoil(g) {
-      for (const b of BUSHES) {
-        if (b.kind === 'circle') {
-          g.fillStyle(BUSH_EDGE, 0.55); g.fillCircle(b.x, b.y, b.r + 8);
-          g.fillStyle(BUSH_SOIL, 0.95); g.fillCircle(b.x, b.y, b.r);
-          continue;
-        }
-        const cap = (lw, col, a) => {
-          g.lineStyle(lw, col, a); g.lineBetween(b.x1, b.y1, b.x2, b.y2);
-          g.fillStyle(col, a); g.fillCircle(b.x1, b.y1, lw / 2); g.fillCircle(b.x2, b.y2, lw / 2);
-        };
-        cap(b.w + 16, BUSH_EDGE, 0.55);
-        cap(b.w, BUSH_SOIL, 0.95);
-      }
-    }
-
-    /** v4: every bush canopy → one canvas atlas (drawn once per page), one y-sorted image per bush. */
     _buildBushes() {
       const s = this.scene;
       this.bushImgs = new Map();
@@ -366,6 +322,7 @@ export class MobaMap {
     setQuality(low) {
       this.lowFx = !!low;
       if (low) for (const g of this.glyphs) if (g.img.visible) g.img.setVisible(false);
+      for (const ts of this._flow || []) ts.setVisible(!(low && ts._i)); // low: keep only the main flow layer
       this._cullAt = 0; // re-evaluate decor visibility next frame
     }
 
@@ -449,7 +406,11 @@ export class MobaMap {
       });
       for (const team of ['blue', 'red']) {
         const f = FOUNTAIN[team];
-        s.add.text(f.x, f.y - 10, '⛲', { fontSize: 72 }).setOrigin(0.5).setDepth(D.decor);
+        if (ENV.ready && s.textures.exists('env-props')) {
+          const im = s.add.image(f.x, f.y + 40, 'env-props', 'tank').setOrigin(0.5, 1).setDepth(depthAt(f.y + 40));
+          im.setScale(150 / im.width);
+          s.add.image(f.x, f.y - 30, 'moba-glow').setTint(0x66d8ff).setDisplaySize(260, 260).setAlpha(0.5).setBlendMode(1).setDepth(D.decor);
+        } else s.add.text(f.x, f.y - 10, '⛲', { fontSize: 72 }).setOrigin(0.5).setDepth(D.decor);
         const lx = f.x + (team === 'blue' ? 40 : -40), ly = f.y + (team === 'blue' ? -230 : 230);
         s.add.text(lx, ly, `${TEAM_INFO[team].emoji} BREAK ROOM\nheal · shop`, {
           fontFamily: FONT, fontSize: 22, color: teamCss(team), align: 'center', stroke: '#000', strokeThickness: 5,
@@ -473,6 +434,7 @@ export class MobaMap {
     }
 
     _buildDecor() {
+      if (ENV.ready) return; // real sprite scenery (_buildProps) replaces the emoji decor
       const s = this.scene, rand = rng(1337);
       const cores = STRUCTURES.filter((st) => st.kind === 'core');
       const ok = (x, y) => {
@@ -529,6 +491,7 @@ export class MobaMap {
     update(dt, view, info) {
       const rv = this._river, f = this._glyphFrom;
       this._cullStatics(view);
+      for (const ts of this._flow || []) if (ts.visible) ts.tilePositionX += ts._sp * dt;
       if (this.lowFx) { this._updateTimers(info); return; }
       const vx0 = view.x - 60, vy0 = view.y - 60, vx1 = view.right + 60, vy1 = view.bottom + 60;
       for (const g of this.glyphs) {
@@ -721,6 +684,17 @@ function drawBush(ctx, b) {
     }
   }
   pts.sort((a, c) => a.y - c.y); // back (north) clumps first
+  if (ENV.ready && ENV.frames.bush1) { // CC0 sprite canopy (Kenney Tower Defense bushes + sci-fi plants), shaded + tinted
+    const cans = [shadedSprite('bush1', 0x5fae62, 0.45), shadedSprite('bush2', 0x4f9e58, 0.4), shadedSprite('bush1', 0x7cc070, 0.5)];
+    const leaves = [shadedSprite('plant1', 0xb8e8a8, 0.25), shadedSprite('plant2', 0xb8e8a8, 0.25)];
+    for (const p of pts) {
+      const lift = BUSH_LIFT * (0.55 + rand() * 0.45), size = p.r * 2.5, hy = p.y - lift;
+      ctx.fillStyle = 'rgba(0,10,0,0.35)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 2, p.r * 0.9, p.r * 0.34, 0, 0, Math.PI * 2); ctx.fill();
+      drawShaded(ctx, cans[Math.floor(rand() * cans.length)], p.x, hy + size * 0.5, size, rand() < 0.5);
+      if (rand() < 0.55) drawShaded(ctx, leaves[Math.floor(rand() * 2)], p.x + (rand() - 0.5) * p.r * 0.8, hy + size * 0.2, p.r * 1.1, rand() < 0.5);
+    }
+    return;
+  }
   const greens = [0x2f7d3b, 0x3a9446, 0x2a6b34, 0x45a852, 0x337f2f];
   for (const p of pts) {
     const lift = BUSH_LIFT * (0.55 + rand() * 0.45);
@@ -778,12 +752,16 @@ function rr(ctx, x, y, w, h, r) {
 }
 
 /** Oblique box: front face (south) H px tall under a top face lifted by H. Returns the top rect. */
-function box(ctx, x, y, w, h, H, top, side, stroke, rad = 6) {
+function box(ctx, x, y, w, h, H, top, side, stroke, rad = 6, tk = null) {
   const g = ctx.createLinearGradient(0, y + h - H, 0, y + h);
   g.addColorStop(0, css(side)); g.addColorStop(1, css(shade(side, -0.4)));
-  ctx.fillStyle = g; rr(ctx, x, y + h - H - rad, w, H + rad, rad); ctx.fill();
+  const tp = tk && texPattern(ctx, tk[0], side, tk[1], 0.7), tt = tk && texPattern(ctx, tk[0], top, tk[1], 0.8);
+  if (tp) { ctx.fillStyle = tp; rr(ctx, x, y + h - H - rad, w, H + rad, rad); ctx.fill(); ctx.globalAlpha = 0.6; }
+  ctx.fillStyle = g; rr(ctx, x, y + h - H - rad, w, H + rad, rad); ctx.fill(); ctx.globalAlpha = 1;
   ctx.strokeStyle = css(stroke); ctx.lineWidth = 3; ctx.stroke();
-  ctx.fillStyle = css(top); rr(ctx, x, y - H, w, h, rad); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = tt || css(top); rr(ctx, x, y - H, w, h, rad); ctx.fill();
+  if (tt) { ctx.globalAlpha = 0.3; ctx.fillStyle = css(top); ctx.fill(); ctx.globalAlpha = 1; }
+  ctx.stroke();
   ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(x + rad, y - H + 2.5); ctx.lineTo(x + w - rad, y - H + 2.5); ctx.stroke();
   return { x, y: y - H, w, h };
@@ -837,6 +815,7 @@ const rgba = (c, a) => `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},${a
  *   glass     — translucent glass wall, metal mullions, reflections (you see through it)
  *   shelf     — bookshelf: wooden frame, rows of colourful book spines
  */
+const SEG_TEX = { partition: ['plaster', 0.5], cubicles: ['carpet', 0.45], shelf: ['wood', 0.4] }; // look -> [env texture, world units per texel]
 function drawSegWall(ctx, w, H, st, rand) {
   const G = segGeom(w);
   const look = w.look;
@@ -862,9 +841,14 @@ function drawSegWall(ctx, w, H, st, rand) {
   // ── end cap + long face ──
   if (endF) { ctx.fillStyle = glass ? rgba(shade(side, -0.2), ga) : css(shade(side, -0.42)); polyPath(ctx, endF); ctx.fill(); }
   if (frontF) {
-    ctx.fillStyle = sideGrad(frontF, side); polyPath(ctx, frontF); ctx.fill();
+    const tk = !glass && SEG_TEX[look], tpF = tk && texPattern(ctx, tk[0], side, tk[1], 0.75);
+    if (tpF) {
+      ctx.fillStyle = tpF; polyPath(ctx, frontF); ctx.fill();
+      ctx.globalAlpha = 0.6; ctx.fillStyle = sideGrad(frontF, side); polyPath(ctx, frontF); ctx.fill(); ctx.globalAlpha = 1;
+    } else { ctx.fillStyle = sideGrad(frontF, side); polyPath(ctx, frontF); ctx.fill(); }
     ctx.save(); polyPath(ctx, frontF); ctx.clip();
     const L0 = G.t0, L1 = G.t1;
+    ctx.fillStyle = 'rgba(0,0,0,0.2)'; polyPath(ctx, faceQuad(L0, L1, 0, 14)); ctx.fill();   // contact shadow at the foot
     if (look === 'cubicles') {
       ctx.strokeStyle = css(shade(side, -0.5)); ctx.lineWidth = 3;
       for (let t = L0 + 90; t < L1 - 20; t += 90) vline(t, 0, H);                      // panel posts
@@ -928,10 +912,13 @@ function drawSegWall(ctx, w, H, st, rand) {
     }
     ctx.restore();
     ctx.strokeStyle = css(stroke); ctx.lineWidth = 3; polyPath(ctx, frontF); ctx.stroke();
+    ctx.strokeStyle = glass ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2; seg2(eAt(L0 + 3, H - 2), eAt(L1 - 3, H - 2)); // lit top edge
   }
   if (endF) { ctx.strokeStyle = css(stroke); ctx.lineWidth = 3; polyPath(ctx, endF); ctx.stroke(); }
   // ── top face ──
-  ctx.fillStyle = glass ? rgba(top, Math.min(0.9, ga + 0.15)) : css(top); polyPath(ctx, topF); ctx.fill();
+  const tpT = !glass && SEG_TEX[look] && texPattern(ctx, SEG_TEX[look][0], top, SEG_TEX[look][1], 0.8);
+  if (tpT) { ctx.fillStyle = tpT; polyPath(ctx, topF); ctx.fill(); ctx.globalAlpha = 0.35; ctx.fillStyle = css(top); ctx.fill(); ctx.globalAlpha = 1; }
+  else { ctx.fillStyle = glass ? rgba(top, Math.min(0.9, ga + 0.15)) : css(top); polyPath(ctx, topF); ctx.fill(); }
   ctx.save(); polyPath(ctx, topF); ctx.clip();
   const T0 = G.t0, T1 = G.t1;
   const ln = (t0, o0, t1, o1) => seg2(up(gAt(G, t0, o0), H), up(gAt(G, t1, o1), H));
@@ -971,7 +958,7 @@ const WALL_DRAW = {
   /** Cubicle block: fabric partition panels around 1–3 cells, each with a desk, monitor + chair. */
   cubicle(ctx, w, H, st, rand) {
     const top = num(st.top, 0x66779a), side = num(st.fill, 0x3b475f), stroke = num(st.stroke, 0x0c1019);
-    box(ctx, w.x, w.y, w.w, w.h, H, top, side, stroke, 5);
+    box(ctx, w.x, w.y, w.w, w.h, H, top, side, stroke, 5, ['carpet', 0.45]);
     ctx.strokeStyle = css(shade(side, -0.45)); ctx.lineWidth = 2; // panel seams on the front face
     for (let x = w.x + 46; x < w.x + w.w - 10; x += 46) { ctx.beginPath(); ctx.moveTo(x, w.y + w.h - H + 3); ctx.lineTo(x, w.y + w.h - 3); ctx.stroke(); }
     const T = 15, tx = w.x + T, ty = w.y - H + T, tw = w.w - T * 2, th = w.h - T * 2;
@@ -1013,7 +1000,7 @@ const WALL_DRAW = {
   /** Desk island: wooden top with monitors, keyboards, papers, a mug; drawers on the front. */
   desk(ctx, w, H, st, rand) {
     const top = num(st.top, 0x9c6b42), side = num(st.fill, 0x5b3c24), stroke = num(st.stroke, 0x170d05);
-    const t = box(ctx, w.x, w.y, w.w, w.h, H, top, side, stroke, 6);
+    const t = box(ctx, w.x, w.y, w.w, w.h, H, top, side, stroke, 6, ['wood', 0.4]);
     ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 2; // wood grain
     for (let y = t.y + 14; y < t.y + t.h - 6; y += 13) { ctx.beginPath(); ctx.moveTo(t.x + 6, y); ctx.lineTo(t.x + t.w - 6, y + (rand() - 0.5) * 4); ctx.stroke(); }
     const cols = Math.max(1, Math.floor((t.w - 20) / 90));
@@ -1050,7 +1037,7 @@ const WALL_DRAW = {
   /** Row of server racks: vented metal roofs, blinking-LED rack units on the front. */
   rack(ctx, w, H, st, rand) {
     const top = num(st.top, 0x2f3749), side = num(st.fill, 0x161b28), stroke = num(st.stroke, 0x04060a);
-    const t = box(ctx, w.x, w.y, w.w, w.h, H, top, side, stroke, 4);
+    const t = box(ctx, w.x, w.y, w.w, w.h, H, top, side, stroke, 4, ['plate', 0.3]);
     const n = Math.max(1, Math.round(w.w / 76)), cw = w.w / n;
     const leds = ['#39ff7a', '#39ff7a', '#39c2ff', '#ffb347', '#39ff7a', '#ff5e5e'];
     for (let i = 0; i < n; i++) {

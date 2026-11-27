@@ -1,0 +1,9 @@
+HUD / UI art sources (Team Mode)
+
+ui-atlas.png / ui-atlas.json - selected panels, buttons, bar tracks and gloss bars packed into one atlas, from
+  Kenney "UI Pack: Sci-fi" 2.0 (https://kenney.nl/assets/ui-pack-sci-fi), License: CC0 1.0 Universal.
+KenneyFutureNarrow.ttf - Kenney "Kenney Future Narrow" font, shipped inside the same UI Pack: Sci-fi, License: CC0 1.0 Universal.
+
+Skill / glyph icons used by the HUD come from assets/moba/ico (Kenney Game Icons, CC0 1.0).
+
+Curated by Duke Nguyen (duc.nguyen@onethesis.com).
