@@ -76,6 +76,7 @@ if (deepScene === 'lobby' || deepScene === 'team' || deepScene === 'select') {
         champ: params.get('champ') || 'pixel',
         name: params.get('name') || 'Tester',
         offline: params.get('offline') === '1',
+        sandbox: params.get('offline') === '1' && params.get('sandbox') !== '0',
       });
     }
   });

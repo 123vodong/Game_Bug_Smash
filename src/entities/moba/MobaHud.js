@@ -69,6 +69,13 @@ export function skillMechanics(sk, def) {
   if (sk.execute) L.push(`☠ +${Math.round(sk.execute.missingHpPct * 100)}% of missing HP`);
   if (sk.delay) L.push(`⏳ lands after ${sec(sk.delay)}`);
   if (sk.duration && sk.type !== 'zone') L.push(`⏱ lasts ${sec(sk.duration)}`);
+  if (sk.silence) L.push(`🔇 Silence ${sec(sk.silence.ms)}`);
+  if (sk.recast) L.push(sk.recast.mode === 'back' ? `🔁 Press again within ${sec(sk.recast.ms)}: return to start (free)` : `🔁 Press again within ${sec(sk.recast.ms)}: cast again (free)`);
+  if (sk.type === 'swap') L.push('🔄 Swap places with an allied champion');
+  if (sk.trail) L.push(`🌊 Leaves a ${sec(sk.trail.duration)} zone behind`);
+  if (sk.mark) L.push(`🏷 Applies ${sk.mark.tag} mark (max ${sk.mark.max || 1}, ${sec(sk.mark.ms)})`);
+  if (sk.detonate) L.push(`💥 Consumes ${sk.detonate.tag} marks: +${Math.round(sk.detonate.pctPerStack * 100)}% true dmg per stack`);
+  if (sk.stasis) L.push(`⏳ Stasis ${sec(sk.stasis.ms)}: invulnerable, cannot act`);
   if (sk.type === 'dash') L.push('🧱 stops at walls');
   if (sk.type === 'blink') L.push('🧱 lands beside walls');
   return L;

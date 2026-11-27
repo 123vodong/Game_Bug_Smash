@@ -577,12 +577,15 @@ export default class TeamModeScene extends Phaser.Scene {
     this._sim = new OfflineSim({
       champ: this.myChamp, name: this.playerName, lobbyMs, spells: this.mySpells, hat: SaveManager.getHat?.() || '',
       allies: Array.isArray(d.allies) ? d.allies : null, enemies: Array.isArray(d.enemies) ? d.enemies : null,
+      sandbox: !!d.sandbox,
       emit: (type, m) => { if (!this._shuttingDown) this._onMsg(type, m ?? {}); },
     });
     this.localId = this._sim.localId;
     this._sim.receive('hello');
-    this.hud.setStatus(t('prac.status'), '#ffb347');
-    this._buildPracticeBar();
+    if (d.sandbox) {
+      this.hud.setStatus(t('prac.status'), '#ffb347');
+      this._buildPracticeBar();
+    }
   }
 
   _buildPracticeBar() {
@@ -603,9 +606,11 @@ export default class TeamModeScene extends Phaser.Scene {
       ['swap', 104, t('prac.swap'), 0xffb347, () => { AudioManager.uiClick?.(); this._openChampSwapModal(); }],
     ]);
     const row2 = mkRow(50, [
-      ['wave', 56, '+30s', 0xb084ff, () => { for (let i = 0; i < 300; i++) this._sim.update(100); AudioManager.uiClick?.(); }],
-      ['gold', 74, t('prac.gold'), 0xffd23f, () => { this._sim.debug('gold', 5000); AudioManager.uiClick?.(); }],
-      ['lv', 62, t('prac.lvUp'), 0xffd23f, () => {
+      ['clearDummy', 78, t('prac.clearDummy'), 0xff5e5e, () => { this._sim.receive('clearDummies'); AudioManager.uiClick?.(); }],
+      ['dummy', 88, t('prac.dummy'), 0x39ff14, () => { this._sim.receive('spawnDummy'); AudioManager.uiClick?.(); }],
+      ['wave', 54, '+30s', 0xb084ff, () => { for (let i = 0; i < 300; i++) this._sim.update(100); AudioManager.uiClick?.(); }],
+      ['gold', 70, t('prac.gold'), 0xffd23f, () => { this._sim.debug('gold', 5000); AudioManager.uiClick?.(); }],
+      ['lv', 58, t('prac.lvUp'), 0xffd23f, () => {
         const me = this._me(); if (me) this._sim.debug('level', Math.min(R.MAX_LEVEL, (me.level || 1) + 1));
         AudioManager.uiClick?.();
       }],
@@ -622,6 +627,8 @@ export default class TeamModeScene extends Phaser.Scene {
     p.swap?._label?.setText(t('prac.swap'));
     p.lv?._label?.setText(t('prac.lvUp'));
     p.gold?._label?.setText(t('prac.gold'));
+    p.dummy?._label?.setText(t('prac.dummy'));
+    p.clearDummy?._label?.setText(t('prac.clearDummy'));
     const syncToggle = (btn, label, on, onColor, onCss) => {
       if (!btn) return;
       btn._label?.setText(`${label}:${on ? 'ON' : 'OFF'}`).setColor(on ? onCss : '#8a98b0');
@@ -722,6 +729,9 @@ export default class TeamModeScene extends Phaser.Scene {
         break;
       case 'gold':
         if (Number.isFinite(m.n) && Number.isFinite(m.x) && Number.isFinite(m.y)) this.fx.gold(m.x, m.y, Math.round(m.n));
+        break;
+      case 'dummyDps':
+        this.hud.setStatus(`DUMMY · Hit: ${m.dmg} · 3s: ${m.total} · DPS: ${m.dps}`, '#7ed957');
         break;
       case 'chat':
         this.hud.chat({ name: m.name, text: m.text, kind: m.kind, mine: !!this.localId && m.sid === this.localId });
@@ -1063,7 +1073,7 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!this._isTouch) {
       btns.push({ label: camLbl(), color: 0xffd23f, fn: (btn) => { this._toggleCamLock(); btn?._label?.setText(camLbl()); } });
     }
-    if (this._sim) {
+    if (this._sim?.sandbox) {
       const cdLbl = () => `${t('prac.noCd')}: ${this._sim?.noCd ? 'ON' : 'OFF'}`;
       const mpLbl = () => `${t('prac.noMana')}: ${this._sim?.noMana ? 'ON' : 'OFF'}`;
       const hpLbl = () => `${t('prac.noDmg')}: ${this._sim?.godMode ? 'ON' : 'OFF'}`;
@@ -1421,9 +1431,11 @@ export default class TeamModeScene extends Phaser.Scene {
     if (me.dead) return this._deny(slot, '💀 You are respawning');
     if (slot === 'r' && (me.level || 1) < R.ULT_UNLOCK_LEVEL) return this._deny(slot, `🔒 ${sk.name} unlocks at level ${R.ULT_UNLOCK_LEVEL}`);
     if (me.ranks && !(me.ranks[slot] > 0)) return this._deny(slot, t('skill.unlearned'));
+    // v5 recast: a live recast window makes the second press free (server enforces the real window).
+    const rcLive = !!sk.recast && ((this._recastUntil && this._recastUntil[slot]) || 0) > this.time.now;
     const left = (me[`cd${slot.toUpperCase()}`] || 0) - srvNow;
-    if (left > 0) return this._deny(slot, `${sk.icon} ${sk.name} ready in ${(left / 1000).toFixed(1)}s`);
-    if ((me.mana || 0) < sk.mana) return this._deny(slot, '💧 Not enough mana');
+    if (!rcLive && left > 0) return this._deny(slot, `${sk.icon} ${sk.name} ready in ${(left / 1000).toFixed(1)}s`);
+    if (!rcLive && (me.mana || 0) < sk.mana) return this._deny(slot, '💧 Not enough mana');
     if ((me.stunnedUntil || 0) > srvNow) return this._deny(slot, '💫 Stunned!');
     const pos = this._pred || me;
     const auto = viaButton || this._autoAimWanted(pos);
@@ -1444,6 +1456,7 @@ export default class TeamModeScene extends Phaser.Scene {
     const msg = { slot, x: Math.round(aim.x), y: Math.round(aim.y) };
     if (id) msg.id = id;
     this._castSend(msg);
+    if (sk.recast) { this._recastUntil = this._recastUntil || {}; this._recastUntil[slot] = rcLive ? 0 : this.time.now + sk.recast.ms; }
     this._myCastAt = this.time.now;
     if (id) this._markMine(id);
     if (sk.type === 'dash' || sk.type === 'blink') this._moveDest = null;
@@ -1466,6 +1479,15 @@ export default class TeamModeScene extends Phaser.Scene {
    *  visible enemy unit (never a pet), else straight ahead (stick / last move / facing). */
   _autoAim(sk, pos) {
     if (sk.type === 'self' || sk.type === 'allies') return { x: pos.x, y: pos.y, id: null };
+    if (sk.type === 'swap') { // v5: nearest allied champion in range
+      let best = null, bd = (sk.range || 600) + 40;
+      for (const v of this.views.champs.values()) {
+        if (v.dead || v.team !== this.myTeam || v.id === this.localId) continue;
+        const d = Math.hypot(v.x - pos.x, v.y - pos.y);
+        if (d < bd) { bd = d; best = v; }
+      }
+      return best ? { x: best.x, y: best.y, id: null } : null;
+    }
     if ((sk.type === 'circle' || sk.type === 'zone') && !sk.range) return { x: pos.x, y: pos.y, id: null };
     // Escape moves (blinks, pure dashes) never auto-aim at an enemy — shared policy with the server.
     if (autoAimsAtEnemy(sk)) {

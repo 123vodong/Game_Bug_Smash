@@ -878,7 +878,7 @@ export default class MenuScene extends Phaser.Scene {
     const name = SaveManager.getPlayerName() || 'Tester';
     this.cameras.main.fadeOut(300, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('TeamModeScene', { offline: true, champ, name });
+      this.scene.start('TeamModeScene', { offline: true, sandbox: true, champ, name });
     });
   }
 

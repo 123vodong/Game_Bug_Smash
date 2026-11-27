@@ -14,6 +14,7 @@ import { tText } from '../../core/I18n.js';
 import { itemStats, ITEMS } from '../../../shared/moba/items.js';
 import { ULT_UNLOCK_LEVEL, scaledAmount, cooldownMs, MAX_HASTE_PCT, TEAM_INFO } from '../../../shared/moba/rules.js';
 import { LOOKS } from '../../entities/moba/mobaGfx.js';
+import { showSkillTipPanel } from '../../entities/moba/MobaHud.js';
 
 const FONT = 'Arial Black, sans-serif';
 const MONO = 'Consolas, monospace';
@@ -92,9 +93,11 @@ export class InfoPanel {
 
   get isOpen() { return this.c.visible; }
   open(sid) { if (sid !== undefined && sid !== this.sid) { this.sid = sid; this._key = ''; } this.c.setVisible(true); }
-  close() { this.c.setVisible(false); }
+  close() { this._hideSkillTip(); this.c.setVisible(false); }
   toggle(sid) { if (this.isOpen && (sid === undefined || sid === this.sid)) this.close(); else this.open(sid); }
-  destroy() { this.c?.destroy(); this.c = null; }
+  destroy() { this._hideSkillTip(); this.c?.destroy(); this.c = null; }
+  _showSkillTip(def, slot, x, y) { this._hideSkillTip(); this._skillTip = showSkillTipPanel(this.s, def, slot, { x, y, depth: 95 }); }
+  _hideSkillTip() { this._skillTip?.destroy(); this._skillTip = null; }
 
   _t(x, y, str, style = {}, ox = 0, oy = 0) {
     const t = this.s.add.text(x, y, str, { fontFamily: MONO, fontSize: 12, color: '#dfe7f5', ...style }).setOrigin(ox, oy);
@@ -120,6 +123,7 @@ export class InfoPanel {
       toArr(c.items).join('|'), c.spellD, c.spellF, buffPct, c.team].join(';');
     if (key !== this._key) {
       this._key = key;
+      this._hideSkillTip();
       this.body.removeAll(true);
       this._live = { hp: null, mana: null, skills: [], spells: [] };
       this._build(c, def, srvNow, buffPct);
@@ -223,7 +227,13 @@ export class InfoPanel {
       const K = slot.toUpperCase();
       const cdTot = cooldownMs(sk.cd, haste), left = Math.max(0, (c['cd' + K] || 0) - srvNow);
       const locked = slot === 'r' && lv < ULT_UNLOCK_LEVEL;
-      this.body.add(s.add.rectangle(ax, ay, aw, 66, sk.color ?? 0x39c2ff, 0.08).setOrigin(0).setStrokeStyle(1, sk.color ?? 0x39c2ff, 0.45));
+      const col = sk.color ?? 0x39c2ff;
+      const box = s.add.rectangle(ax, ay, aw, 66, col, 0.08).setOrigin(0).setStrokeStyle(1, col, 0.45)
+        .setInteractive({ useHandCursor: true });
+      const rowY = ay;
+      box.on('pointerover', () => { box.setFillStyle(col, 0.16).setStrokeStyle(2, 0xffffff, 0.85); this._showSkillTip(def, slot, this.x0 + ax + aw / 2, this.y0 + rowY - 6); });
+      box.on('pointerout', () => { box.setFillStyle(col, 0.08).setStrokeStyle(1, col, 0.45); this._hideSkillTip(); });
+      this.body.add(box);
       this._t(ax + 8, ay + 6, `${sk.icon} [${K}] ${sk.name}`, { fontFamily: FONT, fontSize: 13, color: css(sk.color ?? 0xffffff), stroke: '#000', strokeThickness: 3 });
       const meta = `💧${sk.mana} · ⏱ ${s1(cdTot)}${haste ? ` (${sk.cd}s base)` : ''}${left > 0 ? ` · ready in ${s1(left)}` : (locked ? '' : ' · READY')}${locked ? ` · 🔒 Lv ${ULT_UNLOCK_LEVEL}` : ''}`;
       const mt = this._t(ax + aw - 8, ay + 8, meta, { fontSize: 11, color: left > 0 || locked ? '#ffb347' : '#7ed957' }, 1, 0);

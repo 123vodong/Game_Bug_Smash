@@ -41,7 +41,7 @@ const PET_R = 18;
 const isStruct = (e) => e.kind === 'tower' || e.kind === 'core';
 
 export class OfflineSim {
-  constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null, hat = '', world = null }) {
+  constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null, hat = '', world = null, sandbox = false }) {
     this.localId = 'me';
     // 2026-11-25: the floor (size, fountains, bushes, nav). Story Mode passes its own; 5v5 = the Open Office.
     this.world = world || WORLD_5V5;
@@ -53,9 +53,10 @@ export class OfflineSim {
       emit(type, m);
     };
     this.t = Date.now();
-    this.noCd = true;    // Offline practice: 0s cooldowns for local player (toggleable)
-    this.noMana = true;  // Offline practice: 0 mana cost for local player (toggleable)
-    this.godMode = true; // Offline practice: 0 HP damage taken for local player (toggleable)
+    this.sandbox = !!sandbox;
+    this.noCd = this.sandbox;    // Sandbox practice: 0s cooldowns for local player (toggleable)
+    this.noMana = this.sandbox;  // Sandbox practice: 0 mana cost for local player (toggleable)
+    this.godMode = this.sandbox; // Sandbox practice: 0 HP damage taken for local player (toggleable)
     this._uid = 0;
     this._wave = 0;
     this._waveAt = 0;
@@ -128,6 +129,8 @@ export class OfflineSim {
     else if (type === 'setNoCd') this._setNoCd(me, m?.enabled);
     else if (type === 'setNoMana') this._setNoMana(me, m?.enabled);
     else if (type === 'setGodMode') this._setGodMode(me, m?.enabled);
+    else if (type === 'spawnDummy') this._spawnDummy(me);
+    else if (type === 'clearDummies') this._clearDummies();
   }
 
   _setNoCd(me, enabled) {
@@ -152,10 +155,15 @@ export class OfflineSim {
     if (!me || !CHAMPIONS[champId]) return false;
     this._despawnPet(me);
     this._cancelRecall(me);
+    this._traps = this._traps.filter((tp) => {
+      if (tp.ownerId !== me.id) return true;
+      this.emit('fx', { k: 'trapEnd', tid: tp.tid });
+      return false;
+    });
     const changing = me.champ !== champId;
     me.champ = champId;
     me.dead = false; me.respawnAt = 0;
-    me.stunnedUntil = 0; me.rootedUntil = 0; me.slowUntil = 0; me.slowPct = 0;
+    me.stunnedUntil = 0; me.rootedUntil = 0; me.slowUntil = 0; me.slowPct = 0; me.silencedUntil = 0; me._recast = {}; me._marks = {};
     me._dispUntil = 0; me._stealthUntil = 0; me._spellShieldUntil = 0;
     me._order = null; me._nav = null; me.targetId = '';
     me._buffs = {}; me.shield = 0; me._shieldUntil = 0;
@@ -544,7 +552,33 @@ export class OfflineSim {
     return st.champions.get(id) || st.units.get(id) || st.structures.get(id) || null;
   }
   _alive(e) { return !!e && (e.dead === undefined ? e.alive !== false : !e.dead); }
-  _radius(e) { return e.kind === 'tower' ? STRUCTURE_RADIUS.tower : e.kind === 'core' ? STRUCTURE_RADIUS.core : e.champ ? 30 : 22; }
+  _spawnDummy(me) {
+    if (!me) return null;
+    const live = [];
+    this.state.units.forEach((u) => { if (u.alive && u.kind === 'dummy') live.push(u); });
+    while (live.length >= 3) {
+      const old = live.shift();
+      old.alive = false;
+      this.state.units.delete(old.id);
+    }
+    const fl = Math.hypot(me._mvx || 0, me._mvy || 0);
+    const dx = fl > 0.01 ? me._mvx / fl : 1, dy = fl > 0.01 ? me._mvy / fl : 0;
+    const raw = this.world.clampToMap(me.x + dx * 240, me.y + dy * 240);
+    const pos = this.nav.nearestFree(raw.x, raw.y, CHAMP_RADIUS);
+    const id = this._addUnit({ team: ENEMY[me.team], kind: 'dummy', x: pos.x, y: pos.y, hp: 10000 });
+    const d = this.state.units.get(id);
+    if (d) { d.armor = 40; d.mr = 40; d._dmgLog = []; d._lastHitAt = 0; }
+    this.emit('fx', { k: 'circle', x: Math.round(pos.x), y: Math.round(pos.y), r: 70, delay: 0, color: 0xffd23f });
+    return d;
+  }
+
+  _clearDummies() {
+    this.state.units.forEach((u, id) => {
+      if (u.kind === 'dummy') { u.alive = false; this.state.units.delete(id); }
+    });
+  }
+
+  _radius(e) { return e.kind === 'tower' ? STRUCTURE_RADIUS.tower : e.kind === 'core' ? STRUCTURE_RADIUS.core : (e.champ || e.kind === 'dummy') ? 30 : 22; }
 
   _step(e, to, speed, dt) {
     const dx = to.x - e.x, dy = to.y - e.y, d = Math.hypot(dx, dy);
@@ -598,6 +632,12 @@ export class OfflineSim {
 
   _unitTick(u, dt) {
     if (!u.alive) return;
+    if (u.kind === 'dummy') {
+      if (u._lastHitAt && this.t - u._lastHitAt >= 2500) {
+        u.hp = u.maxHp; u._lastHitAt = 0; u._dmgLog = [];
+      }
+      return;
+    }
     if (u.kind === 'pet') { this._petTick(u, dt); return; }
     if (u.kind === 'ward') { if (this.t >= (u._expiresAt || 0)) u.alive = false; return; }
     const sp = u._spec;
@@ -739,6 +779,9 @@ export class OfflineSim {
     if (c._coffeeUntil > t) { tags.push('coffee'); c.hp = Math.min(c.maxHp, c.hp + 160 / 6 * dt); c.mana = Math.min(c.maxMana, c.mana + 70 / 6 * dt); }
     if ((c._blueBuffUntil || 0) > t) { tags.push('blueBuff'); c.mana = Math.min(c.maxMana, c.mana + c.maxMana * 0.03 * dt); }
     if ((c._redBuffUntil || 0) > t) { tags.push('redBuff'); }
+    if ((c._spellShieldUntil || 0) > t) tags.push('spellshield');
+    if ((c._stealthUntil || 0) > t) tags.push('stealth');
+    if ((c.silencedUntil || 0) > t) tags.push('silenced');
     const team = c.team === 'blue' ? 'Blue' : 'Red';
     if (this.state[`buff${team}`] && this.state[`buff${team}Until`] > t) tags.push('deadline');
     if (c._ghostUntil > t) tags.push('ghost');
@@ -851,8 +894,8 @@ export class OfflineSim {
     if (src?.champ && target.champ && !byPet) src._lastChampHit = { id: target.id, t: this.t };
     const isMagic = dmgType === 'magic';
     let resist = isMagic
-      ? (target.champ ? (target.mr || 30) : target.kind === 'tower' ? R.TOWER.armor : target.kind === 'core' ? R.CORE.armor : 0)
-      : (target.champ ? target.armor : target.kind === 'tower' ? R.TOWER.armor : target.kind === 'core' ? R.CORE.armor : 0);
+      ? (target.champ ? (target.mr || 30) : target.kind === 'dummy' ? (target.mr || 40) : target.kind === 'tower' ? R.TOWER.armor : target.kind === 'core' ? R.CORE.armor : 0)
+      : (target.champ ? target.armor : target.kind === 'dummy' ? (target.armor || 40) : target.kind === 'tower' ? R.TOWER.armor : target.kind === 'core' ? R.CORE.armor : 0);
     if (!isMagic && target.champ && (target._tankUntil || 0) > this.t) resist += (target._tankStacks || 0) * 3;
     const shred = (target.champ && (target._auditUntil || 0) > this.t) ? 0.15 : 0;
     const pen = src?.champ ? (isMagic ? (src._mrPen || 0) : (src._armorPen || 0)) : 0;
@@ -994,6 +1037,21 @@ export class OfflineSim {
       this._cancelRecall(target);
     } else target.hit_seq = (target.hit_seq || 0) + 1;
     if (target.campId !== undefined && !R.MINIONS[target.kind] && src?.id) target._aggro = target._aggro || src.id;
+    if (target.kind === 'dummy') {
+      target.hp = Math.max(1, target.hp - dmg);
+      target._lastHitAt = this.t;
+      const log = (target._dmgLog ||= []);
+      log.push({ t: this.t, dmg });
+      const cut = this.t - 3000;
+      while (log.length && log[0].t < cut) log.shift();
+      let total = 0;
+      for (const e of log) total += e.dmg;
+      const span = Math.max(1, (this.t - log[0].t) / 1000);
+      if (src?.id === this.localId || this.sandbox) {
+        this.emit('dummyDps', { dmg: Math.round(dmg), total: Math.round(total), dps: Math.round(total / span) });
+      }
+      return dmg;
+    }
     target.hp = Math.max(0, target.hp - dmg);
     if (src?.champ && src._ls && !byPet) src.hp = Math.min(src.maxHp, src.hp + dmg * src._ls * this._healMul(src));
     if (target.hp <= 0) this._kill(target, src);
@@ -1254,6 +1312,24 @@ export class OfflineSim {
     if (w) w._expiresAt = this.t + R.WARD.durationMs;
     c._wardCd = (this.noCd && c.id === this.localId) ? 0 : this.t + R.WARD.cdMs;
     this.emit('fx', { k: 'circle', x: Math.round(pos.x), y: Math.round(pos.y), r: 120, delay: 0, color: 0x39ff14 });
+    // Sweeper pulse on [4] Ward: reveal enemy stealth + armed traps within sightRadius
+    const scanR = R.WARD.sightRadius || 750;
+    for (const foe of this.state.champions.values()) {
+      if (foe.team !== c.team && !foe.dead && dist(foe, pos) <= scanR) {
+        foe._stealthUntil = 0;
+        foe._revealUntil = Math.max(foe._revealUntil || 0, this.t + 5000);
+      }
+    }
+    if (c.team === 'blue') {
+      for (const tr of this._traps) {
+        if (tr.team !== 'blue' && dist(tr, pos) <= scanR) {
+          this.emit('fx', {
+            k: 'zone', sid: tr.ownerId, team: tr.team, slot: tr.slot, tid: tr.tid, trap: true, fadingStealth: true,
+            x: Math.round(tr.x), y: Math.round(tr.y), r: tr.r, ms: 5000, tickMs: 1200, color: tr.color,
+          });
+        }
+      }
+    }
     if (c.id === this.localId) this.emit('announce', { title: '👁️ WARD PLACED (45s)', color: '#39ff14' });
   }
 
@@ -1332,21 +1408,41 @@ export class OfflineSim {
   /** Generic skill engine for the skill types (mirrors the contract's fx). */
   _cast(c, m) {
     const slot = m.slot, sk = CHAMPIONS[c.champ].skills[slot], t = this.t;
-    if (!sk || c.dead || c.stunnedUntil > t || c._dispUntil > t) return;
+    if (!sk || c.dead || c.stunnedUntil > t || c._dispUntil > t || (c.silencedUntil || 0) > t) return;
     if (slot === 'r' && c.level < R.ULT_UNLOCK_LEVEL) return;
     const rank = c.ranks?.[slot] || 0;
     if (rank <= 0) return;
     const key = `cd${slot.toUpperCase()}`;
     const isLocal = c.id === this.localId;
-    if (!(this.noCd && isLocal) && c[key] > t) return;
-    if (!(this.noMana && isLocal) && c.mana < sk.mana) return;
+    // v5 recast: the second press is free (no mana / cooldown).
+    c._recast = c._recast || {};
+    const rc = sk.recast ? c._recast[slot] : null;
+    if (rc && rc.until > t) {
+      if (sk.recast.mode === 'back' && c.rootedUntil > t) return; // rooted: keep the window open
+      c._recast[slot] = null;
+      if (sk.recast.mode === 'back') {
+        const bx = c.x, by = c.y, bp = this.nav.nearestFree(rc.x0, rc.y0, CHAMP_RADIUS);
+        c.x = bp.x; c.y = bp.y; c._order = null; c._nav = null;
+        this.emit('fx', { k: 'blink', sid: c.id, x0: Math.round(bx), y0: Math.round(by), x1: Math.round(c.x), y1: Math.round(c.y) });
+        c.action = slot; c.action_seq++;
+        return;
+      }
+      if (sk.recast.mode === 'again') { this._cast(c, { ...m, _again: true }); return; }
+    }
+    const freeCast = !!m._again;
+    if (!freeCast && !(this.noCd && isLocal) && c[key] > t) return;
+    if (!freeCast && !(this.noMana && isLocal) && c.mana < sk.mana) return;
     if (m.id && this._hiddenFrom(this._ent(m.id), c.team)) return; // point-and-click at a hidden enemy
     this._reveal(c);
     const blueCdr = (c._blueBuffUntil || 0) > t ? 0.15 : 0;
     let rankDmgMul = 1 + (rank - 1) * 0.12;
-    if (this.noMana && isLocal) c.mana = c.maxMana;
-    else c.mana -= sk.mana;
-    c[key] = (this.noCd && isLocal) ? 0 : t + R.skillCooldownMs(sk.cd, (c._haste || 0) + blueCdr, rank);
+    const castOx = c.x, castOy = c.y;
+    if (!freeCast) {
+      if (this.noMana && isLocal) c.mana = c.maxMana;
+      else c.mana -= sk.mana;
+      if (sk.recast) c._recast[slot] = { until: t + (sk.recast.ms || 3000), x0: castOx, y0: castOy };
+      c[key] = (this.noCd && isLocal) ? 0 : t + R.skillCooldownMs(sk.cd, (c._haste || 0) + blueCdr, rank);
+    }
     c.action = slot; c.action_seq++;
     this._cancelRecall(c);
     const roleP = championPassive(CHAMPIONS[c.champ])?.id;
@@ -1409,6 +1505,17 @@ export class OfflineSim {
         const bonus = amt(sk.dmg) * 0.12 * e._bugStacks; e._bugStacks = 0;
         this._damage(e, bonus, c, false, true, 'true');
       }
+      // v5 mark / detonate / silence
+      if (sk.detonate && e._marks && e._marks[sk.detonate.tag]) {
+        const mk = e._marks[sk.detonate.tag]; delete e._marks[sk.detonate.tag];
+        if (mk.until > t && mk.n > 0) this._damage(e, amt(sk.dmg) * (sk.detonate.pctPerStack || 0.2) * mk.n, c, false, true, 'true');
+      }
+      if (sk.mark && this._alive(e)) {
+        e._marks = e._marks || {};
+        const cur = e._marks[sk.mark.tag], n0 = cur && cur.until > t ? cur.n : 0;
+        e._marks[sk.mark.tag] = { n: Math.min(sk.mark.max || 1, n0 + 1), until: t + (sk.mark.ms || 5000) };
+      }
+      if (sk.silence) e.silencedUntil = Math.max(e.silencedUntil || 0, t + (sk.silence.ms || 0));
       // CC Diminishing Returns: 1.0x -> 0.50x -> 0.25x within 4s window + 2.0s chain immunity
       if (sk.slow) { e.slowUntil = t + sk.slow.ms; e.slowPct = Math.round(sk.slow.pct * 100); }
       if (srcP.has('frost')) { e.slowUntil = Math.max(e.slowUntil || 0, t + 1500); e.slowPct = Math.max(e.slowPct || 0, 25); }
@@ -1451,8 +1558,8 @@ export class OfflineSim {
         c[key] = 0;
         fx({ k: 'buff', sid: c.id, slot, color: 0xffd23f });
       }
-      if (e.champ && sk.healOnHit && !c.dead) c.hp = Math.min(c.maxHp, c.hp + amt(sk.healOnHit));
-      if (e.champ && sk.cdRefundOnHit) {
+      if ((e.champ || e.kind === 'dummy') && sk.healOnHit && !c.dead) c.hp = Math.min(c.maxHp, c.hp + amt(sk.healOnHit));
+      if ((e.champ || e.kind === 'dummy') && sk.cdRefundOnHit) {
         const refMs = sk.cdRefundOnHit.ms || 1000;
         const sls = sk.cdRefundOnHit.slot === 'all' ? ['q', 'w', 'e', 'r'] : [sk.cdRefundOnHit.slot || slot];
         for (const sl of sls) {
@@ -1619,6 +1726,20 @@ export class OfflineSim {
         c.x = end.x; c.y = end.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
         fx({ k: 'dash', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color });
+        if (sk.trail) {
+          const tr = sk.trail, tp = { x: (x0 + c.x) / 2, y: (y0 + c.y) / 2 };
+          const tick = Math.max(100, tr.tickMs || 500), dur = Math.max(tick, tr.duration || 3000);
+          fx({ k: 'zone', sid: c.id, slot, x: Math.round(tp.x), y: Math.round(tp.y), r: tr.radius, ms: dur, tickMs: tick, color: sk.color });
+          for (let k = 1; k * tick <= dur; k++) {
+            this._timers.push([t + k * tick, () => {
+              if (this.state.phase !== 'playing') return;
+              for (const e of enemies((e) => dist(e, tp) <= tr.radius + this._radius(e))) {
+                if (tr.dmg) this._damage(e, amt(tr.dmg), c, false, false, 'magic');
+                if (tr.slow && e.champ) { e.slowUntil = Math.max(e.slowUntil || 0, this.t + (tr.slow.ms || 0)); e.slowPct = Math.max(e.slowPct || 0, Math.round(tr.slow.pct * 100)); }
+              }
+            }]);
+          }
+        }
         if (sk.dmg) for (const e of struck) hit(e, 0, { x: c.x, y: c.y });
         break;
       }
@@ -1627,6 +1748,26 @@ export class OfflineSim {
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
         fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
+        break;
+      }
+      case 'swap': {
+        let ally = null, best = 220;
+        this.state.champions.forEach((a) => {
+          if (a === c || a.dead || a.team !== c.team || dist(a, c) > (sk.range || 600) + 40) return;
+          const d = Math.hypot(a.x - aimX, a.y - aimY);
+          if (d <= best) { best = d; ally = a; }
+        });
+        if (!ally) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); break; }
+        const cx = c.x, cy = c.y, ax = ally.x, ay = ally.y;
+        c.x = ax; c.y = ay; c._order = null; c._nav = null;
+        ally.x = cx; ally.y = cy; ally._order = null; ally._nav = null;
+        fx({ k: 'blink', sid: c.id, x0: Math.round(cx), y0: Math.round(cy), x1: Math.round(c.x), y1: Math.round(c.y) });
+        fx({ k: 'blink', sid: ally.id, x0: Math.round(ax), y0: Math.round(ay), x1: Math.round(ally.x), y1: Math.round(ally.y) });
+        for (const a of [c, ally]) {
+          if (sk.shield) { a.shield = Math.round(amt(sk.shield)); a._shieldUntil = t + (sk.duration || 3000); }
+          if (sk.buff) a._buffs[slot] = t + (sk.duration || 3000);
+        }
+        fx({ k: 'buff', sid: c.id, slot, color: sk.color });
         break;
       }
       case 'self':
@@ -1638,6 +1779,7 @@ export class OfflineSim {
           if (sk.buff) a._buffs[slot] = t + (sk.duration || 3000);
           if (sk.spellShieldMs > 0) a._spellShieldUntil = Math.max(a._spellShieldUntil || 0, t + sk.spellShieldMs);
           if (sk.invisMs > 0 && a === c) a._stealthUntil = t + sk.invisMs;
+          if (sk.stasis && a === c) { a._stasisUntil = t + sk.stasis.ms; a.stunnedUntil = Math.max(a.stunnedUntil || 0, t + sk.stasis.ms); a.rootedUntil = Math.max(a.rootedUntil || 0, t + sk.stasis.ms); }
         }
         if (sk.heal) fx({ k: 'heal', x: Math.round(c.x), y: Math.round(c.y), r: sk.radius || 120, color: sk.color });
         fx({ k: 'buff', sid: c.id, slot, color: sk.color });
@@ -1649,7 +1791,7 @@ export class OfflineSim {
 
   // ───────────────────────── v3: summoner spells (rough mirror of the server) ─────────────────────────
   /** May a `targets: 'enemyChamp'` skill hit `e`? (Story Mode 2.0 lets it hit bugs and nests.) */
-  _champTargetOk(e) { return !!e.champ; }
+  _champTargetOk(e) { return !!(e.champ || e.kind === 'dummy'); }
 
   /** Healing multiplier (Escalate / ignite cuts all healing). */
   _healMul(c) { return c._ignite && c._ignite.until > this.t ? 1 - (SPELLS.ignite.healCut || 0) : 1; }

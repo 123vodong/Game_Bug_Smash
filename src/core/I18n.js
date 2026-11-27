@@ -72,6 +72,8 @@ const EN = {
   'prac.noDmg': 'NO DMG',
   'prac.lvUp': '+LV',
   'prac.gold': '+5000g',
+  'prac.dummy': '+DUMMY',
+  'prac.clearDummy': 'CLEAR',
   'prac.status': 'PRACTICE MODE · sandbox controls top-right / ESC',
   // Main Menu & Settings
   'main.play': 'PLAY',

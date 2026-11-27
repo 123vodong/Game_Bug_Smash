@@ -81,7 +81,7 @@ export const AUGMENTS = {
   },
   evo_sprint_surge: {
     id: 'evo_sprint_surge', name: 'Turbo Deploy', group: 'Skill Evolution', rarity: 'rare', icon: '💨',
-    champs: ['sprint', 'oncall', 'courier', 'appdev', 'pixel', 'zero', 'stack', 'dev', 'cleaner'],
+    champs: ['sprint', 'oncall', 'courier', 'appdev', 'pixel', 'zero', 'dev', 'cleaner'],
     desc: 'Casting a dash or blink skill grants +25% move speed for 2s.',
   },
 
