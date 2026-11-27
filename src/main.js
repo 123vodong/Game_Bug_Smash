@@ -60,11 +60,17 @@ if (deepScene === 'story') {
     }
   });
 }
-if (deepScene === 'lobby' || deepScene === 'team') {
+if (deepScene === 'lobby' || deepScene === 'team' || deepScene === 'select') {
   game.events.once('ready', () => {
     game.scene.stop('MenuScene');
     if (deepScene === 'lobby') {
       game.scene.start('TeamLobbyScene');
+    } else if (deepScene === 'select') {
+      game.scene.start('TeamSelectScene', {
+        offline: params.get('offline') !== '0',
+        champ: params.get('champ') || undefined,
+        name: params.get('name') || 'Tester',
+      });
     } else {
       game.scene.start('TeamModeScene', {
         champ: params.get('champ') || 'pixel',

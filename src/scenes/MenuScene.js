@@ -17,6 +17,7 @@ import { loadMatch, clearMatch, fetchMe } from '../core/Identity.js';
 import { CHAMPIONS, isChampionId } from '../../shared/moba/champions.js';
 import { drawChampionPortrait } from '../entities/moba/looks.js';
 import { STORY_FLOORS, STORY_DEFAULT_CHAMP, nextStoryFloor, fmtRunTime } from '../story2/catalog.js';
+import { t, onLangChange } from '../core/I18n.js';
 
 // Stats API on the game server — same host rules as MultiPlayScene's SERVER_URL /
 // Team Mode's teamServerUrl(): `?server=ws(s)://…` override, the :8000 python static
@@ -72,6 +73,10 @@ export default class MenuScene extends Phaser.Scene {
 
     // Tiny corner hint (bottom-left)
     this._drawCornerInfo(W, H);
+
+    if (this._unsubLang) this._unsubLang();
+    this._unsubLang = onLangChange(() => { if (this.sys?.isActive?.()) this._applyLang(); });
+    this.events.once('shutdown', () => { this._unsubLang?.(); this._unsubLang = null; });
 
     // Keyboard (ignored while a panel is open)
     this.input.keyboard.on('keydown-ENTER', () => { if (!this._modalOpen()) this._startGame(); });
@@ -133,14 +138,14 @@ export default class MenuScene extends Phaser.Scene {
     const playY = H * 0.62;
     const play = this._roundedNeonButton({
       x: W / 2, y: playY, w: 320, h: 86, radius: 18,
-      label: 'PLAY', fontSize: 32,
+      label: t('main.play'), fontSize: 32,
       color: NEON_GREEN, iconKind: 'play', primary: true,
     });
     play.on('pointerup', () => this._startGame());
 
-    // ── Multiplayer panel: "MULTIPLAYER" frame containing 2 mode buttons ──
+    // ── Multiplayer & Practice panel: 3 mode buttons ──
     const mpY = H * 0.76;
-    const mpFrameW = 430;
+    const mpFrameW = 540;
     const mpFrameH = 78;
 
     // Frame background
@@ -152,24 +157,24 @@ export default class MenuScene extends Phaser.Scene {
     mpFrame.strokeRoundedRect(W / 2 - mpFrameW / 2, mpY - mpFrameH / 2,
                                mpFrameW, mpFrameH, 14);
 
-    // "MULTIPLAYER" header label — sits on top edge of the frame
-    const mpLabelBg = this.add.rectangle(W / 2, mpY - mpFrameH / 2, 130, 16, 0x0a0a14, 1)
+    // Header label — sits on top edge of the frame
+    const mpLabelBg = this.add.rectangle(W / 2, mpY - mpFrameH / 2, 160, 16, 0x0a0a14, 1)
       .setStrokeStyle(2, NEON_CYAN, 0.7)
       .setDepth(9);
-    const mpLabel = this.add.text(W / 2, mpY - mpFrameH / 2, 'MULTIPLAYER', {
+    const mpLabel = this.add.text(W / 2, mpY - mpFrameH / 2, t('main.multiplayer'), {
       fontFamily: 'Arial Black, sans-serif', fontSize: 11, color: '#00d9ff',
       stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(10);
 
-    // PERSONAL MODE — active, green neon, with infinity icon (endless mode)
+    // PERSONAL MODE
     const personal = this._roundedNeonButton({
-      x: W / 2 - 100, y: mpY + 4, w: 190, h: 46, radius: 12,
-      label: 'PERSONAL', fontSize: 14,
+      x: W / 2 - 172, y: mpY + 4, w: 162, h: 46, radius: 12,
+      label: t('main.personal'), fontSize: 13,
       color: NEON_GREEN, iconKind: 'infinity',
     });
     personal.on('pointerup', () => this.scene.start('MultiPlayScene'));
 
-    // Live "who's online" badge — social proof that the arena is alive.
+    // Live "who's online" badge
     this._onlineText = this.add.text(W / 2, mpY + mpFrameH / 2 + 14, '● checking who\'s online…', {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff',
       stroke: '#000', strokeThickness: 3,
@@ -177,17 +182,26 @@ export default class MenuScene extends Phaser.Scene {
     this._refreshOnline();
     this.time.addEvent({ delay: 10000, loop: true, callback: () => this._refreshOnline() });
 
-    // TEAM MODE — "Office Siege" 5v5 MOBA (champion select → match; bots fill seats)
+    // TEAM MODE — 5v5 MOBA
     const team = this._roundedNeonButton({
-      x: W / 2 + 100, y: mpY + 4, w: 190, h: 46, radius: 12,
-      label: 'TEAM 5v5', fontSize: 14,
+      x: W / 2, y: mpY + 4, w: 162, h: 46, radius: 12,
+      label: t('main.team'), fontSize: 13,
       color: NEON_PURPLE, iconKind: 'swords',
     });
     team.on('pointerup', () => this.scene.start('TeamLobbyScene'));
+
+    // TEST CHAMPS — Offline sandbox practice (open to all players directly from main menu)
+    const practice = this._roundedNeonButton({
+      x: W / 2 + 172, y: mpY + 4, w: 162, h: 46, radius: 12,
+      label: t('main.practice'), fontSize: 13,
+      color: 0xffb347, iconKind: 'swords',
+    });
+    practice.on('pointerup', () => this._startPractice());
+
     this._rejoinShown = false;
     this._rejoinBanner(W); // Pass 2 RP-05
-    // Small "NEW" sticker on the button's top-right corner.
-    const newTag = this.add.container(W / 2 + 100 + 82, mpY + 4 - 22).setDepth(12).setAngle(8);
+    // Small "NEW" sticker on TEAM 5v5 top-right corner
+    const newTag = this.add.container(W / 2 + 64, mpY + 4 - 22).setDepth(12).setAngle(8);
     const newBg = this.add.graphics();
     newBg.fillStyle(NEON_PINK, 1);
     newBg.fillRoundedRect(-19, -8, 38, 16, 8);
@@ -199,37 +213,38 @@ export default class MenuScene extends Phaser.Scene {
       duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
-    // Bottom row: SETTINGS · CAREER · LEVELS (narrow enough to leave the bottom-left text clear).
+    // Bottom row: SETTINGS · CAREER · LEVELS
     const subY = H * 0.90;
     const settings = this._roundedNeonButton({
       x: W / 2 - 172, y: subY, w: 160, h: 50, radius: 14,
-      label: 'SETTINGS', fontSize: 15,
+      label: t('main.settings'), fontSize: 14,
       color: NEON_TEAL, iconKind: 'gear',
     });
     settings.on('pointerup', () => this._openSettings());
 
     const career = this._roundedNeonButton({
       x: W / 2, y: subY, w: 160, h: 50, radius: 14,
-      label: 'CAREER', fontSize: 15,
+      label: t('main.career'), fontSize: 14,
       color: NEON_YELLOW, iconKind: 'user',
     });
     career.on('pointerup', () => this._openCareer());
 
     const levels = this._roundedNeonButton({
       x: W / 2 + 172, y: subY, w: 160, h: 50, radius: 14,
-      label: 'LEVELS', fontSize: 15,
+      label: t('main.levels'), fontSize: 14,
       color: NEON_TEAL, iconKind: 'grid',
     });
     levels.on('pointerup', () => this._openLevels());
 
-    // About / credits link (bottom-left). The platformer prototype is no longer linked here
-    // (the prototype itself was removed on 2026-11-25).
-    const about = this.add.text(16, H - 10, 'ⓘ about · credits', {
+    // About / credits link (bottom-left)
+    const about = this.add.text(16, H - 10, t('main.about'), {
       fontFamily: 'Consolas, monospace', fontSize: 12, color: '#7ec8ff',
     }).setOrigin(0, 0.5).setDepth(11).setInteractive({ useHandCursor: true });
     about.on('pointerover', () => about.setColor('#ffffff'));
     about.on('pointerout',  () => about.setColor('#7ec8ff'));
     about.on('pointerup',   () => this._openSettings('about'));
+
+    this._i18nEls = { play, mpLabel, personal, team, practice, settings, career, levels, about };
 
     // ---------- Multiplayer entry cluster (bottom-right) ----------
     // Display-name line ("name: <click to edit>") sits above the green link.
@@ -366,6 +381,7 @@ export default class MenuScene extends Phaser.Scene {
     // Interactive hit area
     const hit = this.add.rectangle(0, 0, w, h, 0xffffff, 0)
       .setInteractive({ useHandCursor: true });
+    hit._setBtnLabel = (str) => txt.setText(str);
     container.add(hit);
 
     hit.on('pointerover', () => {
@@ -492,10 +508,11 @@ export default class MenuScene extends Phaser.Scene {
     c.add(this.add.rectangle(0, 0, panelW - 8, panelH - 8, 0, 0).setStrokeStyle(1, NEON_CYAN, 0.4));
     c.add(this.add.rectangle(0, -panelH / 2 + 14, panelW - 16, 18, NEON_CYAN, 0.18));
 
-    const title = this.add.text(0, -panelH / 2 + 14, 'DAILY MISSIONS', {
+    const title = this.add.text(0, -panelH / 2 + 14, t('main.daily'), {
       fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 13, color: '#ffd23f',
       stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
+    this._dailyTitle = title;
     title.setShadow(0, 0, '#ffd23f', 6, true, true);
     c.add(title);
 
@@ -572,10 +589,11 @@ export default class MenuScene extends Phaser.Scene {
     codeIcon.setShadow(0, 0, '#00cfff', 5, true, true);
     c.add(codeIcon);
 
-    const title = this.add.text(0, -panelH / 2 + 14, 'DEV TIP', {
+    const title = this.add.text(0, -panelH / 2 + 14, t('main.devTip'), {
       fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 13, color: '#ffd23f',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5);
+    this._devTipTitle = title;
     title.setShadow(0, 0, '#ffd23f', 5, true, true);
     c.add(title);
 
@@ -643,9 +661,10 @@ export default class MenuScene extends Phaser.Scene {
     c.add(this.add.rectangle(0, 0, panelW, panelH, 0x140c05, 0.93).setStrokeStyle(2, STORY));
     c.add(this.add.rectangle(0, 0, panelW - 8, panelH - 8, 0, 0).setStrokeStyle(1, STORY, 0.4));
     c.add(this.add.rectangle(0, -panelH / 2 + 14, panelW - 16, 18, STORY, 0.2));
-    const title = this.add.text(0, -panelH / 2 + 14, '📖 STORY MODE', {
-      fontFamily: 'Arial Black, Impact, sans-serif', fontSize: 13, color: '#ffd23f', stroke: '#000', strokeThickness: 3,
+    const title = this.add.text(0, -panelH / 2 + 14, t('main.story'), {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 13, color: '#ffd23f', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
+    this._storyTitle = title;
     title.setShadow(0, 0, '#ffd23f', 6, true, true);
     c.add(title);
 
@@ -831,6 +850,36 @@ export default class MenuScene extends Phaser.Scene {
     this.cameras.main.once('camerafadeoutcomplete', go);
     this.cameras.main.fadeOut(300, 0, 0, 0);
     setTimeout(go, 800);   // never wait on the camera longer than this (slow devices)
+  }
+
+  _applyLang() {
+    const e = this._i18nEls;
+    if (!e) return;
+    e.play?._setBtnLabel?.(t('main.play'));
+    e.mpLabel?.setText(t('main.multiplayer'));
+    e.personal?._setBtnLabel?.(t('main.personal'));
+    e.team?._setBtnLabel?.(t('main.team'));
+    e.practice?._setBtnLabel?.(t('main.practice'));
+    e.settings?._setBtnLabel?.(t('main.settings'));
+    e.career?._setBtnLabel?.(t('main.career'));
+    e.levels?._setBtnLabel?.(t('main.levels'));
+    e.about?.setText(t('main.about'));
+    this._dailyTitle?.setText(t('main.daily'));
+    this._devTipTitle?.setText(t('main.devTip'));
+    this._storyTitle?.setText(t('main.story'));
+  }
+
+  _startPractice() {
+    if (this._starting) return;
+    this._starting = true;
+    AudioManager.uiClick?.();
+    const saved = SaveManager.getTeamChamp();
+    const champ = isChampionId(saved) ? saved : 'pixel';
+    const name = SaveManager.getPlayerName() || 'Tester';
+    this.cameras.main.fadeOut(300, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('TeamModeScene', { offline: true, champ, name });
+    });
   }
 
   _startLevel(idx) {

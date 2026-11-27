@@ -9,6 +9,7 @@
 import { SaveManager } from '../core/SaveManager.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { fxPrefsChanged } from '../core/FxPrefs.js';
+import { getLang, setLang, t } from '../core/I18n.js';
 import { Modal, NEON, FONT_HEAD, FONT_MONO, label, toggle, slider, segmented, button, tabs, toast } from './panelKit.js';
 
 const isTouch = () => (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
@@ -58,65 +59,86 @@ const CREDITS = [
 export const SettingsPanel = {
   /** Open the panel. Returns the Modal. */
   open(scene, { tab = 'settings', onClose } = {}) {
-    const m = new Modal(scene, { w: 960, h: 600, title: '⚙ SETTINGS', accent: NEON.teal, onClose });
+    let activeTab = tab;
+    const m = new Modal(scene, { w: 960, h: 620, title: t('set.title'), accent: NEON.teal, onClose });
     const content = scene.add.container(0, 0);
     m.body.add(content);
-    tabs(scene, m.body, -m.h / 2 + 84, [
-      { id: 'settings', text: 'AUDIO & FX' },
-      { id: 'controls', text: 'CONTROLS' },
-      { id: 'about', text: 'ABOUT' },
-    ], tab, (id) => {
-      content.removeAll(true);
-      if (id === 'settings') buildSettings(scene, content, m);
-      else if (id === 'controls') buildControls(scene, content, m);
-      else buildAbout(scene, content, m);
-      m.pin();
-    }, NEON.teal);
+    const buildTabs = (cur) => {
+      activeTab = cur;
+      const prev = m.body.list.filter((o) => o !== content);
+      for (const o of prev) o.destroy();
+      tabs(scene, m.body, -m.h / 2 + 84, [
+        { id: 'settings', text: t('set.tab.settings') },
+        { id: 'controls', text: t('set.tab.controls') },
+        { id: 'about', text: t('set.tab.about') },
+      ], cur, (id) => {
+        activeTab = id;
+        content.removeAll(true);
+        if (id === 'settings') buildSettings(scene, content, m, () => {
+          m.titleTxt?.setText(t('set.title'));
+          buildTabs(activeTab);
+        });
+        else if (id === 'controls') buildControls(scene, content, m);
+        else buildAbout(scene, content, m);
+        m.pin();
+      }, NEON.teal);
+    };
+    buildTabs(activeTab);
     return m;
   },
 };
 
-function buildSettings(scene, c, m) {
+function buildSettings(scene, c, m, onLangRefresh) {
   const s = SaveManager.getSettings();
   const colW = 760;
-  let y = -150;
+  let y = -162;
   // Volume
-  c.add(label(scene, -colW / 2, y, 'Volume', { fontSize: 18 }).setOrigin(0, 0.5));
+  c.add(label(scene, -colW / 2, y, t('set.volume'), { fontSize: 18 }).setOrigin(0, 0.5));
   const vol = slider(scene, 30, y, 380, s.volume, (v, final) => {
     AudioManager.setVolume(v);
     if (final) { SaveManager.setSettings({ volume: v }); AudioManager.volumePreview(); }
   });
   c.add(vol);
-  y += 62;
-  const mute = toggle(scene, 0, y, colW, 'Sound', !SaveManager.isMuted(), (on) => {
+  y += 56;
+  const mute = toggle(scene, 0, y, colW, t('set.sound'), !SaveManager.isMuted(), (on) => {
     SaveManager.setMuted(!on); AudioManager.setMuted(!on);
     if (on) AudioManager.volumePreview();
-  }, { sub: 'M key mutes in every mode' });
+  }, { sub: t('set.soundSub') });
   c.add(mute);
-  y += 62;
-  c.add(toggle(scene, 0, y, colW, 'Screen shake', s.shake, (on) => {
+  y += 56;
+  c.add(toggle(scene, 0, y, colW, t('set.shake'), s.shake, (on) => {
     SaveManager.setSettings({ shake: on }); fxPrefsChanged();
     if (on) scene.cameras.main.shake(160, 0.006);
-  }, { sub: 'Slams, explosions, boss hits' }));
-  y += 62;
-  c.add(toggle(scene, 0, y, colW, 'Flashes', s.flashes, (on) => {
+  }, { sub: t('set.shakeSub') }));
+  y += 56;
+  c.add(toggle(scene, 0, y, colW, t('set.flashes'), s.flashes, (on) => {
     SaveManager.setSettings({ flashes: on }); fxPrefsChanged();
-  }, { sub: 'Full-screen flashes (turn off if they bother your eyes)' }));
-  y += 66;
-  c.add(label(scene, -colW / 2, y - 9, 'Team 5v5 effects', { fontSize: 18 }).setOrigin(0, 0.5));
-  c.add(label(scene, -colW / 2, y + 13, 'Low = smoother on old laptops / phones', { fontSize: 12, color: '#8fa8b8' }).setOrigin(0, 0.5));
+  }, { sub: t('set.flashesSub') }));
+  y += 60;
+  c.add(label(scene, -colW / 2, y - 9, t('set.fx'), { fontSize: 18 }).setOrigin(0, 0.5));
+  c.add(label(scene, -colW / 2, y + 13, t('set.fxSub'), { fontSize: 12, color: '#8fa8b8' }).setOrigin(0, 0.5));
   c.add(segmented(scene, colW / 2 - 165, y, 104, 38, [
     { id: 'auto', text: 'AUTO' }, { id: 'high', text: 'HIGH' }, { id: 'low', text: 'LOW' },
   ], SaveManager.getTeamFx(), (id) => SaveManager.setTeamFx(id), NEON.teal));
-  y += 76;
-  c.add(button(scene, -colW / 2 + 150, y, 300, 46, '↺ REPLAY TUTORIALS', {
+  y += 62;
+  c.add(label(scene, -colW / 2, y - 9, t('set.lang'), { fontSize: 18 }).setOrigin(0, 0.5));
+  c.add(label(scene, -colW / 2, y + 13, t('set.langSub'), { fontSize: 12, color: '#8fa8b8' }).setOrigin(0, 0.5));
+  c.add(segmented(scene, colW / 2 - 110, y, 104, 38, [
+    { id: 'en', text: 'ENGLISH' }, { id: 'vi', text: 'TIẾNG VIỆT' },
+  ], getLang(), (id) => {
+    setLang(id);
+    AudioManager.uiClick?.();
+    onLangRefresh?.();
+  }, NEON.cyan));
+  y += 66;
+  c.add(button(scene, -colW / 2 + 150, y, 300, 44, t('set.replay'), {
     color: NEON.yellow, fontSize: 15,
     onClick: () => {
       SaveManager.clearFlags();
-      toast(scene, 'Tutorials reset — the coach and tips will show again.', '#ffd23f');
+      toast(scene, t('set.replayToast'), '#ffd23f');
     },
   }));
-  c.add(label(scene, -colW / 2 + 320, y, 'Campaign coach, arena tips and siege tips', { fontSize: 13, color: '#8fa8b8' }).setOrigin(0, 0.5));
+  c.add(label(scene, -colW / 2 + 320, y, t('set.replaySub'), { fontSize: 13, color: '#8fa8b8' }).setOrigin(0, 0.5));
 }
 
 function buildControls(scene, c) {

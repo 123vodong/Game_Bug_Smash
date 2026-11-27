@@ -504,6 +504,11 @@ export class MobaBots {
       }
       case 'circle': {
         if (!cls.damage) return false;
+        if (cls.trap) {
+          if (d > spec.range) return false;
+          const p = this._lead(b, ch, foe, 250);
+          return this._cast(b, slot, p.x, p.y);
+        }
         if (cls.atPet) {
           // e.g. Servo EMP: centered on the pet — fire when an enemy champion stands next to it.
           const pet = this.room._petOf(ch);

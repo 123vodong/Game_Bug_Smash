@@ -327,6 +327,15 @@ const secsTxt = (ms) => `${Math.round((Number(ms) || 0) / 100) / 10}s`;
 export function skillTags(s) {
   const out = [];
   if (s.count > 1) out.push({ t: `FAN ×${s.count}`, c: 0xff4fa3 });
+  if (s.boomerang) out.push({ t: s.returnTrueDmg ? 'BOOMERANG TRUE' : 'BOOMERANG', c: 0x39c2ff });
+  if (s.chain) out.push({ t: `CHAIN ×${(s.chain.bounces || 2) + 1}`, c: 0x00e5ff });
+  if (s.pull) out.push({ t: 'HOOK PULL', c: 0x7ed957 });
+  if (s.pullIn) out.push({ t: 'PULL IN', c: 0xb084ff });
+  if (s.trap) out.push({ t: `TRAP ×${s.trap.maxActive || 3}`, c: 0xff9800 });
+  if (s.behindTarget) out.push({ t: 'BEHIND TARGET', c: 0xb084ff });
+  if (s.invisMs) out.push({ t: `STEALTH ${secsTxt(s.invisMs)}`, c: 0x9b7bd4 });
+  if (s.spellShieldMs) out.push({ t: 'SPELL SHIELD', c: 0x7ec8ff });
+  if (s.killReset) out.push({ t: 'KILL RESET', c: 0xffd23f });
   if (s.type === 'zone') out.push({ t: `LINGERS ${secsTxt(s.duration)}`, c: 0x7ec8ff });
   if (s.knockback) out.push({ t: `KNOCKBACK ${s.knockback.dist}`, c: 0xffb347 });
   if (s.wallStun) out.push({ t: `WALL = STUN ${secsTxt(s.wallStun.ms)}`, c: 0xff5e5e });

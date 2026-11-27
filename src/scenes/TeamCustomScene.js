@@ -20,6 +20,7 @@ import { TEAM_INFO, TEAM_SIZE, ROOM_NAME_MAX, ROOM_MAX_HUMANS } from '../../shar
 import { SaveManager } from '../core/SaveManager.js';
 import { getPid, takeover, joinError, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { AudioManager } from '../core/AudioManager.js';
+import { t } from '../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, glow, drawPanel, makeButton, clipName, fillRR, strokeRR,
   fadeToScene, teamServerUrl, startClockSync,
@@ -166,7 +167,7 @@ export default class TeamCustomScene extends Phaser.Scene {
 
   _drawHeader() {
     const cx = this.W / 2;
-    this._title = this.add.text(cx, 36, 'CUSTOM ROOMS', {
+    this._title = this.add.text(cx, 36, t('custom.title'), {
       fontFamily: FONT_TITLE, fontSize: 34, color: '#ffffff', stroke: '#000000', strokeThickness: 6,
     }).setOrigin(0.5).setDepth(5);
     glow(this._title, '#00d9ff', 12);
@@ -174,7 +175,7 @@ export default class TeamCustomScene extends Phaser.Scene {
       fontFamily: FONT_MONO, fontSize: 12, color: '#8fa3bf', padding: { y: 2 },
     }).setOrigin(0.5).setDepth(5);
     this._backBtn = makeButton(this, {
-      x: 84, y: 38, w: 124, h: 40, label: '◀ BACK', color: NEON.teal, fontSize: 14,
+      x: 84, y: 38, w: 124, h: 40, label: t('ui.back'), color: NEON.teal, fontSize: 14,
       onClick: () => this._onBack(),
     });
     this._backBtn.root.setDepth(10);
@@ -235,15 +236,15 @@ export default class TeamCustomScene extends Phaser.Scene {
       fontFamily: FONT_MONO, fontSize: 11, color: '#6f86a6', wordWrap: { width: 380, useAdvancedWrap: true },
     }).setOrigin(0, 0.5);
     this._refreshBtn = makeButton(this, {
-      x: 530, y: 662, w: 160, h: 64, label: '⟳ REFRESH', sub: 'R', color: NEON.blue, fontSize: 15,
+      x: 530, y: 662, w: 160, h: 64, label: t('custom.refresh'), sub: 'R', color: NEON.blue, fontSize: 15,
       onClick: () => this._fetchRooms(true),
     });
     this._codeBtn = makeButton(this, {
-      x: 776, y: 662, w: 300, h: 64, label: '🔑 JOIN BY CODE', sub: 'J · paste a room code', color: NEON.purple, fontSize: 17,
+      x: 776, y: 662, w: 300, h: 64, label: t('custom.code'), sub: 'J · paste a room code', color: NEON.purple, fontSize: 17,
       onClick: () => this._askCode(),
     });
     this._createBtn = makeButton(this, {
-      x: 1096, y: 662, w: 320, h: 72, label: '＋ CREATE ROOM', sub: 'N · you become the host 👑', color: NEON.green, fontSize: 21, primary: true,
+      x: 1096, y: 662, w: 320, h: 72, label: t('custom.create'), sub: 'N · you become the host 👑', color: NEON.green, fontSize: 21, primary: true,
       onClick: () => this._askCreate(),
     });
     root.add([this._keysT, this._refreshBtn.root, this._codeBtn.root, this._createBtn.root]);
@@ -273,7 +274,7 @@ export default class TeamCustomScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     const row = { c, bg, name, code, host, players, sides, status, hit, idx: -1, hover: false };
     const btn = makeButton(this, {
-      x: COLX.join, y: ROW.h / 2, w: 140, h: 40, label: 'JOIN', color: NEON.green, fontSize: 15,
+      x: COLX.join, y: ROW.h / 2, w: 140, h: 40, label: t('ui.join'), color: NEON.green, fontSize: 15,
       onClick: () => { if (row.idx >= 0) this._joinIdx(row.idx); },
     });
     row.btn = btn;
@@ -699,7 +700,7 @@ export default class TeamCustomScene extends Phaser.Scene {
     root.add([vs, vsT]);
 
     this._leaveBtn = makeButton(this, {
-      x: 150, y: 668, w: 220, h: 56, label: '✕ LEAVE', sub: 'ESC', color: NEON.red, fontSize: 18,
+      x: 150, y: 668, w: 220, h: 56, label: t('ui.leave'), sub: 'ESC', color: NEON.red, fontSize: 18,
       onClick: () => this._leaveRoom(),
     });
     this._botBtn = makeButton(this, {
@@ -710,7 +711,7 @@ export default class TeamCustomScene extends Phaser.Scene {
       fontFamily: FONT_MONO, fontSize: 13, color: '#cfe3f5', align: 'center', lineSpacing: 4,
     }).setOrigin(0.5);
     this._startBtn = makeButton(this, {
-      x: 1096, y: 664, w: 320, h: 72, label: '▶ START', sub: ' ', color: NEON.green, fontSize: 24, primary: true,
+      x: 1096, y: 664, w: 320, h: 72, label: t('ui.start'), sub: ' ', color: NEON.green, fontSize: 24, primary: true,
       onClick: () => this._startNow(),
     });
     this._waitT = this.add.text(1096, 664, '', {

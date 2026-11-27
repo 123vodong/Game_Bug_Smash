@@ -69,6 +69,14 @@ export function classifySkill(spec) {
     wallStun: !!(spec.wallStun && spec.wallStun.ms > 0),
     atPet: spec.at === 'pet',
     petBuff: !!b.petPct,
+    trap: !!spec.trap,
+    pull: !!spec.pull,
+    pullIn: !!spec.pullIn,
+    boomerang: !!spec.boomerang,
+    chain: !!spec.chain,
+    spellShield: !!(spec.spellShieldMs > 0),
+    stealth: !!(spec.invisMs > 0),
+    killReset: !!spec.killReset,
   };
 }
 
@@ -78,9 +86,10 @@ export class SkillEngine {
     this.projectiles = []; // { owner, team, slot, x, y, dx, dy, speed, left, half, pierce, champOnly, spec, amount, color, hit:Set }
     this.zones = [];       // delayed circles { at, owner, team, slot, x, y, r, spec, amount, color }
     this.areas = [];       // v2 persistent zones { owner, team, slot, x, y, r, spec, amount, heal, nextAt, until, tickMs }
+    this.traps = [];       // ground traps { owner, ownerId, team, slot, x, y, r, armedAt, until, spec, amount, color }
   }
 
-  clear() { this.projectiles.length = 0; this.zones.length = 0; this.areas.length = 0; }
+  clear() { this.projectiles.length = 0; this.zones.length = 0; this.areas.length = 0; this.traps.length = 0; }
 
   /** Cast `slot` (spec) for champion record `ch` at aim { x, y, id }. True if it went off. */
   cast(ch, slot, spec, aim, now) {
@@ -144,13 +153,13 @@ export class SkillEngine {
       const p = {
         owner: ch, team: ch.team, slot, x: ch.x, y: ch.y, dx: px, dy: py,
         speed: spec.speed || 1200, left: spec.range || 800, half: (spec.width || 60) / 2,
-        pierce: !!spec.pierce, champOnly: !!spec.champOnly, spec,
-        amount, color: spec.color, hit,
+        pierce: !!(spec.pierce || spec.boomerang), champOnly: !!spec.champOnly, spec,
+        amount, color: spec.color, hit, returning: false,
       };
       this.projectiles.push(p);
       this.room._fx({
         k: 'proj', sid: ch.id, slot, x: round(ch.x), y: round(ch.y), dx: round3(px), dy: round3(py),
-        speed: p.speed, range: p.left, width: spec.width || 60, color: spec.color,
+        speed: p.speed, range: p.left, width: spec.width || 60, color: spec.color, boomerang: !!spec.boomerang,
       });
     }
     ch.faceX = dx; ch.faceY = dy;
@@ -172,6 +181,23 @@ export class SkillEngine {
 
   _circle(ch, slot, spec, aim, now) {
     const { x, y } = this._areaCenter(ch, spec, aim);
+    if (spec.trap) {
+      const tr = spec.trap;
+      const maxActive = Math.max(1, tr.maxActive || 3);
+      const owned = this.traps.filter((tp) => tp.ownerId === ch.id && tp.slot === slot);
+      if (owned.length >= maxActive) {
+        const idx = this.traps.indexOf(owned[0]);
+        if (idx >= 0) this.traps.splice(idx, 1);
+      }
+      const dur = Math.max(1000, tr.durationMs || 25000);
+      this.traps.push({
+        owner: ch, ownerId: ch.id, team: ch.team, slot, x, y, r: spec.radius || 95,
+        armedAt: now + Math.max(0, tr.armMs || 450), until: now + dur,
+        spec, amount: this.amount(ch, spec.dmg), color: spec.color,
+      });
+      this.room._fx({ k: 'zone', sid: ch.id, slot, x: round(x), y: round(y), r: spec.radius || 95, ms: dur, tickMs: 1200, color: spec.color });
+      return true;
+    }
     const delay = Math.max(0, spec.delay || 0);
     this.room._fx({ k: 'circle', x: round(x), y: round(y), r: spec.radius, delay, color: spec.color });
     const zone = { at: now + delay, owner: ch, team: ch.team, slot, x, y, r: spec.radius, spec, amount: this.amount(ch, spec.dmg), color: spec.color };
@@ -197,8 +223,16 @@ export class SkillEngine {
   _target(ch, slot, spec, aim, now) {
     const t = this.room._skillTarget(ch, aim, spec.targets === 'enemyChamp', spec.range);
     if (!t) return false;
-    const d = Math.hypot(t.x - ch.x, t.y - ch.y) || 1;
-    ch.faceX = (t.x - ch.x) / d; ch.faceY = (t.y - ch.y) / d;
+    const x0 = ch.x, y0 = ch.y;
+    const d = Math.hypot(t.x - x0, t.y - y0) || 1;
+    const ux = (t.x - x0) / d, uy = (t.y - y0) / d;
+    ch.faceX = ux; ch.faceY = uy;
+    if (spec.behindTarget) {
+      const behind = clampToMap(t.x + ux * (t.radius + CHAMP_RADIUS + 14), t.y + uy * (t.radius + CHAMP_RADIUS + 14));
+      const end = nearestFree(behind.x, behind.y, CHAMP_RADIUS);
+      this.room._teleport(ch, end.x, end.y);
+      this.room._fx({ k: 'blink', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
+    }
     this._applyHit(ch, t, spec, this.amount(ch, spec.dmg), now, ch.x, ch.y);
     return true;
   }
@@ -212,21 +246,21 @@ export class SkillEngine {
     if (target) {
       const d = Math.hypot(target.x - x0, target.y - y0) || 1;
       dx = (target.x - x0) / d; dy = (target.y - y0) / d;
-      reach = Math.max(0, Math.min(spec.range, d - (target.radius + CHAMP_RADIUS)));
+      reach = spec.behindTarget
+        ? Math.min(spec.range + target.radius + CHAMP_RADIUS, d + target.radius + CHAMP_RADIUS + 12)
+        : Math.max(0, Math.min(spec.range, d - (target.radius + CHAMP_RADIUS)));
     } else {
       const a = aimDir(ch, aim.x, aim.y);
       dx = a.dx; dy = a.dy;
       reach = a.d > 0 ? Math.min(spec.range, a.d) : spec.range;
     }
-    // Dashes stop at walls (v2).
     let end = clampToMap(x0 + dx * reach, y0 + dy * reach);
-    const clip = clipMove(x0, y0, end.x, end.y, CHAMP_RADIUS);
-    end = { x: clip.x, y: clip.y };
+    const clip = spec.behindTarget ? { x: end.x, y: end.y, hit: false } : clipMove(x0, y0, end.x, end.y, CHAMP_RADIUS);
+    end = spec.behindTarget ? nearestFree(end.x, end.y, CHAMP_RADIUS) : { x: clip.x, y: clip.y };
     const hits = [];
     const hitR = spec.hitRadius || 0;
     if (target) {
-      // A wall cut the dash short: it only connects if we still reached the target.
-      if (!clip.hit || Math.hypot(target.x - end.x, target.y - end.y) <= target.radius + CHAMP_RADIUS + Math.max(hitR, 40)) hits.push(target);
+      if (spec.behindTarget || !clip.hit || Math.hypot(target.x - end.x, target.y - end.y) <= target.radius + CHAMP_RADIUS + Math.max(hitR, 40)) hits.push(target);
     } else if (hitR > 0 && (spec.dmg || spec.stun || spec.root || spec.slow)) {
       const along = this._alongSegment(ch.team, x0, y0, end.x, end.y, hitR, false);
       if (spec.stopAtFirst && along.length) {
@@ -240,6 +274,7 @@ export class SkillEngine {
     }
     this.room._teleport(ch, end.x, end.y);
     ch.faceX = dx; ch.faceY = dy;
+    if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
     this.room._fx({ k: 'dash', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y), color: spec.color });
     if (hits.length) {
       const amt = spec.dmg ? this.amount(ch, spec.dmg) : 0;
@@ -253,11 +288,11 @@ export class SkillEngine {
     const x0 = ch.x, y0 = ch.y;
     const { dx, dy, d } = aimDir(ch, aim.x, aim.y);
     const reach = d > 0 ? Math.min(spec.range, d) : spec.range;
-    // Blinks pass over walls but never land inside one (v2).
     const aimed = clampToMap(x0 + dx * reach, y0 + dy * reach);
     const end = nearestFree(aimed.x, aimed.y, CHAMP_RADIUS);
     this.room._teleport(ch, end.x, end.y);
     ch.faceX = dx; ch.faceY = dy;
+    if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
     this.room._fx({ k: 'blink', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
     return true;
   }
@@ -267,6 +302,8 @@ export class SkillEngine {
     if (spec.shield) this.room._addShield(ch, this.amount(ch, spec.shield), until);
     if (spec.heal) this.room._heal(ch, this.amount(ch, spec.heal));
     if (spec.buff) this.room._addBuff(ch, slot, spec.buff, until);
+    if (spec.spellShieldMs > 0) ch._spellShieldUntil = Math.max(ch._spellShieldUntil || 0, now + spec.spellShieldMs);
+    if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
     this.room._fx({ k: 'buff', sid: ch.id, slot, color: spec.color });
     return true;
   }
@@ -282,6 +319,7 @@ export class SkillEngine {
       if (heal) this.room._heal(a, heal);
       if (shield) this.room._addShield(a, shield, until);
       if (spec.buff) this.room._addBuff(a, slot, spec.buff, until);
+      if (spec.spellShieldMs > 0) a._spellShieldUntil = Math.max(a._spellShieldUntil || 0, now + spec.spellShieldMs);
     }
     if (heal) this.room._fx({ k: 'heal', x: round(ch.x), y: round(ch.y), r: spec.radius, color: spec.color });
     this.room._fx({ k: 'buff', sid: ch.id, slot, color: spec.color });
@@ -296,13 +334,32 @@ export class SkillEngine {
    * fallback direction when the target stands exactly on that point.
    * quiet = skip the `hit` fx for non-champions (zone ticks; units flash via hit_seq).
    */
-  _applyHit(caster, t, spec, amount, now, ox, oy, fx, fy, quiet = false) {
+  _applyHit(caster, t, spec, amount, now, ox, oy, fx, fy, quiet = false, isChainHop = false) {
     if (!this.room._isAlive(t) || t.utype === 'pet') return;
+    if (t.etype === 'champ' && (t._spellShieldUntil || 0) > now) {
+      t._spellShieldUntil = 0;
+      this.room._fx({ k: 'hit', id: t.id, color: 0xffffff });
+      return;
+    }
     const slot = spec._slot || caster._lastCastSlot || 'q';
     let dmg = amount * (caster._overloadCast ? 1.28 : 1);
+    const wasChampAlive = t.etype === 'champ' && this.room._isAlive(t);
     const augs = caster.augments || [];
     if (spec.execute && t.maxHp > 0) dmg += (spec.execute.missingHpPct || 0) * Math.max(0, t.maxHp - t.hp);
-    if (dmg > 0) this.room._dealDamage(caster, t, dmg, { kind: 'skill', dmgType: skillDamageType(spec) });
+    const useTrue = !!(spec._returnLeg && spec.returnTrueDmg);
+    if (dmg > 0) this.room._dealDamage(caster, t, dmg, { kind: 'skill', dmgType: useTrue ? 'true' : skillDamageType(spec), trueDmg: useTrue });
+    if (spec.killReset && wasChampAlive && !this.room._isAlive(t) && caster.cd) {
+      caster.cd[slot] = 0;
+      this.room._fx({ k: 'buff', sid: caster.id, slot, color: 0xffd23f });
+    }
+    if (t.etype === 'champ' && spec.healOnHit && this.room._isAlive(caster)) {
+      this.room._heal(caster, this.amount(caster, spec.healOnHit, slot));
+    }
+    if (t.etype === 'champ' && spec.cdRefundOnHit && caster.cd) {
+      const refMs = spec.cdRefundOnHit.ms || 1000;
+      const targetSlots = spec.cdRefundOnHit.slot === 'all' ? ['q', 'w', 'e', 'r'] : [spec.cdRefundOnHit.slot || slot];
+      for (const s of targetSlots) if (caster.cd[s] > now) caster.cd[s] = Math.max(now, caster.cd[s] - refMs);
+    }
     if (t.etype === 'champ' && this.room._isAlive(t)) {
       if (caster.champ === 'pixel' && slot === 'q') {
         t._pixelMarkUntil = now + 4000;
@@ -338,7 +395,15 @@ export class SkillEngine {
     }
     if (this.room._isAlive(t)) {
       this.room._applyCC(t, spec, now);
-      if (spec.knockback && spec.knockback.dist > 0 && Number.isFinite(ox) && Number.isFinite(oy)) {
+      if (spec.pull && t.team !== 'neutral' && !t.epic) {
+        const pdx = caster.x - t.x, pdy = caster.y - t.y, pd = Math.hypot(pdx, pdy) || 1;
+        const pdist = Math.max(0, pd - (t.radius + CHAMP_RADIUS + 36));
+        if (pdist > 20) this.room._knockback(t, pdx / pd, pdy / pd, Math.min(pdist, spec.pullDist || 650), 0, now);
+      } else if (spec.pullIn && Number.isFinite(ox) && Number.isFinite(oy)) {
+        const pdx = ox - t.x, pdy = oy - t.y, pd = Math.hypot(pdx, pdy) || 1;
+        const pdist = Math.min(pd * 0.65, spec.pullInDist || 160);
+        if (pdist > 15) this.room._knockback(t, pdx / pd, pdy / pd, pdist, 0, now);
+      } else if (spec.knockback && spec.knockback.dist > 0 && Number.isFinite(ox) && Number.isFinite(oy)) {
         let kx = t.x - ox, ky = t.y - oy;
         let kd = Math.hypot(kx, ky);
         if (kd < 1) {
@@ -350,6 +415,35 @@ export class SkillEngine {
       }
     }
     if (!quiet || t.etype === 'champ') this.room._fx({ k: 'hit', id: t.id, color: spec.color });
+    // Chain lightning bounce to nearby distinct enemies
+    if (spec.chain && !isChainHop && amount > 0) {
+      const bounces = Math.max(1, spec.chain.bounces || 2);
+      const rng = spec.chain.range || 360;
+      const decay = spec.chain.decay || 0.85;
+      const seen = new Set([t.id]);
+      let prev = t, curAmt = amount;
+      for (let b = 0; b < bounces; b++) {
+        curAmt *= decay;
+        let nxt = null, bd = rng;
+        for (const c of this.room.champs.values()) {
+          if (c.dead || c.team === caster.team || seen.has(c.id)) continue;
+          const d = Math.hypot(c.x - prev.x, c.y - prev.y);
+          if (d <= bd) { bd = d; nxt = c; }
+        }
+        if (!nxt) {
+          for (const u of this.room.units.values()) {
+            if (!u.alive || u.resetting || u.team === caster.team || u.utype === 'pet' || seen.has(u.id)) continue;
+            const d = Math.hypot(u.x - prev.x, u.y - prev.y);
+            if (d <= bd) { bd = d; nxt = u; }
+          }
+        }
+        if (!nxt) break;
+        seen.add(nxt.id);
+        this.room._fx({ k: 'zap', x0: round(prev.x), y0: round(prev.y), x1: round(nxt.x), y1: round(nxt.y), color: spec.color });
+        this._applyHit(caster, nxt, spec, curAmt, now, prev.x, prev.y, fx, fy, quiet, true);
+        prev = nxt;
+      }
+    }
   }
 
   /** Enemies (champions + units, incl. neutral) within `half + radius` of a segment, sorted by distance along it. */
@@ -414,25 +508,61 @@ export class SkillEngine {
       }
       this.areas = this.areas.filter((a) => a.nextAt < a.until);
     }
+    // Armed ground traps
+    if (this.traps.length) {
+      const keepTraps = [];
+      for (const tr of this.traps) {
+        if (now >= tr.until || !this.room._isAlive(tr.owner)) continue;
+        if (now < tr.armedAt) { keepTraps.push(tr); continue; }
+        let victim = null;
+        for (const c of this.room.champs.values()) {
+          if (!c.dead && c.team !== tr.team && Math.hypot(c.x - tr.x, c.y - tr.y) <= tr.r + c.radius * 0.5) { victim = c; break; }
+        }
+        if (!victim) {
+          for (const u of this.room.units.values()) {
+            if (u.alive && !u.resetting && u.team !== tr.team && u.utype !== 'pet' && Math.hypot(u.x - tr.x, u.y - tr.y) <= tr.r + u.radius * 0.5) { victim = u; break; }
+          }
+        }
+        if (victim) {
+          this.room._fx({ k: 'circle', x: round(tr.x), y: round(tr.y), r: tr.r, delay: 0, color: tr.color });
+          this._applyHit(tr.owner, victim, tr.spec, tr.amount, now, tr.x, tr.y);
+        } else {
+          keepTraps.push(tr);
+        }
+      }
+      this.traps = keepTraps;
+    }
     // Projectiles
     if (!this.projectiles.length) return;
     const dt = dtMs / 1000;
     const keep = [];
     for (const p of this.projectiles) {
+      if (p.returning && this.room._isAlive(p.owner)) {
+        const rdx = p.owner.x - p.x, rdy = p.owner.y - p.y, rd = Math.hypot(rdx, rdy);
+        if (rd <= 42) continue;
+        p.dx = rdx / rd; p.dy = rdy / rd;
+      }
       const step = Math.min(p.left, p.speed * dt);
       const x1 = p.x + p.dx * step, y1 = p.y + p.dy * step;
       let done = false;
       const along = this._alongSegment(p.team, p.x, p.y, x1, y1, p.half, p.champOnly);
       for (const h of along) {
-        // A body already hit by this cast (fan) still stops a non-pierce projectile — no damage.
         if (p.hit.has(h.e.id)) { if (!p.pierce) { done = true; break; } continue; }
         p.hit.add(h.e.id);
-        // Knockback along the projectile's travel direction.
-        this._applyHit(p.owner, h.e, p.spec, p.amount, now, h.e.x - p.dx * 100, h.e.y - p.dy * 100, p.dx, p.dy);
+        const legSpec = p.returning && p.spec.returnTrueDmg ? { ...p.spec, _returnLeg: true } : p.spec;
+        this._applyHit(p.owner, h.e, legSpec, p.amount, now, h.e.x - p.dx * 100, h.e.y - p.dy * 100, p.dx, p.dy);
         if (!p.pierce) { done = true; break; }
       }
       p.x = x1; p.y = y1; p.left -= step;
-      if (!done && p.left > 0.5) keep.push(p);
+      if (!done && p.left <= 0.5 && !p.returning && p.spec.boomerang && this.room._isAlive(p.owner)) {
+        p.returning = true;
+        p.hit.clear();
+        p.left = (p.spec.range || 800) + 400;
+        p.amount *= (p.spec.returnMul || 1.15);
+        keep.push(p);
+      } else if (!done && p.left > 0.5) {
+        keep.push(p);
+      }
     }
     this.projectiles = keep;
   }

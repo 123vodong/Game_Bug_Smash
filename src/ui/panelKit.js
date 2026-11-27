@@ -202,6 +202,7 @@ export class Modal {
       }).setOrigin(0.5);
       t.setShadow(0, 0, hex(accent), 8, true, true);
       this.panel.add(t);
+      this.titleTxt = t;
     }
     if (closable) {
       const x = button(scene, w / 2 - 34, -h / 2 + 32, 48, 42, '✕', { color: accent, fontSize: 20, onClick: () => this.close() });
