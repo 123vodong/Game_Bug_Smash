@@ -89,6 +89,10 @@ export class UnitView {
       : scene.add.ellipse(0, size * 0.42, size * 1.25, size * 0.5, col, this.rel === 'neutral' ? 0.16 : 0.36)
         .setStrokeStyle(2, col, 0.95);
     c.add(this.ring);
+    if (info.cls === 'minion' || info.cls === 'monster') { // soft contact shadow under the body
+      this.shadow = scene.add.ellipse(0, size * 0.44, size * 0.95, size * 0.3, 0x000000, 0.4);
+      c.add(this.shadow); c.sendToBack(this.shadow);
+    }
     if (info.cls === 'epic') {
       this.glow = scene.add.image(0, -size * 0.1, 'moba-glow').setTint(isBoss ? 0xff2a2a : 0xffd700)
         .setDisplaySize(size * 2.6, size * 2.6).setAlpha(0.5);
@@ -98,8 +102,12 @@ export class UnitView {
     let dh, visTop;
     const look = lookMeta(key);
     const special = this._specialBody(scene, info, col);
+    const art = !special && !isBoss ? this._envArt(scene, info, u) : null;
     if (special) {
       this.body = special.body; dh = special.dh; visTop = special.visTop; this.baseTint = special.tint || null;
+    } else if (art) {
+      this.body = art.body; dh = art.dh; visTop = art.visTop; this.baseTint = art.tint;
+      if (this.baseTint) this.body.setTint(this.baseTint);
     } else if (scene.textures.exists(key)) {
       let dw, oy;
       if (isBoss) { dw = size; dh = size * 300 / 246; oy = 0.6; visTop = -dh * 0.58; }
@@ -148,6 +156,25 @@ export class UnitView {
       c.add([this._heatBg, this._heatFill]);
     }
     if (!this.alive) { this.dying = true; c.setVisible(false); }
+  }
+
+  /** CC0 Kenney sci-fi RTS sprite (env-units atlas) for minions + jungle monsters, or null (looks.js robot is used). */
+  _envArt(scene, info, u) {
+    if (!scene.textures.exists('env-units')) return null;
+    let frame = null, tint = null;
+    if (MINIONS[u.kind] && (u.team === 'blue' || u.team === 'red')) frame = `m_${u.kind}_${u.team}`;
+    else if (CAMPS[u.kind]) {
+      const h = [...String(this.campId || u.id || '')].reduce((a, ch) => a + ch.charCodeAt(0), 0) % 2;
+      frame = { small: ['n_e', 'n_f'], medium: ['n_g', 'n_d'], big: ['n_i', 'n_h'] }[u.kind]?.[h] || null;
+      tint = u.kind === 'big' ? 0xffe9a8 : null;
+    }
+    const tx = scene.textures.get('env-units');
+    if (!frame || !tx.has(frame)) return null;
+    const f = tx.get(frame), size = info.size, wide = f.width > 60;
+    const dh = wide ? size * 1.7 * f.height / f.width : size * 1.55;
+    const dw = dh * f.width / f.height;
+    const body = scene.add.image(0, 0, 'env-units', frame).setDisplaySize(dw, dh).setOrigin(0.5, 0.9);
+    return { body, dh, visTop: -dh * 0.9, tint };
   }
 
   /** v6 bodies: barricade sprite, procedural turret, Scout drone. Returns null for every other unit. */
@@ -296,7 +323,7 @@ export class UnitView {
       targets: this.body, alpha: 0, scaleX: this.bsx * 0.5, scaleY: this.bsy * 0.5,
       angle: (Math.random() < 0.5 ? -1 : 1) * 50, duration: 340, ease: 'Cubic.easeIn',
     });
-    this.scene.tweens.add({ targets: [this.ring, this.glow].filter(Boolean), alpha: 0, duration: 300 });
+    this.scene.tweens.add({ targets: [this.ring, this.glow, this.shadow].filter(Boolean), alpha: 0, duration: 300 });
   }
 
   /** Called once the server removed the unit. Lets the death animation finish. */

@@ -1,0 +1,25 @@
+Assets used by the Three.js prototype (three/). All third-party assets below are CC0 (public domain).
+
+MODELS (three/assets/models/*.glb)
+  Knight.glb, Mage.glb, Rogue.glb, Barbarian.glb
+  Source:  KayKit Adventurers Character Pack 1.0 by Kay Lousberg
+           https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0
+  License: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)
+  Changes: Mage/Rogue/Barbarian had their animation clips stripped (Knight.glb keeps the full
+           clip set, which shares the same rig and is re-targeted onto the other three by bone name).
+           Credit (optional, appreciated): Kay Lousberg, www.kaylousberg.com
+
+TEXTURES (three/assets/tex/*.jpg, 1k jpg, as downloaded)
+  dirty_carpet_diff / _nor_gl           Poly Haven "Dirty Carpet"            CC0   https://polyhaven.com/a/dirty_carpet
+  mud_forest_diff / _nor_gl             Poly Haven "Mud Forest"              CC0   https://polyhaven.com/a/mud_forest
+  metal_plate_diff / _nor_gl            Poly Haven "Metal Plate"             CC0   https://polyhaven.com/a/metal_plate
+  plastered_wall_03_diff / _nor_gl      Poly Haven "Plastered Wall 03"       CC0   https://polyhaven.com/a/plastered_wall_03
+
+RUNTIME LIBRARY (not stored here, loaded from a CDN)
+  three@0.160.0 (MIT) + examples/jsm addons, from https://cdn.jsdelivr.net/npm/three@0.160.0/
+
+REUSED FROM THE EXISTING GAME (not copied, referenced by relative URL)
+  assets/moba/fb/*.webp   flipbook VFX sheets, licensed as documented in assets/moba/LICENSE.txt
+
+Everything else (towers, cores, minions, monsters, bushes, walls, projectiles, water shader) is
+procedural geometry / shader code written for this prototype.

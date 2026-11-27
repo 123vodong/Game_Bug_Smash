@@ -974,3 +974,6 @@ export function drawChampionPortrait(scene, champId, x, y, size, stick = 'stick-
   c.setSize(size, size);
   return c;
 }
+
+// Champion sprite atlas + HUD UI atlas/font loader (see champUiKit.js); called from TeamModeScene.preload().
+export { loadChampUiAssets } from './champUiKit.js';
