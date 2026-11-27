@@ -7,6 +7,7 @@
 // as fallback. Pets (kind 'pet', `owner` = champion key): small, owner's team ring,
 // no HP bar, hover bob, never targetable (hitTest → false, `targetable` = false).
 import { MINIONS, CAMPS, EPICS } from '../../../shared/moba/rules.js';
+import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { FONT, BAR, depthAt, teamColor, relation, approach, calmPrefs } from './mobaGfx.js';
 import { ensureMobaLooks, unitTextureKey, unitName, lookMeta, extraUnit } from './looks.js';
 
@@ -14,6 +15,19 @@ import { ensureMobaLooks, unitTextureKey, unitName, lookMeta, extraUnit } from '
 const TEAM_TINT = { blue: 0xc4e0ff, red: 0xffc6c6, neutral: 0xd9e4b4 };
 const ROBOT_TINT = { blue: 0x9fd2ff, red: 0xffa8a8, neutral: 0xffffff };
 const PET_SIZE = 40;
+// v6 placed objects (kind 'obj', campId 'barricade' | 'turret') and the Scout drone (summon-only pet).
+const MAX_OBJ_VIEWS_PER_TEAM = 14; // V4: past this, extra object views are drawn "lite" (no dust, no heat bar)
+const objViews = {};
+const lerpColor = (a, b, k) => {
+  const r = Math.round(((a >> 16) & 255) * (1 - k) + ((b >> 16) & 255) * k), g = Math.round(((a >> 8) & 255) * (1 - k) + ((b >> 8) & 255) * k), bl = Math.round((a & 255) * (1 - k) + (b & 255) * k);
+  return (r << 16) | (g << 8) | bl;
+};
+function droneDef(scene, u) {
+  if (u.kind !== 'pet') return null;
+  const own = u.owner || '';
+  const d = CHAMPIONS[own] || CHAMPIONS[scene._state?.()?.champions?.get?.(own)?.champ];
+  return d?.pet?.summonOnly ? d : null;
+}
 // v4 bushes: own-team units in a bush → translucent + leaf tint (hidden enemies are not sent).
 const HIDDEN_ALPHA = 0.5, LEAF_TINT = 0xa6f0a0, FADE_MS = 200;
 
@@ -24,6 +38,7 @@ export function unitKindInfo(kind, campId = '') {
   if (MINIONS[kind]) return { cls: 'minion', sprite, name, size: MINIONS[kind].size, ranged: MINIONS[kind].range > 200 };
   if (CAMPS[kind]) return { cls: 'monster', sprite, name, size: CAMPS[kind].size };
   if (kind === 'pet') return { cls: 'pet', sprite, name, size: PET_SIZE };
+  if (kind === 'obj') return campId === 'turret' ? { cls: 'obj', sprite: '', name: 'Turret', size: 64 } : { cls: 'obj', sprite: 'moba-prop-barricade', name: 'Barricade', size: 112 };
   if (kind === 'dummy') return { cls: 'dummy', sprite: 'bot-drone', name: 'Practice Dummy', size: 62, tint: 0xffd23f };
   if (EPICS[kind]) {
     const e = EPICS[kind];
@@ -45,7 +60,12 @@ export class UnitView {
     this.cls = info.cls;
     this.name = info.name;
     this.isPet = info.cls === 'pet';
+    this.isObj = info.cls === 'obj';
+    this.isTurret = this.isObj && this.campId === 'turret';
+    this.drone = droneDef(scene, u);
     this.targetable = !this.isPet;
+    this.lite = false; this._dropAt = scene.time.now; this._landed = false; this._shakeUntil = 0; this._heatShown = -1;
+    if (this.isObj) { objViews[u.team] = (objViews[u.team] || 0) + 1; this._objTeam = u.team; this.lite = objViews[u.team] > MAX_OBJ_VIEWS_PER_TEAM; }
     this.ranged = !!info.ranged;
     this.size = info.size;
     this.x = u.x; this.y = u.y; this.tx = u.x; this.ty = u.y;
@@ -77,7 +97,10 @@ export class UnitView {
     const key = isBoss ? 'boss-deadline' : info.sprite;
     let dh, visTop;
     const look = lookMeta(key);
-    if (scene.textures.exists(key)) {
+    const special = this._specialBody(scene, info, col);
+    if (special) {
+      this.body = special.body; dh = special.dh; visTop = special.visTop; this.baseTint = special.tint || null;
+    } else if (scene.textures.exists(key)) {
       let dw, oy;
       if (isBoss) { dw = size; dh = size * 300 / 246; oy = 0.6; visTop = -dh * 0.58; }
       else if (look) {
@@ -99,6 +122,7 @@ export class UnitView {
     c.add(this.body);
 
     this._hover = this.isPet ? 7 : (key === 'bot-drone' ? 4 : 0);   // flying units float
+    if (this.isObj) this._hover = 0;
     const epic = info.cls === 'epic';
     const bw = epic ? 140 : Math.max(36, Math.round(size * 0.92)), bh = epic ? 10 : 5;
     const by = Math.round(visTop) - (epic ? 14 : 8);
@@ -117,7 +141,48 @@ export class UnitView {
       c.add([this.title, this.hpText]);
     }
     this._applyHp();
+    if (this.isTurret && !this.lite) {
+      const hy = by + 9;
+      this._heatBg = scene.add.rectangle(0, hy, bw + 2, 5, 0x000000, 0.78);
+      this._heatFill = scene.add.rectangle(-bw / 2, hy, 0, 3, 0xffd23f, 1).setOrigin(0, 0.5);
+      c.add([this._heatBg, this._heatFill]);
+    }
     if (!this.alive) { this.dying = true; c.setVisible(false); }
+  }
+
+  /** v6 bodies: barricade sprite, procedural turret, Scout drone. Returns null for every other unit. */
+  _specialBody(scene, info, col) {
+    if (this.isTurret) {
+      const body = scene.add.container(0, 0);
+      const base = scene.add.ellipse(0, 2, 56, 20, 0x1c222c, 1).setStrokeStyle(2, col, 0.9);
+      const post = scene.add.rectangle(0, -12, 14, 26, 0x2c3440, 1).setStrokeStyle(2, 0x0e1117, 1);
+      this._tHead = scene.add.circle(0, -32, 17, 0x4a5568, 1).setStrokeStyle(3, col, 1);
+      this._tBarrel = scene.add.container(0, -32);
+      this._tBarrel.add([scene.add.rectangle(10, 0, 32, 9, 0x2a303b, 1).setOrigin(0, 0.5).setStrokeStyle(2, 0x0e1117, 1), scene.add.circle(41, 0, 4, 0xffd23f, 1)]);
+      const eye = scene.add.circle(0, -34, 5, 0xffffff, 0.9);
+      body.add([base, post, this._tHead, this._tBarrel, eye]);
+      return { body, dh: 64, visTop: -58 };
+    }
+    if (this.isObj) {
+      const k = 'moba-prop-barricade';
+      if (scene.textures.exists(k)) {
+        const sz = info.size, body = scene.add.image(0, 0, k).setDisplaySize(sz, sz).setOrigin(0.5, 0.72);
+        const tint = lerpColor(0xffffff, col, 0.25);
+        body.setTint(tint);
+        return { body, dh: sz, visTop: -sz * 0.7, tint };
+      }
+      return { body: scene.add.rectangle(0, -20, info.size, 40, col, 1).setStrokeStyle(3, 0x000000), dh: 50, visTop: -40 };
+    }
+    if (this.drone) {
+      const body = scene.add.text(0, 0, this.drone.pet?.emoji || '🛸', { fontSize: '34px', padding: { y: 4 } }).setOrigin(0.5);
+      const vis = this.drone.skills?.w?.summon?.vision || 0, cc = this.drone.color || col;
+      if (vis > 0 && this.rel !== 'enemy') { this._ring2 = scene.add.graphics(); this._ring2.lineStyle(2, cc, 0.18); this._ring2.strokeCircle(0, 0, vis); this.c.add(this._ring2); }
+      this.cone = scene.add.graphics();
+      this.cone.fillStyle(cc, 0.2); this.cone.slice(0, 0, 150, -0.32, 0.32, false); this.cone.fillPath();
+      this.c.add(this.cone);
+      return { body, dh: 40, visTop: -46 };
+    }
+    return null;
   }
 
   /** World point projectiles / sparks aim at (body center). */
@@ -159,6 +224,14 @@ export class UnitView {
         if (t >= 1) this._lunge = null;
         else { const k = Math.sin(t * Math.PI) * 9; ox += this._lunge.ux * k; oy += this._lunge.uy * k; }
       }
+      if (this.isObj) {
+        const dk = Math.min(1, (now - this._dropAt) / 380);
+        if (dk < 1) oy -= 240 * (1 - dk) * (1 - dk);
+        else if (!this._landed) this._land();
+        if (this._shakeUntil > now) ox += Math.sin(now / 16) * 4 * ((this._shakeUntil - now) / 160);
+        if (this.isTurret) this._turretTick(dt);
+      }
+      if (this.cone) this.cone.rotation += dt * 1.6;
       this.body.x = ox; this.body.y = oy;
       if (this._flashUntil && now >= this._flashUntil) {
         this._flashUntil = 0;
@@ -173,10 +246,34 @@ export class UnitView {
     if (Math.abs(dep - this.c.depth) > 0.01) this.c.setDepth(dep);
   }
 
+  /** Barricade / turret finished dropping in: dust puffs (skipped for lite views). */
+  _land() {
+    this._landed = true;
+    if (this.lite || !this.scene.fx?.part) return;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      this.scene.fx.part(this.x + Math.cos(a) * 20, this.y + 8, { tex: 'vfx-dirt_01', tint: 0xb5a58a, vx: Math.cos(a) * 80, vy: Math.sin(a) * 30 - 10, drag: 3, s0: 30, s1: 90, a0: 0.55, life: 0.55 });
+    }
+  }
+
+  /** Turret: aim the barrel at the last shot, recoil on a shot, head and heat bar turn yellow -> red with heat. */
+  _turretTick(dt) {
+    const st = this.scene.fx?.objState?.get(this.id);
+    if (!st) return;
+    if (this._tBarrel) { this._tBarrel.rotation = st.ang; this._tBarrel.setScale(1 - 0.18 * st.kick, 1); }
+    st.kick = Math.max(0, st.kick - dt * 8);
+    if (st.h === this._heatShown) return;
+    this._heatShown = st.h;
+    const k = st.h / 10;
+    this._tHead?.setFillStyle(lerpColor(0x4a5568, 0xff3b30, k), 1);
+    if (this._heatFill) { this._heatFill.setFillStyle(lerpColor(0xffd23f, 0xff2a2a, k), 1); this._heatFill.width = this.barW * k; }
+  }
+
   flash() {
     if (this.dying) return;
     const now = this.scene.time.now;
     this._punchUntil = now + 110;
+    if (this.isObj) this._shakeUntil = now + 160;
     if (!calmPrefs().flashes) return; // EP-10: settings.flashes off → punch only, no white flash
     if (this.body.setTintFill) this.body.setTintFill(0xffffff);
     this._flashUntil = now + 70;
@@ -243,6 +340,7 @@ export class UnitView {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this._objTeam) { objViews[this._objTeam] = Math.max(0, (objViews[this._objTeam] || 1) - 1); this._objTeam = null; }
     this.removed = true;
     const tw = this.scene?.tweens;
     if (tw) { tw.killTweensOf(this.c); tw.killTweensOf([this.body, this.ring, this.glow].filter(Boolean)); }

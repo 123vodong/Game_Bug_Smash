@@ -24,7 +24,10 @@
 // entity are not emitted; bots + towers can't see / target hidden enemies; orders, target
 // skills and ignite / smite at a hidden id are rejected (skillshots + AoE still hit).
 import * as R from '../../../shared/moba/rules.js';
-import { CHAMPIONS, ROLE_ORDER, ROLE_PICKS, championPassive, skillDamageType } from '../../../shared/moba/champions.js';
+import {
+  CHAMPIONS, ROLE_ORDER, ROLE_PICKS, championPassive, skillDamageType, KIT_TUNING as K, resolveSkill, defaultStance, nextStance,
+  CC_TUNING as CCT, CC_TYPES, CC_PRIORITY,
+} from '../../../shared/moba/champions.js';
 import { ITEMS, buyBlocker, itemStats, itemPassives, ownedActiveItem, recipePlan, applyBuy } from '../../../shared/moba/items.js';
 import { AUGMENT_LEVELS, AUGMENTS, rollAugmentChoices, rollSingleAugment } from '../../../shared/moba/augments.js';
 import {
@@ -39,10 +42,29 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const ENEMY = { blue: 'red', red: 'blue' };
 const PET_R = 18;
 const isStruct = (e) => e.kind === 'tower' || e.kind === 'core';
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+/** v6: multiply every numeric field of an amount spec (dmg / heal / shield) by k. */
+const scaleAmt = (a, k) => { if (!a) return a; const o = {}; for (const key of Object.keys(a)) o[key] = a[key] * k; return o; };
+/** Skill type -> OfflineSim method (ctx, dispatch). Mirrors the server's handler registry; add new primitives here. */
+const KIT_HANDLERS = {
+  place: '_place', rewind: '_rewind', summon: '_summon', reload: '_reloadStart',
+  deliver: '_deliver', serve: '_serve', resolve: '_resolve', objcmd: '_objcmd',
+  cone: '_cone', line: '_line', arc: '_arc', // v6.1 delivery shapes
+};
+/** v6.1 CC spec key -> unit field (the CC_TYPES key equals the spec key). Handlers run in this order. */
+const CC_FIELD = { airborne: 'airUntil', charm: 'charmUntil', fear: 'fearUntil', taunt: 'tauntUntil', blind: 'blindUntil', disarm: 'disarmUntil', suppress: 'suppressUntil' };
+const CC_KEYS = Object.keys(CC_FIELD);
+/** CC_TYPES key -> field that makes the `cc:<tag>` buff tag active. */
+const CC_TAG_FIELD = { ...CC_FIELD, untarget: '_untargetUntil', revive: '_reviveUntil' };
+/** v6.1: skill types whose `self{}` block is applied to the caster at cast start. */
+const SELF_TYPES = new Set(['circle', 'zone', 'cone', 'line', 'arc']);
+/** Smallest signed angle (rad) from a to b, in [-PI, PI]. */
+const angDiff = (a, b) => { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2; return d; };
 
 export class OfflineSim {
   constructor({ champ, name, emit, lobbyMs = 0, spells = null, allies = null, enemies = null, hat = '', world = null, sandbox = false }) {
     this.localId = 'me';
+    this._emitRaw = emit; // unfiltered channel (gping goes to BOTH teams even when the caster is in fog)
     // 2026-11-25: the floor (size, fountains, bushes, nav). Story Mode passes its own; 5v5 = the Open Office.
     this.world = world || WORLD_5V5;
     this.nav = this.world.nav;
@@ -63,6 +85,8 @@ export class OfflineSim {
     this._atk = [];
     this._timers = [];
     this._traps = [];
+    this._objs = [];     // v6 placed objects (fx-only objects + obj units): see _objAdd
+    this._objAt = 0;
     this._firstBlood = false;
     this.state = {
       phase: 'lobby', lobbyEndsAt: this.t + lobbyMs, startedAt: 0, winner: '', blueKills: 0, redKills: 0,
@@ -111,6 +135,7 @@ export class OfflineSim {
     if (type === 'chat') { this.emit('chat', { sid: this.localId, name: me.name, text: String(m.text || '').slice(0, 140) }); return; }
     if (this.state.phase !== 'playing' || !me) return;
     if (type === 'order') {
+      if (this._orderLocked(me)) return; // v6.1: charm / fear / taunt / suppress / airborne drive the unit
       if (m.type === 'move' && Number.isFinite(m.x) && Number.isFinite(m.y)) { me._order = { type: 'move', ...this.world.clampToMap(m.x, m.y) }; me.targetId = ''; }
       else if (m.type === 'attack' && this._ent(m.id) && this._ent(m.id).kind !== 'pet' && !this._hidId(m.id)) { me._order = { type: 'attack', id: m.id }; me.targetId = m.id; }
       else if (m.type === 'stop') { me._order = null; me.targetId = ''; }
@@ -161,12 +186,16 @@ export class OfflineSim {
       return false;
     });
     const changing = me.champ !== champId;
+    this._kitDown(me);
+    this._objClearOwner(me.id);
     me.champ = champId;
     me.dead = false; me.respawnAt = 0;
     me.stunnedUntil = 0; me.rootedUntil = 0; me.slowUntil = 0; me.slowPct = 0; me.silencedUntil = 0; me._recast = {}; me._marks = {};
     me._dispUntil = 0; me._stealthUntil = 0; me._spellShieldUntil = 0;
     me._order = null; me._nav = null; me.targetId = '';
     me._buffs = {}; me.shield = 0; me._shieldUntil = 0;
+    me._ext = {}; me._droneId = null;
+    this._kitInit(me);
     me._castCount = 0; me._cacheStacks = 0; me._swipeReady = false; me._cleaveReady = false;
     me.ranks = {
       q: Math.max(1, me.ranks?.q || 1),
@@ -245,6 +274,7 @@ export class OfflineSim {
       _mrPen: 0, _manaRegen: 0, _ccChainCount: 0, _ccChainUntil: 0, _ccImmuneUntil: 0, _wardCd: 0, _stealthUntil: 0, _servoOverdriveUntil: 0, _prefetchUntil: 0,
       augments: [], augmentOffer: null, _augNextIdx: 0, _augCd: {}, _lastQAt: 0, _cleaveReady: false, _lastStandUntil: 0, _wasInBush: false,
     };
+    this._kitInit(c);
     if (isBot) this._autoSpendSkills(c);
     c.chargesD = spellInitialCharges(c.spellD);
     c.chargesF = spellInitialCharges(c.spellF);
@@ -262,13 +292,17 @@ export class OfflineSim {
     c.ap = Math.round((b.ap + it.ap) * (1 + it.apPct));
     c.armor = Math.round(R.statAt(b.armor, g.armor, c.level) + it.armor);
     c.mr = Math.round(R.statAt(b.mr || 30, g.mr || 1.2, c.level) + (it.mr || 0));
-    let msMul = 1;
-    for (const [tag, until] of Object.entries(c._buffs)) if (until > this.t) msMul += def.skills[tag]?.buff?.msPct || 0;
+    let msMul = 1, asBuff = 0;
+    // v6: the buff object of a slot buff is stored at cast time (_bx) because stances / serve outcomes replace the base spec.
+    const addBuff = (bf) => { if (!bf) return; msMul += bf.msPct || 0; asBuff += bf.as || 0; };
+    for (const [tag, until] of Object.entries(c._buffs)) if (until > this.t) addBuff(c._bx?.[tag] || def.skills[tag]?.buff);
+    for (const ex of Object.values(c._ext || {})) if (ex.until > this.t) addBuff(ex.buff);
+    if (c._pkg) msMul += Object.values(def.skills).find((s) => s.pickup)?.pickup?.speedPct || 0;
     if (c._spMsUntil > this.t) msMul += c._spMsPct || 0;
     if (c.augments?.includes('ghost_protocol') && (this.t - (c._lastCombatAt || 0) >= 5000)) msMul += 0.15;
-    c.ms = Math.round((b.ms + it.ms) * msMul);
+    c.ms = Math.round((b.ms + it.ms) * Math.max(0.4, msMul)); // negative msPct supported, floored at 40% speed
     c.range = b.range;
-    const asExtra = (c._prefetchUntil || 0) > this.t ? 0.2 : 0;
+    const asExtra = ((c._prefetchUntil || 0) > this.t ? 0.2 : 0) + asBuff;
     c.as = +(R.statAt(b.as, g.as, c.level) * (1 + it.as + asExtra)).toFixed(3);
     c._haste = it.haste; c._ls = it.lifesteal; c._armorPen = it.armorPen || 0; c._mrPen = it.mrPen || 0; c._manaRegen = it.manaRegen || 0;
     if (full) { c.hp = c.maxHp; c.mana = c.maxMana; } else if (c.maxHp > oldMax) c.hp += c.maxHp - oldMax;
@@ -382,7 +416,7 @@ export class OfflineSim {
   _petOf(c) { return c._petId ? this.state.units.get(c._petId) || null : null; }
   _spawnPet(c) {
     const pet = CHAMPIONS[c.champ]?.pet;
-    if (!pet || c.dead || this._petOf(c)) return;
+    if (!pet || pet.summonOnly || c.dead || this._petOf(c)) return; // summonOnly pets (Scout Drone) never auto-spawn
     const f = this.world.fountain[c.team];
     const q = this.nav.nearestFree(c.x + (f.x < c.x ? -1 : 1) * 60, c.y + (f.y < c.y ? -1 : 1) * 60, PET_R);
     c._petId = this._addUnit({ x: q.x, y: q.y, team: c.team, kind: 'pet', hp: 1, owner: c.id, spec: { ...pet } });
@@ -414,7 +448,7 @@ export class OfflineSim {
     }
     if (!tgt || t < u._atkAt || dist(u, tgt) > (sp.range || 300) + this._radius(tgt)) return;
     let pct = 0;
-    for (const [slot, until] of Object.entries(c._buffs)) if (until > t) pct += CHAMPIONS[c.champ].skills[slot]?.buff?.petPct || 0;
+    for (const [slot, until] of Object.entries(c._buffs)) if (until > t) pct += (c._bx?.[slot] || CHAMPIONS[c.champ].skills[slot]?.buff)?.petPct || 0;
     const od = (c._servoOverdriveUntil || 0) > t;
     u._atkAt = t + (sp.atkMs || 1000) / (1 + pct + (od ? 0.45 : 0));
     this.emit('fx', { k: 'petatk', id: u.id, t: tgt.id });
@@ -469,11 +503,12 @@ export class OfflineSim {
     this.t = now;
     const st = this.state;
     if (st.phase === 'lobby') { if (now >= st.lobbyEndsAt) this._start(); return; }
-    if (st.phase !== 'playing') return;
+    if (st.phase !== 'playing') { if (this._objs.length) this._objClearAll(); return; } // match end: every placed object is removed
     for (let i = this._timers.length - 1; i >= 0; i--) {
       if (this._timers[i][0] <= now) { const fn = this._timers[i][1]; this._timers.splice(i, 1); fn(); }
     }
     this._tickTraps(now);
+    this._tickObjs(now);
     if (now >= this._waveAt) { this._spawnWave(); this._waveAt = now + R.WAVE_EVERY_MS; }
     st.units.forEach((u) => this._unitTick(u, dt));
     st.structures.forEach((s) => this._towerTick(s));
@@ -505,6 +540,11 @@ export class OfflineSim {
         if (dx * dx + dy * dy <= STEALTH_DETECT2) return false;
       }
       return true;
+    }
+    for (const u of st.units.values()) { // Scout Drone: a moving ward that also reveals bushes
+      if (!u._drone || !u.alive || u.team !== team) continue;
+      const dx = u.x - ex, dy = u.y - ey;
+      if (dx * dx + dy * dy <= u._drone.vision * u._drone.vision) return false;
     }
     const R_CHAMP2 = 1100 * 1100, R_STRUCT2 = 1050 * 1050, R_MINION2 = 680 * 680;
     const R_WARD2 = R.WARD.sightRadius * R.WARD.sightRadius;
@@ -614,20 +654,22 @@ export class OfflineSim {
   /** Nearest enemy of `src` within range; minion > champion > structure for minions. */
   _nearestEnemy(src, range, champFirst) {
     const st = this.state, foe = ENEMY[src.team];
-    let bu = null, bud = range, bc = null, bcd = range, bs = null, bsd = range;
+    let bu = null, bud = range, bc = null, bcd = range, bs = null, bsd = range, bo = null, bod = range;
     st.units.forEach((u) => {
       if (!u.alive || u.team !== foe || u.kind === 'pet' || this._hiddenFrom(u, src.team)) return;
-      const d = dist(src, u); if (d < bud) { bud = d; bu = u; }
+      const d = dist(src, u);
+      if (u.kind === 'obj') { if (d < bod) { bod = d; bo = u; } return; } // placed objects: last choice only
+      if (d < bud) { bud = d; bu = u; }
     });
     st.champions.forEach((c) => {
-      if (c.dead || c.team !== foe || this._hiddenFrom(c, src.team)) return;
+      if (c.dead || c.team !== foe || this._hiddenFrom(c, src.team) || !this._isTargetable(c)) return;
       const d = dist(src, c); if (d < bcd) { bcd = d; bc = c; }
     });
     st.structures.forEach((s) => {
       if (!s.alive || s.team !== foe) return;
       const d = dist(src, s) - this._radius(s); if (d < bsd) { bsd = d; bs = s; }
     });
-    return champFirst ? (bc || bu || bs) : (bu || bc || bs);
+    return champFirst ? (bc || bu || bs || bo) : (bu || bc || bs || bo);
   }
 
   _unitTick(u, dt) {
@@ -638,7 +680,8 @@ export class OfflineSim {
       }
       return;
     }
-    if (u.kind === 'pet') { this._petTick(u, dt); return; }
+    if (u.kind === 'obj') return; // placed objects are driven by _tickObjs
+    if (u.kind === 'pet') { if (u._drone) this._droneTick(u, dt); else this._petTick(u, dt); return; }
     if (u.kind === 'ward') { if (this.t >= (u._expiresAt || 0)) u.alive = false; return; }
     const sp = u._spec;
     let target = null;
@@ -684,7 +727,7 @@ export class OfflineSim {
     let t = null;
     // 1. Priority aggro: enemy champion who attacked an allied champion within 2.5s
     for (const c of st.champions.values()) {
-      if (c.dead || c.team === s.team || this._hiddenFrom(c, s.team)) continue;
+      if (c.dead || c.team === s.team || this._hiddenFrom(c, s.team) || !this._isTargetable(c)) continue;
       const dx = c.x - s.x, dy = c.y - s.y;
       if (dx * dx + dy * dy > rng2) continue;
       const lh = c._lastChampHit;
@@ -697,7 +740,7 @@ export class OfflineSim {
     if (!t) {
       let bd = rng2;
       for (const u of st.units.values()) {
-        if (!u.alive || u.team === s.team || u.team === 'neutral' || u.kind === 'pet' || this._hiddenFrom(u, s.team)) continue;
+        if (!u.alive || u.team === s.team || u.team === 'neutral' || u.kind === 'pet' || u.kind === 'obj' || this._hiddenFrom(u, s.team)) continue;
         const dx = u.x - s.x, dy = u.y - s.y, d2 = dx * dx + dy * dy;
         if (d2 <= bd) { bd = d2; t = u; }
       }
@@ -706,7 +749,7 @@ export class OfflineSim {
     if (!t) {
       let bd = rng2;
       for (const c of st.champions.values()) {
-        if (c.dead || c.team === s.team || this._hiddenFrom(c, s.team)) continue;
+        if (c.dead || c.team === s.team || this._hiddenFrom(c, s.team) || !this._isTargetable(c)) continue;
         const dx = c.x - s.x, dy = c.y - s.y, d2 = dx * dx + dy * dy;
         if (d2 <= bd) { bd = d2; t = c; }
       }
@@ -759,6 +802,8 @@ export class OfflineSim {
     const t = this.t;
     this._tickSpellCharges(c, t);
     if (c.dead) { if (t >= c.respawnAt) this._respawn(c); return; }
+    this._kitTick(c, t, dt);
+    if (c.dead) return;
     // Tower Heal Relics pickup (own team only, restores 18% HP + 15% Mana, 60s respawn)
     if (this.state.relics && (c.hp < c.maxHp - 5 || c.mana < c.maxMana - 5)) {
       for (const rl of this.state.relics) {
@@ -812,6 +857,10 @@ export class OfflineSim {
       this._recalc(c, false);
     }
     c._wasInBush = inBush;
+    tags.push(...this._ccTags(c, t)); // v6.1: `cc:` tags after `silenced`, BEFORE every `kit:` tag, in CC_PRIORITY order
+    tags.push(...this._kitTags(c, t)); // v6: `kit:` tags AFTER the existing tags, fixed order (contract 3.2)
+    const exSig = Object.entries(c._ext).filter(([, e]) => e.until > t).map(([k]) => k).join('|');
+    if (exSig !== c._extSig) { c._extSig = exSig; this._recalc(c, false); }
     const bstr = tags.join(',');
     if (bstr !== c.buffs) { c.buffs = bstr; this._recalc(c, false); }
     if (c.shield > 0 && t > c._shieldUntil) c.shield = 0;
@@ -827,20 +876,29 @@ export class OfflineSim {
     if (t - this.state.startedAt > R.PASSIVE_GOLD_DELAY_MS) c._goldAcc = (c._goldAcc || 0) + R.PASSIVE_GOLD_PER_SEC * dt;
     if (c._goldAcc >= 1) { c.gold += Math.floor(c._goldAcc); c._goldAcc -= Math.floor(c._goldAcc); }
     if (c.recallUntil) {
-      if (t >= c.recallUntil) { c.recallUntil = 0; const f = this.world.fountain[c.team]; c.x = f.x; c.y = f.y; c._order = null; this._placePet(c); }
+      if (t >= c.recallUntil) {
+        c.recallUntil = 0;
+        const bc = c._recallTo && this._objs.find((o) => o.oid === c._recallTo && t < o.until);
+        c._recallTo = null;
+        if (bc) { const q = this.nav.nearestFree(bc.x, bc.y, CHAMP_RADIUS); c.x = q.x; c.y = q.y; } // no fountain heal
+        else { const f = this.world.fountain[c.team]; c.x = f.x; c.y = f.y; }
+        c._order = null; c._nav = null; this._placePet(c);
+      }
       return;
     }
     if (c._dispUntil > t) return; // being knocked back
-    if (c.isBot) this._botThink(c);
+    const ccm = this._ccMode(c, t, dt); // v6.1 forced states (suppress > airborne > stun > charm | fear | taunt > root)
+    if (ccm === 'done') return;
+    if (c.isBot && ccm !== 'forced') this._botThink(c);
     if (c.stunnedUntil > t) return;
     const o = c._order;
     if (!o) return;
     const speed = c.ms * (c.slowUntil > t ? 1 - c.slowPct / 100 : 1), rooted = c.rootedUntil > t;
     if (o.type === 'move') { if (!rooted && this._moveAlong(c, o, speed, dt, o)) c._order = null; return; }
     const target = this._ent(o.id);
-    if (!this._alive(target) || (target.team === c.team) || target.kind === 'pet' || this._hiddenFrom(target, c.team)) { c._order = null; c.targetId = ''; return; }
+    if (!this._alive(target) || (target.team === c.team) || target.kind === 'pet' || this._hiddenFrom(target, c.team) || !this._isTargetable(target)) { c._order = null; c.targetId = ''; return; }
     if (dist(c, target) > c.range + this._radius(target)) { if (!rooted) this._moveAlong(c, target, speed, dt, o); }
-    else if (t >= c._atkAt) {
+    else if (t >= c._atkAt && !((c.disarmUntil || 0) > t)) { // disarm: no basic attacks (skills and movement still work)
       c._atkAt = t + 1000 / Math.max(0.2, c.as);
       c.action = 'attack'; c.action_seq++;
       this._attack(c, target, c.ad, CHAMPIONS[c.champ].ranged);
@@ -854,15 +912,16 @@ export class OfflineSim {
     if (c.hp < c.maxHp * 0.25 && dist(c, f) > 900) { c._order = { type: 'move', x: f.x, y: f.y }; c.targetId = ''; return; }
     if (c.hp < c.maxHp * 0.95 && dist(c, f) < R.FOUNTAIN_RADIUS * 0.6) return; // heal up
     if (this._botSpells(c)) return;
+    if (this._botGlobal(c)) return;
     const foe = this._nearestEnemy(c, c.range + 380, true);
     if (foe && foe.kind !== 'core' && !(foe.kind === 'tower' && foe.invulnerable)) {
       c._order = { type: 'attack', id: foe.id }; c.targetId = foe.id;
-      if (Math.random() < 0.25) {
-        const slot = ['q', 'w', 'e', 'r'][Math.floor(Math.random() * 4)];
-        this._cast(c, { slot, x: foe.x, y: foe.y, id: foe.id });
-      }
+      this._botStance(c, foe);
+      this._botMaintain(c, foe);
+      if (Math.random() < 0.25) this._botCast(c, foe);
       return;
     }
+    this._botMaintain(c, null);
     const lane = LANE_OF_ROLE[c._role];
     let goal;
     if (!lane) {
@@ -882,7 +941,15 @@ export class OfflineSim {
     this._atk.push({ f: src.id, t: target.id, r: ranged ? 1 : 0 });
     this._reveal(src);
     const delay = ranged ? Math.min(600, dist(src, target) / (isTower ? 1.1 : 1.25)) : 0;
-    const go = () => { if (this._alive(target) && (src.dead === undefined ? src.alive !== false : !src.dead)) this._damage(target, raw, src); };
+    const go = () => {
+      if (!this._alive(target) || !(src.dead === undefined ? src.alive !== false : !src.dead)) return;
+      if (target.champ && (target._untargetUntil || 0) > this.t) return; // untargetable: auto attacks do nothing
+      if (src.champ && (src.blindUntil || 0) > this.t) { // blind: 0 damage, no on-hit, MISS text (throttled)
+        if (this.t - (src._missAt || 0) >= CCT.MISS_TEXT_THROTTLE_MS) { src._missAt = this.t; this.emit('fx', { k: 'miss', id: src.id, x: Math.round(src.x), y: Math.round(src.y) }); }
+        return;
+      }
+      this._damage(target, raw, src);
+    };
     if (delay > 30) this._timers.push([this.t + delay, go]); else go();
   }
 
@@ -891,6 +958,7 @@ export class OfflineSim {
     if (target.invulnerable || target.kind === 'pet') return 0;
     if (this.godMode && target.id === this.localId) return 0;
     if (target.champ && (target._stasisUntil || 0) > this.t) return 0;
+    if (target.champ && (target._untargetUntil || 0) > this.t) return 0; // v6.1: untargetable windows take no damage
     if (src?.champ && target.champ && !byPet) src._lastChampHit = { id: target.id, t: this.t };
     const isMagic = dmgType === 'magic';
     let resist = isMagic
@@ -1052,6 +1120,17 @@ export class OfflineSim {
       }
       return dmg;
     }
+    // v6 link (Hira W): sharePct of every damage instance is redirected, already mitigated, to the partner (never lethal, never re-shared).
+    if (target.champ && target._link && !this._sharing && dmg > 0) {
+      const lk = target._link, other = this.state.champions.get(lk.a === target.id ? lk.b : lk.a);
+      if (other && !other.dead && this.t < lk.until && dist(other, target) <= lk.breakRange) {
+        const share = Math.max(0, Math.min(dmg * lk.sharePct, other.hp - 1)); // never lethal: same clamp as the server (Rewind._shareLink)
+        dmg -= share;
+        other.hp -= share;
+        if (this.t - (lk.fxAt || 0) >= 250) { lk.fxAt = this.t; this.emit('fx', { k: 'linkShare', lid: lk.lid, a: target.id, b: other.id, amt: Math.round(share) }); }
+      }
+    }
+    if (target.champ && (target._reviveUntil || 0) > this.t && dmg >= target.hp) { this._reviveTrigger(target); return 0; } // v6.1 revive guard
     target.hp = Math.max(0, target.hp - dmg);
     if (src?.champ && src._ls && !byPet) src.hp = Math.min(src.maxHp, src.hp + dmg * src._ls * this._healMul(src));
     if (target.hp <= 0) this._kill(target, src);
@@ -1067,6 +1146,7 @@ export class OfflineSim {
       target.action = 'dead'; target.action_seq++; target.recallUntil = 0;
       target.respawnAt = this.t + R.respawnMs(target.level);
       this._despawnPet(target);
+      this._kitDown(target);
       if (killer) {
         const bounty = R.bountyBonus(target._streak || 0);
         const kAugs = killer.augments || [];
@@ -1132,6 +1212,7 @@ export class OfflineSim {
       }
       return;
     }
+    if (target.kind === 'obj') { this._objDie(target, true); return; } // placed objects: no gold, no xp
     // unit
     target.alive = false; target.hp = 0;
     // AoV Jungle Blue / Red Buff on killing large jungle camps
@@ -1273,6 +1354,7 @@ export class OfflineSim {
     if (!it || !it.active || (c._activeCd || 0) > this.t) return;
     const act = it.active;
     if (c.stunnedUntil > this.t && !act.usableWhileStunned) return;
+    if (this._ccLocked(c) && !act.usableWhileStunned) return; // v6.1: never under airborne / suppress
     c._activeCd = (this.noCd && c.id === this.localId) ? 0 : this.t + act.cd * 1000;
     if (act.id === 'stasis') {
       c._stasisUntil = this.t + act.ms;
@@ -1281,7 +1363,7 @@ export class OfflineSim {
       this.emit('fx', { k: 'buff', sid: c.id, color: 0xffd23f });
       if (c.id === this.localId) this.emit('announce', { title: '⏸️ STASIS (2s)', color: '#ffd23f' });
     } else if (act.id === 'cleanse') {
-      c.stunnedUntil = 0; c.rootedUntil = 0; c.slowUntil = 0; c.slowPct = 0;
+      this._cleanse(c); // v6.1: CC_TYPES cleanse list + stun / root / slow / silence / knock
       c._spMsUntil = Math.max(c._spMsUntil || 0, this.t + act.ms); c._spMsPct = Math.max(c._spMsPct || 0, 0.35);
       this.emit('fx', { k: 'buff', sid: c.id, color: 0x39ff14 });
       if (c.id === this.localId) this.emit('announce', { title: '↩️ CLEANSED', color: '#39ff14' });
@@ -1346,14 +1428,19 @@ export class OfflineSim {
     const f = this.world.fountain[c.team];
     c.dead = false; c.x = f.x; c.y = f.y; c.hp = c.maxHp; c.mana = c.maxMana; c.action = 'idle'; c.action_seq++;
     c._nav = null;
+    this._kitInit(c); // stance back to default, resources to start, history cleared
     this._spawnPet(c);
   }
 
   _cancelRecall(c) { if (c.recallUntil) c.recallUntil = 0; }
 
   _recall(c) {
-    if (c.dead || c.recallUntil) return;
-    const dur = c.augments?.includes('recall_opt') ? Math.round(R.RECALL_MS * 0.65) : R.RECALL_MS;
+    if (c.dead || c.recallUntil || this._ccLocked(c)) return;
+    let dur = c.augments?.includes('recall_opt') ? Math.round(R.RECALL_MS * 0.65) : R.RECALL_MS;
+    // v6 beacon: a live allied beacon shortens the recall and ends there instead of the fountain.
+    const bc = this._objs.find((o) => o.kind === 'beacon' && o.team === c.team && this.t < o.until);
+    c._recallTo = bc ? bc.oid : null;
+    if (bc) dur = Math.min(dur, bc.allyRecallMs || dur);
     c.recallUntil = this.t + dur; c._order = null; c.targetId = ''; c.action = 'recall'; c.action_seq++;
   }
 
@@ -1386,16 +1473,20 @@ export class OfflineSim {
 
   /** Knockback `dist` px straight away from (fx, fy), stopped by walls; into a wall → wallStun. */
   _knock(e, fx0, fy0, distPx, wallStunMs) {
-    if (!e || isStruct(e) || R.EPICS[e.kind] || e.kind === 'pet' || !this._alive(e)) return;
+    if (!e || isStruct(e) || R.EPICS[e.kind] || e.kind === 'pet' || e.kind === 'obj' || !this._alive(e)) return;
+    if ((e.suppressUntil || 0) > this.t || !this._isTargetable(e)) return; // v6.1: suppressed units are not displaceable; untargetable take no CC
     const dx = e.x - fx0, dy = e.y - fy0, d = Math.hypot(dx, dy);
     const ux = d > 1 ? dx / d : 1, uy = d > 1 ? dy / d : 0;
     const goal = this.world.clampToMap(e.x + ux * distPx, e.y + uy * distPx);
     const r = this._navR(e) || MINION_RADIUS;
-    const end = this.nav.clipMove(e.x, e.y, goal.x, goal.y, r);
+    let end = this.nav.clipMove(e.x, e.y, goal.x, goal.y, r);
+    const co = this._clipObjs(e.x, e.y, end.x, end.y, r); // a barricade stops a knockback like a wall
+    if (co.hit) end = { x: co.x, y: co.y, hit: true };
     const wall = !!end.hit;
     const x0 = e.x, y0 = e.y;
     e.x = end.x; e.y = end.y;
     if (e.champ) {
+      this._holdEnd(e); // knockback cancels a charge at no cost
       e._dispUntil = this.t + R.KNOCKBACK_MS; e._nav = null; // like the server: the move order survives this._cancelRecall(e);
       if (wall && wallStunMs) {
         const ws = e.champ ? R.applyHardCcDuration(e, wallStunMs, this.t) : wallStunMs;
@@ -1405,15 +1496,1111 @@ export class OfflineSim {
     this.emit('fx', { k: 'knock', id: e.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(e.x), y1: Math.round(e.y), ms: R.KNOCKBACK_MS, wall });
   }
 
+  // ───────────────────────── v6 kit engine (contract: docs/02_CHAMPIONS_AND_SKILLS.md [v6 numbering] sections 3-4) ─────────────────────────
+  _kitInit(c) {
+    const def = CHAMPIONS[c.champ], kit = def.kit || {};
+    c._stance = defaultStance(def);
+    c._res = kit.res ? { [kit.res.key]: kit.res.start } : {};
+    c._mix = []; c._mixAt = 0; c._pkg = null; c._tipMulUntil = 0;
+    c._shadow = null; c._echo = null; c._tbox = null; c._tether = null; c._link = null; c._linkOwn = null; c._reload = null; c._hold = null;
+    c._hist = []; c._histAt = 0; c._bx = c._bx || {}; c._ext = c._ext || {}; c._extSig = '';
+    this._ccClear(c);
+  }
+
+  // ───────────────────────── v6.1 CC + states (contract: docs/02_CHAMPIONS_AND_SKILLS.md [v6.1 numbering] section 3) ─────────────────────────
+  /** Reset every v6.1 timer (spawn, respawn, death, champion switch). */
+  _ccClear(c) {
+    for (const f of Object.values(CC_FIELD)) c[f] = 0;
+    c._ccSrc = {}; c._untargetUntil = 0; c._reviveUntil = 0; c._reviveCfg = null; c._suppressing = null; c._windup = null;
+    c._fearDir = null; c._fearFrom = null; c._missAt = 0;
+  }
+  _ccActive(c, k, t = this.t) { return (c[CC_TAG_FIELD[k]] || 0) > t; }
+  /** `cc:<tag>` tags in CC_PRIORITY order (only while active). */
+  _ccTags(c, t) {
+    const out = [];
+    for (const k of CC_PRIORITY) if ((c[CC_TAG_FIELD[k]] || 0) > t) out.push(`cc:${CC_TYPES[k].tag}`);
+    return out;
+  }
+  /** Units that cannot move / act: suppress, airborne, or channelling a suppress. */
+  _ccLocked(c, t = this.t) { return (c.suppressUntil || 0) > t || (c.airUntil || 0) > t || !!c._suppressing; }
+  /** Any hard CC (stun, airborne, charm, fear, taunt, suppress) active. */
+  _hardCc(c, t = this.t) {
+    return c.stunnedUntil > t || (c.airUntil || 0) > t || (c.charmUntil || 0) > t || (c.fearUntil || 0) > t || (c.tauntUntil || 0) > t || (c.suppressUntil || 0) > t;
+  }
+  /** Skills cannot be cast: stun/airborne/suppress, charm/fear/taunt, suppress channel, global windup. */
+  _noCast(c, t = this.t) { return this._hardCc(c, t) || !!c._suppressing || !!c._windup; }
+  /** Summoner spells and items: usable under charm / fear / taunt / silence / disarm / blind, never under stun / airborne / suppress. */
+  _noSpell(c, t = this.t) { return c.stunnedUntil > t || this._ccLocked(c, t); }
+  _orderLocked(c, t = this.t) { return !!c && (this._ccLocked(c, t) || (c.charmUntil || 0) > t || (c.fearUntil || 0) > t || (c.tauntUntil || 0) > t); }
+  _isTargetable(e) { return !(e && e.champ && (e._untargetUntil || 0) > this.t); }
+
+  /** A CC ended early (cleanse / src_dead / cancel / revive / teleport). */
+  _ccBreak(e, key, why) {
+    this.emit('fx', { k: 'ccBreak', id: e.id, type: key, why });
+  }
+  /** Cleanse: the old list plus every v6.1 type whose CC_TYPES entry has cleanse:true (airborne / suppress never). */
+  _cleanse(e) {
+    e.stunnedUntil = 0; e.rootedUntil = 0; e.slowUntil = 0; e.slowPct = 0; e.silencedUntil = 0; e._dispUntil = 0;
+    for (const k of CC_KEYS) {
+      if (!CC_TYPES[k].cleanse || !((e[CC_FIELD[k]] || 0) > this.t)) continue;
+      e[CC_FIELD[k]] = 0; this._ccBreak(e, k, 'cleanse');
+    }
+  }
+  /** Hard CC cancels recall, hold, tether and channels (taunt only recall + hold). */
+  _ccInterrupt(e, key) {
+    this._cancelRecall(e); this._holdEnd(e);
+    if (key === 'taunt') return;
+    if (e._tether) this._tetherEnd(e);
+    if (e._reload) this._reloadEnd(e, false);
+    e._windup = null;
+  }
+
+  /**
+   * Apply one v6.1 CC (`key` = spec key) from `src` to `e` through the 3.2 pipeline. Returns the applied ms (0 = ignored / blocked).
+   * Spell shield is consumed by the caller's hit path (it blocks the whole hit and emits ccBlock there).
+   */
+  _ccApply(src, e, key, spec) {
+    const t = this.t, ty = CC_TYPES[key];
+    if (!e || !ty || !spec || isStruct(e) || R.EPICS[e.kind] || e.kind === 'obj' || e.kind === 'pet' || !this._alive(e)) return 0; // 1. immunity
+    if (!e.champ && e.kind !== 'dummy') return 0; // minions / camps ignore CC offline (same as stun / slow here)
+    const x = Math.round(e.x), y = Math.round(e.y);
+    if (e.champ && ((e._stasisUntil || 0) > t || (e._untargetUntil || 0) > t)) return 0; // 2. stasis / untargetable
+    if ((key === 'charm' || key === 'fear' || key === 'taunt' || key === 'suppress') && !src) return 0;
+    if (key === 'suppress' && !src.champ) return 0;
+    const block = (why) => { this.emit('fx', { k: 'ccBlock', id: e.id, type: key, why, x, y }); return 0; };
+    let ms = spec.ms;
+    if (ty.hard && e.champ) { // 4./5. immunity window + diminishing returns
+      if ((e._ccImmuneUntil || 0) > t) return block('immune');
+      const d = R.applyHardCcDuration(e, spec.ms, t);
+      if (d <= 0) return block('immune');
+      ms = key === 'suppress' ? Math.max(d, spec.ms * CCT.SUPPRESS_MIN_FRAC) : d;
+    }
+    ms = Math.round(Math.min(CCT.MAX_MS[key], ms));
+    if (key === 'charm' || key === 'fear' || key === 'taunt') { // they replace one another: the latest wins
+      for (const o of ['charm', 'fear', 'taunt']) if (o !== key) e[CC_FIELD[o]] = 0;
+      e[CC_FIELD[key]] = t + ms;
+    } else e[CC_FIELD[key]] = Math.max(e[CC_FIELD[key]] || 0, t + ms);
+    (e._ccSrc ||= {})[key] = src ? src.id : '';
+    if (key === 'fear') { e._fearFrom = src ? { x: src.x, y: src.y } : { x: e.x - 1, y: e.y }; e._fearDir = null; }
+    if (e.champ) {
+      if (ty.hard) this._ccInterrupt(e, key);
+      if (key !== 'taunt' && ty.hard) { e._order = null; e._nav = null; e.targetId = ''; }
+    }
+    this.emit('fx', { k: 'cc', id: e.id, type: key, ms, sid: src ? src.id : '', x, y });
+    return ms;
+  }
+  /** All v6.1 CC keys of `sk` on `e` (skills, objects, pins). `block` = the hit was absorbed by a spell shield. */
+  _ccApplyAll(src, sk, e, block = false) {
+    for (const k of CC_KEYS) {
+      if (!sk[k] || (k === 'suppress' && sk.suppress.strikeAtEnd)) continue; // strikeAtEnd suppress is a channel (see _suppressCast)
+      if (block) this.emit('fx', { k: 'ccBlock', id: e.id, type: k, why: 'shield', x: Math.round(e.x), y: Math.round(e.y) });
+      else this._ccApply(src, e, k, sk[k]);
+    }
+  }
+
+  // ── suppress channel (Zero R, 3.4) ──
+  /** Start the channel on `e` (blink-behind already done). `strike()` runs at the end unless cancelled. Returns true when the channel started. */
+  _suppressCast(c, e, sk, slotKey, strike) {
+    const sp = sk.suppress, t = this.t;
+    if (e.champ && (e._spellShieldUntil || 0) > t) { // a blocked suppress fizzles: mana spent, no channel
+      e._spellShieldUntil = 0;
+      this.emit('fx', { k: 'hit', id: e.id, color: 0xffffff });
+      this.emit('fx', { k: 'ccBlock', id: e.id, type: 'suppress', why: 'shield', x: Math.round(e.x), y: Math.round(e.y) });
+      return false;
+    }
+    const ms = this._ccApply(c, e, 'suppress', sp);
+    if (!ms) return false;
+    this._cancelRecall(c); this._holdEnd(c); c._order = null; c._nav = null;
+    c._suppressing = { tid: e.id, until: t + ms, breakDist: sp.breakDist || 420, cancelCdPct: sp.cancelCdPct ?? 0.5, key: slotKey, strike };
+    this.emit('fx', { k: 'suppress', sid: c.id, tid: e.id, ms });
+    return true;
+  }
+  /** End the channel. why 'done' runs the strike, 'cancel' refunds `cancelCdPct` of the remaining cooldown. */
+  _suppressEnd(c, why) {
+    const sp = c._suppressing; if (!sp) return;
+    c._suppressing = null;
+    const e = this._ent(sp.tid);
+    if (e) e.suppressUntil = 0;
+    this.emit('fx', { k: 'suppressEnd', tid: sp.tid, why });
+    if (why === 'done') { if (e && this._alive(e)) sp.strike(e); return; }
+    if (e) this._ccBreak(e, 'suppress', 'cancel');
+    c[sp.key] = this.t + Math.max(0, ((c[sp.key] || 0) - this.t)) * sp.cancelCdPct;
+  }
+  _suppressTick(c, t) {
+    const sp = c._suppressing; if (!sp) return;
+    const e = this._ent(sp.tid);
+    if (this._hardCc(c, t) || !e || !this._alive(e) || (e.suppressUntil || 0) <= t && t < sp.until
+      || dist(c, e) > sp.breakDist || (e.champ && (e._untargetUntil || 0) > t)) this._suppressEnd(c, 'cancel');
+    else if (t >= sp.until) this._suppressEnd(c, 'done');
+  }
+  /** Anyone channelling a suppress on `e` loses it (rewind teleport, revive). */
+  _suppressBroken(e, why) {
+    if (!((e.suppressUntil || 0) > this.t)) return;
+    this._ccBreak(e, 'suppress', why);
+    this.state.champions.forEach((c) => { if (c._suppressing?.tid === e.id) this._suppressEnd(c, 'cancel'); });
+    e.suppressUntil = 0;
+  }
+
+  // ── untarget / revive guard ──
+  _untargetFor(c, ms) {
+    const dur = Math.min(CCT.MAX_MS.untarget, ms);
+    c._untargetUntil = Math.max(c._untargetUntil || 0, this.t + dur);
+    this.emit('fx', { k: 'untarget', id: c.id, ms: dur, x: Math.round(c.x), y: Math.round(c.y) });
+    return dur;
+  }
+  /** A lethal hit on an armed champion becomes a reboot (works against execute and true damage). */
+  _reviveTrigger(e) {
+    const cfg = e._reviveCfg || {}, t = this.t;
+    e._reviveUntil = 0; e._reviveCfg = null;
+    e.hp = Math.max(1, Math.ceil(e.maxHp * (cfg.hpPct || 0.3)));
+    this._suppressBroken(e, 'revive');
+    for (const k of CC_KEYS) if ((e[CC_FIELD[k]] || 0) > t) { e[CC_FIELD[k]] = 0; this._ccBreak(e, k, 'revive'); }
+    e.stunnedUntil = 0; e.rootedUntil = 0; e.slowUntil = 0; e.slowPct = 0; e.silencedUntil = 0; e._dispUntil = 0;
+    if (e._suppressing) this._suppressEnd(e, 'cancel');
+    this._untargetFor(e, cfg.untargetMs || 1000);
+    this._ccBreak(e, 'revive', 'revive');
+    this.emit('fx', { k: 'revive', id: e.id, x: Math.round(e.x), y: Math.round(e.y), color: CC_TYPES.revive.color });
+  }
+
+  /**
+   * Per-tick forced states. Returns 'done' (the tick is consumed: locked or forced walk), 'forced' (taunt: the normal
+   * attack flow runs but the bot AI must not think) or ''. Priority: suppress > airborne > stun > charm | fear | taunt > root.
+   */
+  _ccMode(c, t, dt) {
+    if (this._ccLocked(c, t)) return 'done';
+    if (c.stunnedUntil > t) return '';
+    const srcOf = (k) => this.state.champions.get(c._ccSrc?.[k]);
+    const speed = c.ms * (c.slowUntil > t ? 1 - c.slowPct / 100 : 1), rooted = c.rootedUntil > t;
+    const walk = (dx, dy, sp) => {
+      if (rooted) return;
+      const d = Math.hypot(dx, dy) || 1, goal = this.world.clampToMap(c.x + (dx / d) * sp * dt, c.y + (dy / d) * sp * dt);
+      let end = this.nav.clipMove(c.x, c.y, goal.x, goal.y, CHAMP_RADIUS);
+      const co = this._clipObjs(c.x, c.y, end.x, end.y, CHAMP_RADIUS); if (co.hit) end = { x: co.x, y: co.y };
+      c.x = end.x; c.y = end.y; c._mvx = dx / d; c._mvy = dy / d; this._placePet(c);
+    };
+    if ((c.charmUntil || 0) > t) {
+      const s = srcOf('charm');
+      if (!s || s.dead) { c.charmUntil = 0; this._ccBreak(c, 'charm', 'src_dead'); return ''; }
+      if (dist(c, s) > CCT.CHARM_STOP_PX) walk(s.x - c.x, s.y - c.y, speed);
+      return 'done';
+    }
+    if ((c.fearUntil || 0) > t) {
+      const s = srcOf('fear'), from = s && !s.dead ? s : c._fearFrom || { x: c.x - 1, y: c.y };
+      if (!c._fearDir || t >= c._fearDir.next) {
+        const jit = ((Math.random() * 2 - 1) * CCT.FEAR_JITTER_DEG * Math.PI) / 180;
+        c._fearDir = { a: Math.atan2(c.y - from.y, c.x - from.x) + jit, next: t + CCT.FEAR_REROLL_MS };
+      }
+      walk(Math.cos(c._fearDir.a), Math.sin(c._fearDir.a), speed * CCT.FEAR_MS_MUL);
+      return 'done';
+    }
+    if ((c.tauntUntil || 0) > t) {
+      const s = srcOf('taunt');
+      if (!s || s.dead) { c.tauntUntil = 0; this._ccBreak(c, 'taunt', 'src_dead'); return ''; }
+      if (!this._isTargetable(s) || this._hiddenFrom(s, c.team)) { c.tauntUntil = 0; this._ccBreak(c, 'taunt', 'cancel'); return ''; }
+      c._order = { type: 'attack', id: s.id }; c.targetId = s.id; // may basic attack ONLY the source
+      return 'forced';
+    }
+    return '';
+  }
+
+  /** Death / champion switch: end every channel and personal object without refunds. */
+  _kitDown(c) {
+    this._holdEnd(c);
+    if (c._tether) this._tetherEnd(c);
+    if (c._link) this._linkEnd(c._link);
+    if (c._linkOwn) this._linkEnd(c._linkOwn);
+    if (c._shadow) this._shadowEnd(c);
+    if (c._tbox) { c._tbox = null; this.emit('fx', { k: 'timeboxEnd', sid: c.id, refund: [] }); }
+    if (c._pkg) this._pkgEnd(c);
+    if (c._reload) this._reloadEnd(c, false);
+    if (c._suppressing) this._suppressEnd(c, 'cancel');
+    this._ccClear(c); // v6.1: untarget / revive / every CC timer cleared on death or switch
+    c._echo = null; c._hist = [];
+  }
+
+  /** A slot buff: the buff object is kept so stance / serve specs resolve correctly in _recalc. */
+  _setBuff(a, slot, buff, ms) { a._buffs[slot] = this.t + ms; (a._bx ||= {})[slot] = buff; this._recalc(a, false); }
+  /** A buff with no slot tag (ally buffs from tether / pins / deliver). */
+  _setExt(a, key, buff, ms) { (a._ext ||= {})[key] = { until: this.t + ms, buff }; this._recalc(a, false); }
+
+  _pkgTip(c) {
+    const pk = CHAMPIONS[c.champ].kit?.pkg;
+    return pk && c._pkg ? Math.max(pk.tipMin, Math.min(1, c._pkg.dist / pk.tipDist)) : 0;
+  }
+  _pkgEnd(c) {
+    c._pkg = null; this._recalc(c, false);
+    this.emit('fx', { k: 'pkg', sid: c.id, on: false, tip: 0 });
+  }
+
+  /** Per-tick state of every champion: resources, history, hold, tether, link, timebox, reload, package, mix, shadow, echo. */
+  _kitTick(c, t, dt) {
+    const def = CHAMPIONS[c.champ], kit = def.kit || {}, rs = kit.res;
+    if (rs && rs.gainPerSec > 0) c._res[rs.key] = Math.min(rs.max, (c._res[rs.key] ?? 0) + rs.gainPerSec * dt);
+    if (t >= c._histAt) {
+      c._histAt = t + K.HIST_SAMPLE_MS;
+      c._hist.push({ t, x: c.x, y: c.y, hp: c.hp });
+      const cut = t - K.HIST_KEEP_MS;
+      while (c._hist.length > 1 && c._hist[0].t < cut) c._hist.shift();
+    }
+    const h = c._hold;
+    if (h) {
+      if (c.stunnedUntil > t || c._dispUntil > t) this._holdEnd(c);
+      else if (t >= h.t0 + h.maxMs + K.HOLD_GRACE_MS) { this._cast(c, { slot: h.slot, ph: 'up', x: h.aim.x, y: h.aim.y }); if (c._hold === h) this._holdEnd(c); }
+      else { c.slowUntil = Math.max(c.slowUntil || 0, t + 150); c.slowPct = Math.max(c.slowPct || 0, Math.round(h.slow * 100)); } // self slow, refreshed every tick
+    }
+    const th = c._tether;
+    if (th) {
+      const to = this.state.champions.get(th.to), tp = th.spec.tether;
+      if (t >= th.until || !to || to.dead || (to._stasisUntil || 0) > t || c.stunnedUntil > t || c._dispUntil > t || dist(c, to) > tp.breakRange) this._tetherEnd(c);
+      else {
+        while (t >= th.next) {
+          th.next += Math.max(K.TETHER_MIN_TICK_MS, tp.tickMs);
+          to.hp = Math.min(to.maxHp, to.hp + th.amount * this._healMul(to));
+          c.hp = Math.min(c.maxHp, c.hp + th.amount * (tp.selfPct || 0) * this._healMul(c));
+        }
+        c.slowUntil = Math.max(c.slowUntil || 0, t + 200); c.slowPct = Math.max(c.slowPct || 0, Math.round((tp.casterSlow || 0) * 100));
+        if (tp.allyMsPct) this._setExt(to, `tether_${c.id}`, { msPct: tp.allyMsPct }, 250);
+      }
+    }
+    const lk = c._link;
+    if (lk && lk.a === c.id) { // one end owns the check
+      const a = c, b = this.state.champions.get(lk.b);
+      if (t >= lk.until || !b || b.dead || a._link !== lk || b._link !== lk || dist(a, b) > lk.breakRange) this._linkEnd(lk);
+    }
+    const tb = c._tbox;
+    if (tb && t >= tb.until) {
+      const refund = [];
+      for (const [sl, len] of Object.entries(tb.spent)) {
+        const k2 = `cd${sl.toUpperCase()}`;
+        c[k2] = Math.max(t, (c[k2] || 0) - tb.refundPct * len);
+        refund.push(sl);
+      }
+      c._tbox = null;
+      this.emit('fx', { k: 'timeboxEnd', sid: c.id, refund });
+    }
+    const rl = c._reload;
+    if (rl) {
+      if (c.stunnedUntil > t) this._reloadEnd(c, false); // stun cancels, ammo unchanged
+      else if (t >= rl.until) { c._res.ammo = rs?.max ?? 6; this._reloadEnd(c, false); }
+    }
+    const pk = c._pkg;
+    if (pk) {
+      const mv = Math.hypot(c.x - pk.lx, c.y - pk.ly);
+      if (mv <= 700) pk.dist += mv; // single steps over 700 px are teleports
+      pk.lx = c.x; pk.ly = c.y;
+      if (t - pk.since >= (kit.pkg?.maxCarryMs || 25000)) this._pkgEnd(c);
+    }
+    if (c._mix.length && kit.mix && t - c._mixAt >= kit.mix.expireMs) c._mix = [];
+    if (c._shadow && t >= c._shadow.until) this._shadowEnd(c);
+    if (c._echo && t >= c._echo.until) c._echo = null;
+    this._suppressTick(c, t);
+    const wu = c._windup; // global shot windup: moveSlow 0.5, no other cast; a hard CC cancels the shot (mana already spent)
+    if (wu) {
+      if (this._hardCc(c, t) || c._suppressing) c._windup = null;
+      else { c.slowUntil = Math.max(c.slowUntil || 0, t + 150); c.slowPct = Math.max(c.slowPct || 0, Math.round((wu.moveSlow || 0.5) * 100)); }
+    }
+  }
+
+  /** `kit:<key>:<value>` tags in the fixed contract order (3.2). */
+  _kitTags(c, t) {
+    const def = CHAMPIONS[c.champ], kit = def.kit || {}, out = [];
+    if (kit.stance) out.push(`kit:stance:${c._stance}`);
+    if (kit.res) out.push(`kit:${kit.res.key}:${Math.floor((c._res[kit.res.key] ?? 0) + 1e-6)}`);
+    if (kit.mix && c._mix.length) out.push(`kit:mix:${c._mix.join('')}`);
+    if (c._pkg) out.push(`kit:pkg:${Math.round((this._pkgTip(c) * 100) / 5) * 5}`);
+    if (c._shadow) out.push('kit:shadow:1');
+    if (c._echo) out.push('kit:echo:1');
+    if (c._tbox) out.push('kit:tbox:1');
+    if (c._tether) out.push('kit:tether:1');
+    if (c._link) out.push(`kit:link:${c._link.a === c.id ? c._link.b : c._link.a}`);
+    if (c._reload) out.push('kit:reload:1');
+    let nt = 0, np = 0;
+    for (const o of this._objs) { if (o.owner !== c.id) continue; if (o.kind === 'turret') nt++; else if (o.kind === 'pin') np++; }
+    if (nt) out.push(`kit:turrets:${nt}`);
+    if (np) out.push(`kit:pins:${np}`);
+    return out;
+  }
+
+  /** Reasons a cast must be denied BEFORE anything is spent (contract 3.1 / 4.x). '' = allowed. */
+  _kitDeny(c, sk, m) {
+    const t = this.t, sp = sk.spend;
+    if (sp && Math.floor(c._res?.[sp.res] ?? 0) < sp.min) return 'needRes';
+    switch (sk.type) {
+      case 'shadow': if (sk.shadow?.mode === 'swap' && !(c._shadow && c._shadow.until > t)) return 'noShadow'; break;
+      case 'resolve': if (!this._objs.some((o) => o.owner === c.id && o.kind === 'pin' && o.group === sk.resolve.group)) return 'noPins'; break;
+      case 'objcmd': if (!this._objs.some((o) => o.owner === c.id && o.kind === 'turret')) return 'noTurrets'; break;
+      case 'reload': { const rs = CHAMPIONS[c.champ].kit?.res; if (rs && Math.floor(c._res[rs.key] ?? 0) >= rs.max) return 'ammoFull'; break; }
+      case 'pickup': if (c._pkg) return 'carrying'; break;
+      case 'deliver': if (!c._pkg || !this._deliverTarget(c, sk, m)) return 'noPackage'; break;
+      case 'tether': if (!this._allyFor(c, sk, m, false)) return 'noAlly'; break;
+      case 'link': if (!this._linkPair(c, sk, m)) return 'noAlly'; break;
+      default: break;
+    }
+    return '';
+  }
+
+  // ── hold ──
+  _holdStart(c, slot, sk, m) {
+    this._holdEnd(c);
+    const h = sk.hold;
+    c._hold = { slot, t0: this.t, aim: { x: m.x, y: m.y }, minMs: h.minMs, maxMs: h.maxMs, slow: h.moveSlow || 0 };
+    this._cancelRecall(c);
+    this.emit('fx', { k: 'charge', sid: c.id, slot, minMs: h.minMs, maxMs: h.maxMs, color: sk.color });
+  }
+  _holdEnd(c) {
+    if (!c?._hold) return;
+    c._hold = null;
+    this.emit('fx', { k: 'chargeEnd', sid: c.id });
+  }
+  /** hold.scale arrays are multipliers at charge 0 and 1 (lerp by f). */
+  _holdScale(sk, f) {
+    const sc = sk.hold?.scale || {}, lerp = (a) => a[0] + (a[1] - a[0]) * f, o = { ...sk };
+    if (sc.dmg && sk.dmg) o.dmg = scaleAmt(sk.dmg, lerp(sc.dmg));
+    if (sc.range && sk.range) o.range = sk.range * lerp(sc.range);
+    if (sc.width && sk.width) o.width = sk.width * lerp(sc.width);
+    if (sc.radius && sk.radius) o.radius = sk.radius * lerp(sc.radius);
+    if (sc.knockback && sk.knockback) o.knockback = { ...sk.knockback, dist: sk.knockback.dist * lerp(sc.knockback) };
+    return o;
+  }
+  /** spend.per effects (additive per unit u). Shield per unit is applied after the cast (needs amt()). */
+  _spendScale(sk, spend, u) {
+    const per = spend.per || {}, o = { ...sk };
+    if (per.dmg && sk.dmg) o.dmg = scaleAmt(sk.dmg, 1 + per.dmg * u);
+    if (per.radius && sk.radius) o.radius = sk.radius * (1 + per.radius * u);
+    if (per.radius && sk.obj?.kind === 'barrier') o.obj = { ...sk.obj, len: sk.obj.len * (1 + per.radius * u) }; // v6.1: per.radius scales the barrier length
+    if (per.range && sk.range) o.range = sk.range * (1 + per.range * u);
+    if (per.rootMs) o.root = { ...(sk.root || {}), ms: (sk.root?.ms || 0) + per.rootMs * u };
+    if (per.stunMs) o.stun = { ...(sk.stun || {}), ms: (sk.stun?.ms || 0) + per.stunMs * u };
+    if (per.slowPct) o.slow = { ms: 1500, ...(sk.slow || {}), pct: Math.min(0.9, (sk.slow?.pct || 0) + per.slowPct * u) };
+    if (per.count) o.count = Math.max(1, sk.count | 0 || 1) + per.count * u;
+    return o;
+  }
+
+  // ── echo ──
+  _echoQueue(c, slot, m, ox, oy, ec) {
+    const ax = Number.isFinite(m.x) ? m.x : ox + 100, ay = Number.isFinite(m.y) ? m.y : oy;
+    const dx = ax - ox, dy = ay - oy, id = c.id;
+    this._timers.push([this.t + ec.delayMs, () => {
+      const cc = this.state.champions.get(id);
+      if (!cc || cc.dead || this.state.phase !== 'playing' || cc.stunnedUntil > this.t || (cc.silencedUntil || 0) > this.t) return;
+      this.emit('fx', { k: 'echoFire', sid: id, slot });
+      this._cast(cc, { slot, x: cc.x + dx, y: cc.y + dy, id: m.id, _echo: true, echoMul: ec.mulPct }); // same direction + distance from the NEW position
+    }]);
+  }
+
+  // ── reload (Swipe E) ──
+  _reloadStart(ctx) {
+    const { c, t, fx, slot, aimX, aimY } = ctx, sk = ctx.getSk(), rl = sk.reload, ms = rl.ms;
+    c._reload = { until: t + ms, from: t + rl.perfect[0] * ms, to: t + rl.perfect[1] * ms, lock: !!rl.lockCasts, jammed: false, spec: rl, slot };
+    const dx = aimX - c.x, dy = aimY - c.y, d = Math.hypot(dx, dy) || 1;
+    const goal = this.world.clampToMap(c.x - (dx / d) * rl.step, c.y - (dy / d) * rl.step); // step back, stopped by walls
+    let end = this.nav.clipMove(c.x, c.y, goal.x, goal.y, CHAMP_RADIUS);
+    const co = this._clipObjs(c.x, c.y, end.x, end.y, CHAMP_RADIUS); if (co.hit) end = co;
+    c.x = end.x; c.y = end.y; c._nav = null;
+    fx({ k: 'reload', sid: c.id, ms, from: Math.round(rl.perfect[0] * ms), to: Math.round(rl.perfect[1] * ms) });
+  }
+  /** Second press while reloading: inside the gold window = instant reload + bonus, outside = jam (+jamMs once). */
+  _reloadPress(c) {
+    const r = c._reload, t = this.t;
+    if (!r || r.jammed) return;
+    if (t >= r.from && t <= r.to) {
+      c._res.ammo = CHAMPIONS[c.champ].kit?.res?.max ?? 6;
+      const pb = r.spec.perfectBonus;
+      if (pb?.buff) this._setBuff(c, r.slot, pb.buff, pb.ms);
+      this._reloadEnd(c, true);
+    } else { r.jammed = true; r.until += r.spec.jamMs; }
+  }
+  _reloadEnd(c, perfect) {
+    const r = c._reload; if (!r) return;
+    c._reload = null;
+    this.emit('fx', { k: 'reloadEnd', sid: c.id, perfect: !!perfect, jam: !!r.jammed });
+  }
+
+  // ── tether / link ──
+  _tetherEnd(c) {
+    const th = c._tether; if (!th) return;
+    c._tether = null;
+    this.emit('fx', { k: 'tetherEnd', tid: th.tid });
+  }
+  _linkEnd(lk) {
+    if (!lk || lk.ended) return;
+    lk.ended = true;
+    for (const id of [lk.a, lk.b]) { const e = this.state.champions.get(id); if (e && e._link === lk) e._link = null; }
+    const ow = this.state.champions.get(lk.owner); if (ow && ow._linkOwn === lk) ow._linkOwn = null;
+    this.emit('fx', { k: 'linkEnd', lid: lk.lid });
+  }
+  /** Ally champion for targets:'ally' skills: `id` if valid, else the ally nearest the aim within range (null = none). */
+  _allyFor(c, sk, m, allowSelf) {
+    const rng = sk.range || 600, st = this.state;
+    const ok = (a, slack) => !!a && !a.dead && a.team === c.team && (allowSelf || a.id !== c.id) && dist(a, c) <= rng + slack;
+    const byId = m.id ? st.champions.get(m.id) : null;
+    if (ok(byId, 40)) return byId;
+    const ax = Number.isFinite(m.x) ? m.x : c.x, ay = Number.isFinite(m.y) ? m.y : c.y;
+    let best = null, bd = Infinity;
+    st.champions.forEach((a) => { if (!ok(a, 0)) return; const d = Math.hypot(a.x - ax, a.y - ay); if (d < bd) { bd = d; best = a; } });
+    return best;
+  }
+  /** Hira link: a = the ally (the caster if none), b = nearest OTHER living allied champion to a within pairRange. */
+  _linkPair(c, sk, m) {
+    const a = this._allyFor(c, sk, m, true) || c;
+    let b = null, bd = sk.link.pairRange;
+    this.state.champions.forEach((o) => { if (o.id === a.id || o.dead || o.team !== c.team) return; const d = dist(a, o); if (d <= bd) { bd = d; b = o; } });
+    return b ? { a, b } : null;
+  }
+
+  // ── shadow (Zero) ──
+  _shadowSet(c, x, y, ms) {
+    c._shadow = { x, y, until: this.t + ms };
+    this.emit('fx', { k: 'shadow', sid: c.id, x: Math.round(x), y: Math.round(y), ms });
+  }
+  _shadowEnd(c) {
+    c._shadow = null;
+    this.emit('fx', { k: 'shadowEnd', sid: c.id });
+  }
+
+  // ── Rush delivery ──
+  _deliverTarget(c, sk, m) {
+    const a = this._allyFor(c, sk, m, false);
+    if (a) return { ally: a, id: a.id, x: a.x, y: a.y };
+    if (!sk.toStruct) return null;
+    const ax = Number.isFinite(m.x) ? m.x : c.x, ay = Number.isFinite(m.y) ? m.y : c.y;
+    let best = null, bd = (sk.range || 700) + 40;
+    this.state.structures.forEach((s) => { if (s.kind !== 'tower' || !s.alive || s.team !== c.team) return; const d = Math.hypot(s.x - ax, s.y - ay); if (d <= bd) { bd = d; best = s; } });
+    return best ? { tower: best, id: best.id, x: best.x, y: best.y } : null;
+  }
+  _deliver(ctx) {
+    const { c, m, t, slot, key, amt, fx } = ctx, sk = ctx.getSk(), dp = sk.deliver, tg = this._deliverTarget(c, sk, m);
+    const refund = () => { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); };
+    if (!tg || !c._pkg) return refund();
+    const x0 = c.x, y0 = c.y, rad = tg.ally ? CHAMP_RADIUS * 2 : STRUCTURE_RADIUS.tower + CHAMP_RADIUS;
+    const d = dist(c, tg) || 1, reach = Math.min(sk.range, Math.max(0, d - rad));
+    let end = this.nav.clipMove(x0, y0, x0 + ((tg.x - x0) / d) * reach, y0 + ((tg.y - y0) / d) * reach, CHAMP_RADIUS);
+    const co = this._clipObjs(x0, y0, end.x, end.y, CHAMP_RADIUS); if (co.hit) end = co;
+    if (dist(end, tg) > rad + 140) return refund(); // walls stopped the rush too far from the target
+    c.x = end.x; c.y = end.y; c._order = null; c._nav = null;
+    const tip = this._pkgTip(c), mul = c._tipMulUntil > t ? (CHAMPIONS[c.champ].skills.r?.tipMul?.mul || 1) : 1;
+    const eff = Math.min(1, tip * mul), s = 0.4 + 0.6 * eff;
+    fx({ k: 'dash', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color });
+    if (tg.ally) {
+      const a = tg.ally;
+      if (dp.shield) { a.shield = Math.round((a.shield || 0) + amt(dp.shield) * s); a._shieldUntil = Math.max(a._shieldUntil || 0, t + dp.buffMs); }
+      if (dp.buff) this._setExt(a, `deliver_${c.id}`, dp.buff, dp.buffMs);
+    } else tg.tower.hp = Math.min(tg.tower.maxHp, tg.tower.hp + dp.structHealPct * tg.tower.maxHp * s);
+    const gold = Math.round(dp.goldBase + dp.goldPerTip * eff);
+    c.gold += gold;
+    if (c.id === this.localId) this.emit('gold', { n: gold, x: Math.round(c.x), y: Math.round(c.y) });
+    const msg = { k: 'deliver', sid: c.id, id: tg.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), tip: Math.round(Math.min(1, tip) * 100) };
+    if (!tg.ally) msg.struct = true;
+    fx(msg);
+    this._pkgEnd(c);
+  }
+
+  // ── Brew serve ──
+  _serve(ctx, dispatch) {
+    const { c, fx, towardRange } = ctx, sk = ctx.getSk(), sv = sk.serve, mix = c._mix || [], size = mix.length;
+    const cnt = { S: 0, M: 0, G: 0 };
+    for (const l of mix) cnt[l]++;
+    let outcome = 'plain';
+    if (size) {
+      const mx = Math.max(cnt.S, cnt.M, cnt.G), tops = ['S', 'M', 'G'].filter((l) => cnt[l] === mx);
+      outcome = tops.length === 1 ? { S: 'shot', M: 'milk', G: 'syrup' }[tops[0]] : 'mocha';
+    }
+    const o = sv.outcomes[outcome], mul = sv.sizeMul[Math.max(0, size - 1)] ?? 1;
+    const spec = { ...o, mana: sk.mana, cd: sk.cd, icon: sk.icon, dmg: scaleAmt(o.dmg, mul), heal: scaleAmt(o.heal, mul), shield: scaleAmt(o.shield, mul) };
+    for (const k of ['dmg', 'heal', 'shield']) if (!spec[k]) delete spec[k];
+    const p = o.type === 'allies' ? { x: c.x, y: c.y } : towardRange(o.range || sv.range);
+    c._mix = [];
+    fx({ k: 'serve', sid: c.id, mix: mix.join(''), outcome, x: Math.round(p.x), y: Math.round(p.y), r: o.radius, color: o.color, fx: o.fx });
+    ctx.setSk(spec);
+    dispatch(); // the outcome runs through the normal circle / zone / allies branch
+  }
+
+  // ── Lint resolve ──
+  _resolve(ctx) {
+    const { c } = ctx, sk = ctx.getSk(), rp = sk.resolve;
+    for (const o of this._objs.filter((x) => x.owner === c.id && x.kind === 'pin' && x.group === rp.group)) {
+      this.emit('fx', { k: 'pinBoom', oid: o.oid, r: Math.round(o.r * rp.radiusMul) });
+      this._pinTrigger(o, { radiusMul: rp.radiusMul, dmgMul: rp.dmgMul, detonate: rp.detonate });
+      this._objRemove(o, true);
+    }
+  }
+
+  // ── Volt turret commands ──
+  _objcmd(ctx) {
+    const { c, t, slot, key, fx } = ctx, sk = ctx.getSk(), oc = sk.objcmd;
+    const tur = this._objs.filter((o) => o.owner === c.id && o.kind === 'turret');
+    if (!tur.length) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); return; }
+    for (const o of tur) {
+      if (oc.cmd === 'overclock') {
+        o.ocUntil = t + oc.ms; o.atkMul = oc.atkMul; o.heatMul = oc.heatMul;
+        fx({ k: 'circle', sid: c.id, slot, x: Math.round(o.x), y: Math.round(o.y), r: 90, delay: 0, color: sk.color });
+      } else if (oc.cmd === 'vent') {
+        o.heat = 0; this._turretHeatFx(o);
+        fx({ k: 'circle', sid: c.id, slot, x: Math.round(o.x), y: Math.round(o.y), r: oc.radius, delay: 0, color: sk.color, ...(oc.inner ? { inner: oc.inner } : {}) });
+        for (const e of this._foesOf(o.team, (e) => dist(e, o) <= oc.radius + this._radius(e) && dist(e, o) >= (oc.inner || 0))) { // donut: the centre is safe
+          if (e.champ) { e.slowUntil = Math.max(e.slowUntil || 0, t + oc.slow.ms); e.slowPct = Math.max(e.slowPct || 0, Math.round(oc.slow.pct * 100)); }
+        }
+      } else if (oc.cmd === 'detonate') this._turretExplode(o, 1 + o.heat * (oc.heatMulPerPct || 0));
+    }
+    if (sk.buff) this._setBuff(c, slot, sk.buff, sk.duration || 3000);
+    fx({ k: 'buff', sid: c.id, slot, color: sk.color });
+  }
+
+  // ── Pager / Pixel rewind ──
+  _rewind(ctx) {
+    const { c, t, slot, fx } = ctx, sk = ctx.getSk(), rw = sk.rewind, targets = [c];
+    if (rw.allies) this.state.champions.forEach((a) => { if (a !== c && !a.dead && a.team === c.team && dist(a, c) <= rw.radius) targets.push(a); });
+    const list = [];
+    for (const e of targets) {
+      const hist = e._hist || [];
+      if (!hist.length) continue;
+      let s = hist[0];
+      for (const smp of hist) if (smp.t <= t - rw.lookbackMs) s = smp; // newest sample at least lookbackMs old, else the oldest
+      const x0 = e.x, y0 = e.y;
+      if (rw.cleanse) this._cleanse(e); // v6.1: also charm / fear / taunt / disarm / blind (airborne + suppress never)
+      if (rw.pos) { this._suppressBroken(e, 'teleport'); const p = this.nav.nearestFree(s.x, s.y, CHAMP_RADIUS); e.x = p.x; e.y = p.y; e._order = null; e._nav = null; this._cancelRecall(e); this._placePet(e); }
+      if (rw.hp) e.hp = Math.min(e.maxHp, Math.max(e.hp, s.hp));
+      list.push({ id: e.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(e.x), y1: Math.round(e.y) });
+    }
+    fx({ k: 'rewind', sid: c.id, slot, r: rw.radius, list: list.slice(0, 6), color: sk.color });
+  }
+
+  // ── Tester drone ──
+  _summon(ctx) {
+    const { c, t, towardRange } = ctx, sk = ctx.getSk(), sm = sk.summon;
+    if (c._droneId) { const old = this.state.units.get(c._droneId); if (old) { old.alive = false; this.state.units.delete(old.id); } }
+    const tr = towardRange(sk.range), id = this._addUnit({ x: c.x, y: c.y, team: c.team, kind: 'pet', hp: 1, owner: c.id, spec: { ...CHAMPIONS[c.champ].pet } });
+    const u = this.state.units.get(id);
+    u._drone = { tx: tr.x, ty: tr.y, speed: sm.speed, until: t + sm.ms, vision: sm.vision, mark: sm.mark, markAt: 0 };
+    c._droneId = id;
+  }
+  _droneTick(u, dt) {
+    const d = u._drone, t = this.t, ow = this.state.champions.get(u.owner);
+    if (t >= d.until) { u.alive = false; this.state.units.delete(u.id); if (ow && ow._droneId === u.id) ow._droneId = null; return; }
+    this._step(u, { x: d.tx, y: d.ty }, d.speed, dt); // flies in a straight line over walls
+    if (t >= d.markAt && d.mark) {
+      d.markAt = t + 500;
+      for (const e of this.state.champions.values()) {
+        if (e.dead || e.team === u.team || dist(e, u) > d.vision) continue;
+        (e._marks ||= {})[d.mark.tag] = { n: 1, until: t + d.mark.ms };
+      }
+    }
+  }
+
+  // ───────────────────────── placed objects (walls, portals, barricades, turrets, beacons, pins) ─────────────────────────
+  /** Enemies (of `team`) that placed objects and skills may hit: champions + non-pet / non-obj / non-ward units. */
+  _foesOf(team, pred) {
+    const out = [];
+    this.state.champions.forEach((e) => { if (!e.dead && e.team !== team && this._isTargetable(e) && pred(e)) out.push(e); });
+    this.state.units.forEach((e) => { if (e.alive && e.team !== team && e.kind !== 'pet' && e.kind !== 'obj' && e.kind !== 'ward' && pred(e)) out.push(e); });
+    return out;
+  }
+  /** Register an object (caps: maxActive per champion per slot / group, MAX_OBJECTS_PER_TEAM per team, oldest dropped first). */
+  _objAdd(c, rec, maxActive) {
+    rec.oid = rec.oid || `ob_${++this._uid}`; rec.owner = c.id; rec.team = c.team; rec.born = this.t;
+    const mine = this._objs.filter((o) => o.owner === c.id && !o.isB && (rec.group ? o.group === rec.group : (o.slot === rec.slot && o.kind === rec.kind)));
+    while (mine.length >= (maxActive || 1)) this._objRemove(mine.shift(), false);
+    const team = this._objs.filter((o) => o.team === c.team && !o.isB);
+    while (team.length >= K.MAX_OBJECTS_PER_TEAM) this._objRemove(team.shift(), false);
+    this._objs.push(rec);
+    return rec;
+  }
+  _objRemove(rec, boom) {
+    const i = this._objs.indexOf(rec);
+    if (i < 0) return;
+    this._objs.splice(i, 1);
+    this.emit('fx', boom ? { k: 'objEnd', oid: rec.oid, boom: true } : { k: 'objEnd', oid: rec.oid });
+    if (rec.unit) {
+      const u = this.state.units.get(rec.oid);
+      if (u) { u.alive = false; u.hp = 0; const id = u.id; this._timers.push([this.t + 600, () => this.state.units.delete(id)]); }
+    }
+    if (rec.other) { const o2 = rec.other; rec.other = null; o2.other = null; this._objRemove(o2, false); }
+  }
+  _objDie(u, boom) {
+    const rec = this._objs.find((o) => o.oid === u.id);
+    if (rec) this._objRemove(rec, boom);
+    else { u.alive = false; u.hp = 0; }
+  }
+  _objClearOwner(id) { for (const o of [...this._objs]) if (o.owner === id) this._objRemove(o, false); }
+  _objClearAll() { for (const o of [...this._objs]) this._objRemove(o, false); }
+
+  /** An obj unit (barricade / turret): a TeamUnit kind 'obj' with HP; campId = the object kind. */
+  _objUnit(c, rec, hp, p) {
+    rec.unit = true;
+    this._objAdd(c, rec, rec.maxActive);
+    this.state.units.set(rec.oid, {
+      id: rec.oid, x: p.x, y: p.y, team: c.team, kind: 'obj', hp, maxHp: hp, alive: true, hit_seq: 0, campId: rec.kind, owner: c.id,
+      _spec: null, _path: null, _wp: 1, _atkAt: 0, _home: null, _aggro: '', _tgt: '',
+    });
+    rec.x = p.x; rec.y = p.y;
+  }
+
+  _place(ctx) {
+    const { c, m, t, slot, fx, amt, aimX, aimY, towardRange } = ctx, sk = ctx.getSk(), ob = sk.obj;
+    const base = { slot, group: ob.group, color: sk.color, sk, ob, kind: ob.kind, until: t + (ob.ms || 10000) };
+    const mapClamp = (x, y) => this.world.clampToMap(x, y);
+    const send = (rec, extra) => fx({ k: 'obj', oid: rec.oid, kind: rec.kind, sid: c.id, team: c.team, x: Math.round(rec.x), y: Math.round(rec.y), ...extra, color: sk.color });
+    switch (ob.kind) {
+      case 'wall': {
+        const d = Math.hypot(aimX - c.x, aimY - c.y) || 1, ra = Math.min(d, sk.range);
+        let A = mapClamp(c.x + ((aimX - c.x) / d) * ra, c.y + ((aimY - c.y) / d) * ra), B = null;
+        if (Number.isFinite(m.x2) && Number.isFinite(m.y2)) {
+          const bx = m.x2 - A.x, by = m.y2 - A.y, bd = Math.hypot(bx, by);
+          if (bd >= K.DRAG_MIN_PX) { const k = Math.min(bd, ob.len) / bd; B = mapClamp(A.x + bx * k, A.y + by * k); }
+        }
+        if (!B) { // tap: centered on A, perpendicular to caster-to-A, shorter default length
+          const ux = (A.x - c.x) / (Math.hypot(A.x - c.x, A.y - c.y) || 1), uy = (A.y - c.y) / (Math.hypot(A.x - c.x, A.y - c.y) || 1);
+          const half = (ob.len * K.DRAG_DEFAULT_FRAC) / 2, a0 = A;
+          A = mapClamp(a0.x + uy * half, a0.y - ux * half); B = mapClamp(a0.x - uy * half, a0.y + ux * half);
+        }
+        const rec = this._objAdd(c, { ...base, x: A.x, y: A.y, x2: B.x, y2: B.y, thick: ob.thick, rehitMs: ob.rehitMs || 700, hits: {} }, ob.maxActive);
+        send(rec, { x2: Math.round(B.x), y2: Math.round(B.y), thick: ob.thick, ms: ob.ms });
+        break;
+      }
+      case 'barrier': { // v6.1: centred on the aim (clamped to range), perpendicular to the cast direction; dmg + CC hit overlapping enemies once
+        const a = this._aimAngle(c, ctx), ux = Math.cos(a), uy = Math.sin(a), d = Math.min(Math.hypot(aimX - c.x, aimY - c.y), sk.range);
+        const c0 = mapClamp(c.x + ux * d, c.y + uy * d), ctr = this.nav.nearestFree(c0.x, c0.y, ob.thick / 2), half = ob.len / 2;
+        const A = mapClamp(ctr.x - uy * half, ctr.y + ux * half), B = mapClamp(ctr.x + uy * half, ctr.y - ux * half); // ponytail: orient 'drag' has no user in the data; perp for both
+        const rec = this._objAdd(c, { ...base, x: A.x, y: A.y, x2: B.x, y2: B.y, thick: ob.thick }, ob.maxActive || 1);
+        send(rec, { x2: Math.round(B.x), y2: Math.round(B.y), thick: ob.thick, ms: ob.ms });
+        const overlap = this._foesOf(c.team, (e) => distToSeg(e.x, e.y, rec.x, rec.y, rec.x2, rec.y2) <= ob.thick / 2 + this._radius(e)); // before the push-out
+        this._barrierPush(rec);
+        for (const e of overlap) this._objHit(c, sk, e);
+        break;
+      }
+      case 'portal': {
+        const tr = sk.range ? towardRange(sk.range) : { x: c.x, y: c.y }, p = this.nav.nearestFree(tr.x, tr.y, ob.r);
+        const rec = this._objAdd(c, { ...base, x: p.x, y: p.y, r: ob.r, until: t + (sk.recast?.ms || 6000), gapMs: ob.gapMs, filter: c._stance === 'allies' ? 'allies' : 'open', other: null }, 1);
+        c._portalA = rec;
+        send(rec, { r: ob.r, ms: (sk.recast?.ms || 6000) + ob.ms, filter: rec.filter }); // A lives until B is placed (then both live obj.ms)
+        break;
+      }
+      case 'barricade': case 'turret': {
+        const tr = sk.range ? towardRange(sk.range) : { x: c.x, y: c.y }, p = this.nav.nearestFree(tr.x, tr.y, ob.r);
+        const hp = Math.max(1, Math.round(amt(ob.hp)));
+        const rec = { ...base, r: ob.r, maxActive: ob.maxActive, heat: 0, lastShot: 0, atkAt: 0, ocUntil: 0, hidden: 0, dmg: ob.dmg ? amt(ob.dmg) : 0, heatTenths: 0 };
+        this._objUnit(c, rec, hp, p);
+        break;
+      }
+      case 'beacon': {
+        const rec = this._objAdd(c, { ...base, x: c.x, y: c.y, r: ob.r, allyRecallMs: ob.allyRecallMs }, ob.maxActive || 1);
+        send(rec, { r: ob.r, ms: ob.ms });
+        break;
+      }
+      case 'pin': {
+        const tr = towardRange(sk.range);
+        const rec = this._objAdd(c, { ...base, x: tr.x, y: tr.y, r: ob.r, pinKind: ob.pin, trigger: ob.trigger, armedAt: t + (ob.armMs || 0), hideAfterMs: ob.hideAfterMs || 0 }, ob.maxActive || 5);
+        const extra = { r: ob.r, ms: ob.ms, pin: ob.pin };
+        if (ob.hideAfterMs > 0) { extra.hidden = ob.hideAfterMs; extra.hiddenAfterMs = ob.hideAfterMs; }
+        send(rec, extra);
+        break;
+      }
+      default: break;
+    }
+  }
+  /** Stack E second press: portal B within obj.range2 of the caster. */
+  _portalB(c, sk, slot, rc, m) {
+    const A = c._portalA, ob = sk.obj, t = this.t;
+    if (!A || !this._objs.includes(A) || A.other) return;
+    const ax = Number.isFinite(m.x) ? m.x : c.x, ay = Number.isFinite(m.y) ? m.y : c.y;
+    const d = Math.hypot(ax - c.x, ay - c.y) || 1, r2 = Math.min(d, ob.range2);
+    const tr = this.world.clampToMap(c.x + ((ax - c.x) / d) * r2, c.y + ((ay - c.y) / d) * r2), p = this.nav.nearestFree(tr.x, tr.y, ob.r);
+    const B = { ...A, oid: null, x: p.x, y: p.y, isB: true, other: A, until: t + ob.ms };
+    B.oid = `ob_${++this._uid}`; B.born = t;
+    this._objs.push(B);
+    A.other = B; A.until = t + ob.ms;
+    c.action = slot; c.action_seq++;
+    this.emit('fx', { k: 'obj', oid: B.oid, kind: 'portal', sid: c.id, team: c.team, x: Math.round(p.x), y: Math.round(p.y), r: ob.r, ms: ob.ms, pair: A.oid, filter: A.filter, color: sk.color });
+  }
+  /** Ops E second press: teleport to the own beacon and consume it. */
+  _toBeacon(c, slot) {
+    const b = this._objs.find((o) => o.kind === 'beacon' && o.owner === c.id);
+    if (!b) return;
+    const x0 = c.x, y0 = c.y, p = this.nav.nearestFree(b.x, b.y, CHAMP_RADIUS);
+    c.x = p.x; c.y = p.y; c._order = null; c._nav = null; this._placePet(c);
+    this.emit('fx', { k: 'blink', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
+    this._objRemove(b, false);
+    c.action = slot; c.action_seq++;
+  }
+
+  /** Damage + marks + CC of a placed object's stored spec on `e` (wall crossing, pin trigger, resolve). */
+  _objHit(c, sk, e, mul = 1, det = null) {
+    if (!this._alive(e)) return;
+    const t = this.t, amt = (a) => R.scaledAmount(a, c.level, c.ad, c.ap, c.maxHp);
+    if (e.champ && (e._spellShieldUntil || 0) > t) { e._spellShieldUntil = 0; this.emit('fx', { k: 'hit', id: e.id, color: 0xffffff }); this._ccApplyAll(c, sk, e, true); return; }
+    const base = sk.dmg ? amt(sk.dmg) * mul : 0, d = det || sk.detonate;
+    if (sk.dmg) this._damage(e, base, c, false, false, skillDamageType(sk));
+    if (!this._alive(e)) return;
+    if (d && e._marks?.[d.tag]) {
+      const mk = e._marks[d.tag]; delete e._marks[d.tag];
+      if (mk.until > t && mk.n > 0) this._damage(e, base * (d.pctPerStack || 0.2) * mk.n, c, false, true, 'true');
+    }
+    if (!this._alive(e)) return;
+    const markable = e.champ || e.kind === 'dummy';
+    if (sk.mark && markable) {
+      e._marks = e._marks || {};
+      const cur = e._marks[sk.mark.tag], n0 = cur && cur.until > t ? cur.n : 0;
+      e._marks[sk.mark.tag] = { n: Math.min(sk.mark.max || 1, n0 + 1), until: t + (sk.mark.ms || 5000) };
+    }
+    if (sk.slow) { e.slowUntil = Math.max(e.slowUntil || 0, t + sk.slow.ms); e.slowPct = Math.max(e.slowPct || 0, Math.round(sk.slow.pct * 100)); }
+    if (sk.root) { const ms = e.champ ? R.applyHardCcDuration(e, sk.root.ms, t) : sk.root.ms; if (ms > 0) e.rootedUntil = Math.max(e.rootedUntil || 0, t + ms); }
+    if (sk.stun) { const ms = e.champ ? R.applyHardCcDuration(e, sk.stun.ms, t) : sk.stun.ms; if (ms > 0) e.stunnedUntil = Math.max(e.stunnedUntil || 0, t + ms); }
+    if (this._alive(e)) this._ccApplyAll(c, sk, e); // v6.1: disarm (Lint W pin), airborne / charm ... from placed objects
+    this.emit('fx', { k: 'hit', id: e.id, color: sk.color });
+  }
+
+  /** v6.1 barrier: a solid segment for every champion / minion / monster; overlapping units are pushed out along the normal. */
+  _barrierPush(o) {
+    const half = o.thick / 2, sx = o.x2 - o.x, sy = o.y2 - o.y, l2 = sx * sx + sy * sy || 1, st = this.state;
+    const push = (e, navR) => {
+      const px = e.x - o.x, py = e.y - o.y, k = clamp01((px * sx + py * sy) / l2), qx = o.x + sx * k, qy = o.y + sy * k;
+      let nx = e.x - qx, ny = e.y - qy, dd = Math.hypot(nx, ny);
+      const minD = half + navR;
+      if (dd >= minD) return;
+      if (dd < 0.5) { const sl = Math.sqrt(l2); nx = -sy / sl; ny = sx / sl; dd = 1; } // exactly on the line: pick a side
+      const q = this.nav.pushOut(qx + (nx / dd) * (minD + 1), qy + (ny / dd) * (minD + 1), navR);
+      e.x = q.x; e.y = q.y; if (e._nav) e._nav = null;
+    };
+    st.champions.forEach((e) => { if (!e.dead) push(e, CHAMP_RADIUS); });
+    st.units.forEach((e) => { if (e.alive && e.kind !== 'obj' && e.kind !== 'pet' && e.kind !== 'ward' && e.kind !== 'dummy' && !R.EPICS[e.kind]) push(e, MINION_RADIUS); });
+  }
+
+  _pinTrigger(o, opt = {}) {
+    const owner = this.state.champions.get(o.owner);
+    if (!owner) return;
+    const sk = o.sk, r = o.r * (opt.radiusMul || 1);
+    if (o.trigger === 'ally') {
+      const who = opt.who ? [opt.who] : [...this.state.champions.values()].filter((a) => !a.dead && a.team === o.team && dist(a, o) <= r);
+      for (const a of who) {
+        if (sk.heal) a.hp = Math.min(a.maxHp, a.hp + R.scaledAmount(sk.heal, owner.level, owner.ad, owner.ap, owner.maxHp) * (opt.dmgMul || 1) * this._healMul(a));
+        if (sk.buff) this._setExt(a, `pin_${o.oid}`, sk.buff, sk.duration || 1800);
+        this.emit('fx', { k: 'heal', sid: owner.id, slot: o.slot, x: Math.round(a.x), y: Math.round(a.y), r: 90, color: sk.color });
+      }
+      return;
+    }
+    this.emit('fx', { k: 'circle', sid: owner.id, slot: o.slot, x: Math.round(o.x), y: Math.round(o.y), r: Math.round(r), delay: 0, color: sk.color });
+    for (const e of this._foesOf(o.team, (e) => dist(e, o) <= r + this._radius(e))) this._objHit(owner, sk, e, opt.dmgMul || 1, opt.detonate || null);
+  }
+
+  _turretHeatFx(o) {
+    const h = Math.max(0, Math.min(10, Math.round(o.heat / 10)));
+    if (h !== o.heatTenths) { o.heatTenths = h; this.emit('fx', { k: 'objHeat', oid: o.oid, h }); }
+  }
+  _turretExplode(o, mul) {
+    const owner = this.state.champions.get(o.owner), ex = o.ob.heat.explode;
+    this.emit('fx', { k: 'circle', sid: o.owner, slot: o.slot, x: Math.round(o.x), y: Math.round(o.y), r: ex.radius, delay: 0, color: 0xff9800 });
+    if (owner) {
+      const dmg = R.scaledAmount(ex.dmg, owner.level, owner.ad, owner.ap, owner.maxHp) * mul;
+      for (const e of this._foesOf(o.team, (e) => dist(e, o) <= ex.radius + this._radius(e))) {
+        this._damage(e, dmg, owner, false, false, 'magic');
+        if (ex.stun && e.champ && this._alive(e)) { const ms = R.applyHardCcDuration(e, ex.stun.ms, this.t); if (ms > 0) e.stunnedUntil = Math.max(e.stunnedUntil || 0, this.t + ms); }
+      }
+    }
+    this._objRemove(o, true);
+  }
+
+  /** v6.1 `self{ shield?, heal?, buff?, spellShieldMs?, duration? }` on circle / zone / cone / line / arc (same path as type 'self'). */
+  _applySelf(ctx, sp) {
+    const { c, t, slot, amt, fx } = ctx;
+    if (sp.heal) c.hp = Math.min(c.maxHp, c.hp + amt(sp.heal));
+    if (sp.shield) { c.shield = Math.round(amt(sp.shield)); c._shieldUntil = t + (sp.duration || 3000); }
+    if (sp.buff) this._setBuff(c, slot, sp.buff, sp.duration || 3000);
+    if (sp.spellShieldMs > 0) c._spellShieldUntil = Math.max(c._spellShieldUntil || 0, t + sp.spellShieldMs);
+    fx({ k: 'buff', sid: c.id, slot, color: ctx.getSk().color });
+  }
+
+  /**
+   * v6.1 phase dash path: samples every PHASE_STEP_PX; a contiguous blocked run is crossed when it is <= maxWall long and the
+   * landing cell is free (nearestFree within PHASE_LAND_SEARCH_PX); otherwise the dash stops at the last free point before the
+   * first run that is too thick. Returns { x, y, crossed, free[] } (free = the free samples, used for hitRadius).
+   */
+  _phasePath(x0, y0, x1, y1, maxWall) {
+    const step = CCT.PHASE_STEP_PX, r = CHAMP_RADIUS, len = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.ceil(len / step)), gap = len / n;
+    const free = []; let last = { x: x0, y: y0 }, run = -1, crossed = false;
+    for (let i = 1; i <= n; i++) {
+      const k = i / n, x = x0 + (x1 - x0) * k, y = y0 + (y1 - y0) * k;
+      if (this.nav.isBlocked(x, y, r)) { if (run < 0) run = i; continue; }
+      if (run >= 0) {
+        if ((i - run) * gap > maxWall) return { x: last.x, y: last.y, crossed, free };
+        crossed = true; run = -1;
+      }
+      free.push({ x, y }); last = { x, y };
+    }
+    if (run >= 0) { // the target point is inside terrain: land on the nearest free cell if close enough and the run was thin enough
+      const q = this.nav.nearestFree(x1, y1, r);
+      if ((n - run + 1) * gap <= maxWall && Math.hypot(q.x - x1, q.y - y1) <= CCT.PHASE_LAND_SEARCH_PX) return { x: q.x, y: q.y, crossed: true, free };
+      return { x: last.x, y: last.y, crossed, free };
+    }
+    return { x: x1, y: y1, crossed, free };
+  }
+
+  // ── v6.1 delivery shapes (cone / line / arc): aim is locked at cast, `area` fx carries the telegraph ──
+  _aimAngle(c, ctx) {
+    const dx = ctx.aimX - c.x, dy = ctx.aimY - c.y;
+    return Math.hypot(dx, dy) > 1 ? Math.atan2(dy, dx) : Math.atan2(c._mvy || 0, c._mvx || (c.team === 'blue' ? 1 : -1));
+  }
+  _areaFx(ctx, shape, a, extra) {
+    const { c, slot } = ctx, sk = ctx.getSk(), m = { k: 'area', shape, sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), a: +a.toFixed(4), len: sk.range, ...extra, delay: sk.delay || 0, color: sk.color };
+    if (sk.fx) m.fx = sk.fx;
+    ctx.fx(m);
+  }
+  /** cone { range, angle, delay }: origin = caster position at resolve, units within 50 px of it are always hit. */
+  _cone(ctx) {
+    const { c, t, enemies, hit } = ctx, sk = ctx.getSk(), a = this._aimAngle(c, ctx), half = (sk.angle * Math.PI) / 360;
+    this._areaFx(ctx, 'cone', a, { ang: +(half * 2).toFixed(4) });
+    this._timers.push([t + (sk.delay || 0), () => {
+      const o = { x: c.x, y: c.y };
+      for (const e of enemies((e) => { const d = dist(e, o); return d <= sk.range + this._radius(e) && (d <= 50 || Math.abs(angDiff(a, Math.atan2(e.y - o.y, e.x - o.x))) <= half); })) hit(e, 0, o);
+    }]);
+  }
+  /** line { range, width, delay }: oriented box from the caster (origin locked at cast); not blocked by units or terrain. */
+  _line(ctx) {
+    const { c, t, enemies, hit } = ctx, sk = ctx.getSk(), a = this._aimAngle(c, ctx), o = { x: c.x, y: c.y }, ux = Math.cos(a), uy = Math.sin(a);
+    this._areaFx(ctx, 'line', a, { w: sk.width });
+    this._timers.push([t + (sk.delay || 0), () => {
+      for (const e of enemies((e) => {
+        const px = e.x - o.x, py = e.y - o.y, proj = px * ux + py * uy;
+        return proj >= 0 && proj <= sk.range && Math.abs(-px * uy + py * ux) <= sk.width / 2 + this._radius(e);
+      })) hit(e, 0, o);
+    }]);
+  }
+  /** arc { range, inner, angle, sweepMs, delay }: annular sector, each target is hit at delay + f x sweepMs (left edge f = 0 to right edge f = 1). */
+  _arc(ctx) {
+    const { c, t, enemies, hit } = ctx, sk = ctx.getSk(), a = this._aimAngle(c, ctx), half = (sk.angle * Math.PI) / 360, o = { x: c.x, y: c.y };
+    this._areaFx(ctx, 'arc', a, { ang: +(half * 2).toFixed(4), inner: sk.inner || 0, sweep: sk.sweepMs || 0 });
+    this._timers.push([t + (sk.delay || 0), () => {
+      const hits = enemies((e) => { const d = dist(e, o); return d >= (sk.inner || 0) && d <= sk.range + this._radius(e) && Math.abs(angDiff(a, Math.atan2(e.y - o.y, e.x - o.x))) <= half; });
+      for (const e of hits) {
+        const f = clamp01((angDiff(a, Math.atan2(e.y - o.y, e.x - o.x)) + half) / (2 * half || 1));
+        this._timers.push([this.t + f * (sk.sweepMs || 0), () => hit(e, 0, o)]);
+      }
+    }]);
+  }
+
+  /** Stop a straight move at the edge of a barricade (dashes / knockbacks); only when starting outside it. */
+  _clipObjs(x0, y0, x1, y1, r) {
+    const bs = this._objs.filter((o) => o.kind === 'barricade' || o.kind === 'barrier'); // v6.1: barrier = segment version
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    if (!bs.length || len < 1) return { x: x1, y: y1, hit: false };
+    const gap = (b, x, y) => (b.kind === 'barrier' ? distToSeg(x, y, b.x, b.y, b.x2, b.y2) - b.thick / 2 : Math.hypot(x - b.x, y - b.y) - b.r); // distance to the solid's edge
+    let lx = x0, ly = y0;
+    for (let s = 10; ; s += 10) {
+      const k = Math.min(1, s / len), x = x0 + (x1 - x0) * k, y = y0 + (y1 - y0) * k;
+      for (const b of bs) {
+        if (gap(b, x0, y0) < r) continue; // already inside: not clipped by this one
+        if (gap(b, x, y) < r) return { x: lx, y: ly, hit: true };
+      }
+      lx = x; ly = y;
+      if (k >= 1) break;
+    }
+    return { x: x1, y: y1, hit: false };
+  }
+
+  /** Placed-object logic at OBJ_TICK_MS cadence. */
+  _tickObjs(now) {
+    if (now < this._objAt) return;
+    this._objAt = now + K.OBJ_TICK_MS;
+    const t = now, st = this.state;
+    for (const o of [...this._objs]) {
+      if (!this._objs.includes(o)) continue;
+      if (t >= o.until) { this._objRemove(o, false); continue; }
+      if (o.unit) { const u = st.units.get(o.oid); if (!u || !u.alive) { this._objRemove(o, false); continue; } }
+      const owner = st.champions.get(o.owner);
+      switch (o.kind) {
+        case 'wall': {
+          if (!owner) break;
+          for (const e of this._foesOf(o.team, (e) => distToSeg(e.x, e.y, o.x, o.y, o.x2, o.y2) <= o.thick / 2 + this._radius(e))) {
+            if ((o.hits[e.id] || 0) > t) continue;
+            o.hits[e.id] = t + o.rehitMs;
+            this._objHit(owner, o.sk, e, 1, null);
+            if (o.slot === 'q' && owner.augments?.includes('evo_pixel_split') && this._alive(e)) { // keep evo_pixel_split working on the wall hit
+              let n = 0;
+              for (const foe of this._foesOf(o.team, (f) => f.champ && f.id !== e.id && dist(f, e) <= 260)) { if (n++ >= 2) break; this._damage(foe, R.scaledAmount(o.sk.dmg, owner.level, owner.ad, owner.ap, owner.maxHp) * 0.45, owner, false, false, skillDamageType(o.sk)); }
+            }
+          }
+          break;
+        }
+        case 'portal': {
+          if (o.isB || !o.other) break;
+          const allies = owner?._stance === 'allies';
+          for (const end of [o, o.other]) {
+            const dest = end === o ? o.other : o;
+            const mv = (e, navR) => {
+              if ((e._ptLock || 0) > t || dist(e, end) > end.r + K.PORTAL_ENTER_PAD) return;
+              if (allies && e.team !== o.team) return;
+              const dx = e.x - end.x, dy = e.y - end.y, dd = Math.hypot(dx, dy), ux = dd > 1 ? dx / dd : 1, uy = dd > 1 ? dy / dd : 0;
+              const q = this.nav.nearestFree(dest.x + ux * (dest.r + 30), dest.y + uy * (dest.r + 30), navR);
+              const x0 = e.x, y0 = e.y;
+              e.x = q.x; e.y = q.y; e._ptLock = t + (o.gapMs || 1500);
+              if (e.champ) { e._order = null; e._nav = null; this._cancelRecall(e); this._placePet(e); }
+              this.emit('fx', { k: 'tp', id: e.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(e.x), y1: Math.round(e.y), via: end.oid });
+            };
+            st.champions.forEach((e) => { if (!e.dead) mv(e, CHAMP_RADIUS); });
+            st.units.forEach((e) => { if (e.alive && (R.MINIONS[e.kind] || (e.campId && !R.EPICS[e.kind] && e.kind !== 'obj' && e.kind !== 'dummy'))) mv(e, MINION_RADIUS); });
+          }
+          break;
+        }
+        case 'barrier': this._barrierPush(o); break;
+        case 'barricade': {
+          const push = (e, navR) => {
+            const dx = e.x - o.x, dy = e.y - o.y, dd = Math.hypot(dx, dy), minD = o.r + navR;
+            if (dd >= minD) return;
+            const ux = dd > 0.5 ? dx / dd : 1, uy = dd > 0.5 ? dy / dd : 0, q = this.nav.pushOut(o.x + ux * (minD + 1), o.y + uy * (minD + 1), navR);
+            e.x = q.x; e.y = q.y;
+          };
+          st.champions.forEach((e) => { if (!e.dead) push(e, CHAMP_RADIUS); });
+          st.units.forEach((e) => { if (e.alive && e.kind !== 'obj' && e.kind !== 'pet' && e.kind !== 'ward' && e.kind !== 'dummy' && !R.EPICS[e.kind]) push(e, MINION_RADIUS); });
+          break;
+        }
+        case 'turret': {
+          const oc = o.ocUntil > t;
+          if (t >= o.atkAt) {
+            let tgt = null, bd = o.ob.range;
+            for (const e of this._foesOf(o.team, (e) => e.champ && !this._hiddenFrom(e, o.team))) { const d = dist(e, o); if (d < bd) { bd = d; tgt = e; } }
+            if (!tgt) { bd = o.ob.range; for (const e of this._foesOf(o.team, (e) => !e.champ && (e.kind === 'dummy' || !this._hiddenFrom(e, o.team)))) { const d = dist(e, o); if (d < bd) { bd = d; tgt = e; } } }
+            if (tgt) {
+              o.atkAt = t + o.ob.atkMs * (oc ? o.atkMul : 1); o.lastShot = t;
+              this.emit('fx', { k: 'shot', oid: o.oid, x: Math.round(o.x), y: Math.round(o.y), tx: Math.round(tgt.x), ty: Math.round(tgt.y), color: o.color });
+              this._damage(tgt, o.dmg, owner || null, false, false, skillDamageType({ dmg: o.ob.dmg }));
+              o.heat += o.ob.heat.perShot * (oc ? o.heatMul : 1);
+              this._turretHeatFx(o);
+              if (o.heat >= o.ob.heat.max) { this._turretExplode(o, 1); break; }
+            }
+          }
+          if (t - o.lastShot >= o.ob.heat.coolDelayMs && o.heat > 0) { o.heat = Math.max(0, o.heat - o.ob.heat.coolPerSec * (K.OBJ_TICK_MS / 1000)); this._turretHeatFx(o); }
+          break;
+        }
+        case 'pin': {
+          if (t < o.armedAt) break;
+          if (o.trigger === 'enemy') {
+            if (this._foesOf(o.team, (e) => dist(e, o) <= o.r + this._radius(e) * 0.5).length) { this._pinTrigger(o); this._objRemove(o, false); }
+          } else {
+            const a = [...st.champions.values()].find((x) => !x.dead && x.team === o.team && dist(x, o) <= o.r);
+            if (a) { this._pinTrigger(o, { who: a }); this._objRemove(o, false); }
+          }
+          break;
+        }
+        default: break;
+      }
+    }
+  }
+
+  // ── bots (section 6): stance preference, resource upkeep, kit-aware skill choice ──
+  _botStance(c, foe) {
+    const def = CHAMPIONS[c.champ], bp = def.kit?.stance?.botPref;
+    if (!bp || this.t < (c._botStanceAt || 0)) return;
+    const want = bp.lowHp && c.hp < c.maxHp * (bp.lowHpPct || 0.35) ? bp.lowHp : (foe && dist(c, foe) <= bp.dist ? bp.near : bp.far);
+    if (want === c._stance) return;
+    const sl = ['q', 'w', 'e', 'r'].find((s) => def.skills[s].type === 'stance');
+    if (!sl) return;
+    c._botStanceAt = this.t + 2000; // at most one toggle per 2s
+    this._cast(c, { slot: sl });
+  }
+  /** Swipe: reload (tap only, natural completion) when empty, or when idle with a low magazine. */
+  _botMaintain(c, foe) {
+    const def = CHAMPIONS[c.champ], rs = def.kit?.res;
+    if (!rs || rs.key !== 'ammo' || c._reload) return;
+    const ammo = Math.floor(c._res.ammo ?? 0), near = foe && dist(c, foe) <= 900;
+    if (ammo === 0 || (!near && ammo < 4)) { const sl = ['q', 'w', 'e', 'r'].find((s) => def.skills[s].type === 'reload'); if (sl) this._cast(c, { slot: sl, x: c.x + (c.team === 'blue' ? -100 : 100), y: c.y }); }
+  }
+  /** Visible enemy champions within r of p. */
+  _foeChamps(c, p, r) {
+    const out = [];
+    this.state.champions.forEach((e) => { if (!e.dead && e.team !== c.team && this._isTargetable(e) && dist(e, p) <= r && !this._hiddenFrom(e, c.team)) out.push(e); });
+    return out;
+  }
+  /** v6.1 bot rules (3.8): map-wide shot at a visible enemy champion within range below 55% HP, or in a 2v1 fight. true = the think tick is used. */
+  _botGlobal(c) {
+    const def = CHAMPIONS[c.champ], t = this.t;
+    const slot = ['q', 'w', 'e', 'r'].find((s) => { const sk = resolveSkill(def, s, c._stance); return sk?.global && sk.bot !== 'skip' && (c.ranks?.[s] || 0) > 0 && c[`cd${s.toUpperCase()}`] <= t && c.mana >= sk.mana && !(s === 'r' && c.level < R.ULT_UNLOCK_LEVEL); });
+    if (!slot || this._noCast(c, t) || c.stunnedUntil > t || (c.silencedUntil || 0) > t) return false;
+    const sk = resolveSkill(def, slot, c._stance);
+    let tgt = null;
+    this.state.champions.forEach((e) => {
+      if (e.dead || e.team === c.team || !this._isTargetable(e) || this._hiddenFrom(e, c.team) || dist(e, c) > sk.range || e.hp >= e.maxHp * 0.55) return;
+      if (!tgt || e.hp / e.maxHp < tgt.hp / tgt.maxHp) tgt = e;
+    });
+    if (!tgt) { // 2v1: two enemy champions on top of this bot and no ally nearby
+      const near = this._foeChamps(c, c, 700);
+      let allies = 0;
+      this.state.champions.forEach((a) => { if (a.id !== c.id && !a.dead && a.team === c.team && dist(a, c) <= 700) allies++; });
+      if (near.length >= 2 && !allies) tgt = near.sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+    }
+    if (!tgt) return false;
+    this._cast(c, { slot, x: tgt.x, y: tgt.y, id: tgt.id });
+    return true;
+  }
+  /** v6.1 bot gates for the new kit pieces. false = do not cast this skill now. */
+  _botGate(c, sk, foe, champFoe) {
+    if (sk.type === 'cone' || sk.type === 'arc' || sk.type === 'line') { // aimed at the target, so the angle is covered
+      if (!champFoe) return false;
+      return dist(c, champFoe) <= (sk.type === 'line' ? sk.range * 0.9 : sk.range);
+    }
+    if (sk.suppress) return !!champFoe && champFoe.hp < champFoe.maxHp * 0.6 && this._foeChamps(c, champFoe, 500).length <= 1;
+    if (sk.taunt) {
+      if (this._foeChamps(c, c, 300).length >= 2) return true;
+      let low = false;
+      this.state.champions.forEach((a) => { if (a.id !== c.id && !a.dead && a.team === c.team && a.hp < a.maxHp * 0.4 && dist(a, c) <= 450) low = true; });
+      return low && this._foeChamps(c, c, 300).length >= 1;
+    }
+    if (sk.fear) { const n = this._foeChamps(c, c, 270).length; return n >= 1 && (c.hp < c.maxHp * 0.7 || n >= 2); }
+    if (sk.airborne) return this._foeChamps(c, c, 350).length >= 2;
+    return true;
+  }
+  _botCast(c, foe) {
+    const def = CHAMPIONS[c.champ], t = this.t;
+    const slots = ['q', 'w', 'e', 'r'].filter((s) => { const sk = resolveSkill(def, s, c._stance); return sk && sk.bot !== 'skip' && sk.type !== 'stance' && sk.type !== 'reload' && !sk.global; });
+    const slot = slots[Math.floor(Math.random() * slots.length)];
+    if (!slot) return;
+    const sk = resolveSkill(def, slot, c._stance), champFoe = foe.champ ? foe : null;
+    if (sk.reviveGuard) { // Ops R: 2+ allied champions within 800 below 60% HP and an enemy champion within 900
+      let n = 0;
+      this.state.champions.forEach((a) => { if (!a.dead && a.team === c.team && dist(a, c) <= 800 && a.hp < a.maxHp * 0.6) n++; });
+      if (n >= 2 && this._foeChamps(c, c, 900).length) this._cast(c, { slot, x: c.x, y: c.y });
+      return;
+    }
+    if (!this._botGate(c, sk, foe, champFoe)) return;
+    if (sk.tether || sk.link) { // peel: lowest-HP ally below 60% in range
+      let al = null;
+      this.state.champions.forEach((a) => { if (a.id !== c.id && !a.dead && a.team === c.team && a.hp < a.maxHp * 0.6 && dist(a, c) <= sk.range && (!al || a.hp < al.hp)) al = a; });
+      if (al) this._cast(c, { slot, x: al.x, y: al.y, id: al.id });
+      return;
+    }
+    if (sk.bot === 'self') {
+      let ok = !!champFoe && dist(c, champFoe) <= 700;
+      if (sk.type === 'resolve') ok = !!champFoe && this._objs.filter((o) => o.owner === c.id && o.kind === 'pin').length >= 2 && this._objs.some((o) => o.owner === c.id && o.kind === 'pin' && dist(o, champFoe) <= 400);
+      if (sk.type === 'rewind') { let n = 0; this.state.champions.forEach((a) => { if (!a.dead && a.team === c.team && dist(a, c) <= sk.rewind.radius && a.hp < a.maxHp * 0.55) n++; }); ok = n >= 2; }
+      if (ok) this._cast(c, { slot, x: c.x, y: c.y });
+      return;
+    }
+    if (sk.bot === 'escape') {
+      if (c.hp < c.maxHp * 0.35 && c._lastHitBy && t - c._lastHitBy.t < 2500) this._cast(c, { slot, x: c.x - (foe.x - c.x), y: c.y - (foe.y - c.y) });
+      return;
+    }
+    if (def.id === 'model' && slot === 'r' && Math.floor(c._res.orbs ?? 0) < (def.kit.res.max)) return; // Model prefers a full magazine of orbs for R
+    if (def.kit?.mix) { if (slot === 'r') { if (c._mix.length < 2 || !champFoe) return; } }
+    if ((sk.bot === 'opener' || sk.type === 'place') && dist(c, foe) > (sk.range || 600)) return;
+    this._cast(c, { slot, x: foe.x, y: foe.y, id: foe.id }); // hold: tap = quick-cast; drag: no x2,y2
+  }
+
   /** Generic skill engine for the skill types (mirrors the contract's fx). */
   _cast(c, m) {
-    const slot = m.slot, sk = CHAMPIONS[c.champ].skills[slot], t = this.t;
+    const slot = m.slot, def = CHAMPIONS[c.champ], t = this.t;
+    const ph = m.ph === 'down' || m.ph === 'up' || m.ph === 'cancel' ? m.ph : '';
+    if (ph === 'cancel') { this._holdEnd(c); return; } // free, exempt from every gate
+    // v6: the ACTIVE spec for this slot (stance variants fully replace the base spec).
+    let sk = resolveSkill(def, slot, c._stance);
     if (!sk || c.dead || c.stunnedUntil > t || c._dispUntil > t || (c.silencedUntil || 0) > t) return;
+    if (this._noCast(c, t)) return; // v6.1: airborne / suppress / charm / fear / taunt, suppress channel, global windup
     if (slot === 'r' && c.level < R.ULT_UNLOCK_LEVEL) return;
     const rank = c.ranks?.[slot] || 0;
-    if (rank <= 0) return;
+    if (rank <= 0 && !m._echo) return;
+    if (c._reload?.lock && sk.type !== 'reload') return; // reloading blocks the other keys while lockCasts
     const key = `cd${slot.toUpperCase()}`;
     const isLocal = c.id === this.localId;
+    // v6 state actions on a second press: Swipe reload (ignores cooldown + mana), Ops tether (free cut, no refund).
+    if (sk.type === 'reload' && c._reload) { this._reloadPress(c); return; }
+    if (sk.type === 'tether' && c._tether && sk.tether?.recastEnds) { this._tetherEnd(c); return; }
     // v5 recast: the second press is free (no mana / cooldown).
     c._recast = c._recast || {};
     const rc = sk.recast ? c._recast[slot] : null;
@@ -1428,26 +2615,57 @@ export class OfflineSim {
         return;
       }
       if (sk.recast.mode === 'again') { this._cast(c, { ...m, _again: true }); return; }
+      if (sk.recast.mode === 'place2') { this._portalB(c, sk, slot, rc, m); return; }
+      if (sk.recast.mode === 'toObj') { this._toBeacon(c, slot, rc); return; }
     }
-    const freeCast = !!m._again;
+    // v6 hold: down = validate only (nothing spent), up = fire scaled by the charge, no ph = quick-cast.
+    const hold = sk.input === 'hold' ? sk.hold : null;
+    let holdF = 0;
+    if (!hold && ph) return;
+    if (hold && ph === 'up') {
+      const h = c._hold;
+      if (!h || h.slot !== slot) return;
+      holdF = clamp01((t - h.t0 - hold.minMs) / Math.max(1, hold.maxMs - hold.minMs));
+    } else if (hold && !ph) holdF = hold.quick ?? 0.35;
+    const freeCast = !!(m._again || m._echo);
     if (!freeCast && !(this.noCd && isLocal) && c[key] > t) return;
     if (!freeCast && !(this.noMana && isLocal) && c.mana < sk.mana) return;
     if (m.id && this._hiddenFrom(this._ent(m.id), c.team)) return; // point-and-click at a hidden enemy
+    if (!freeCast && this._kitDeny(c, sk, m)) return; // spend gate, no shadow / pins / turrets / package / ally ...
+    if (hold && ph === 'down') { this._holdStart(c, slot, sk, m); return; }
+    if (c._hold && !(hold && ph === 'up')) this._holdEnd(c); // casting anything else cancels a charge at no cost
+    if (hold && ph === 'up') this._holdEnd(c);
+    if (hold) sk = this._holdScale(sk, holdF);
+    // v6 spend (resources): u = units consumed, effects are applied on a per-unit basis
+    const spend = sk.spend;
+    const spendUnits = spend && !freeCast ? Math.floor(Math.min(c._res?.[spend.res] ?? 0, spend.max)) : 0;
+    if (spendUnits > 0) sk = this._spendScale(sk, spend, spendUnits);
     this._reveal(c);
     const blueCdr = (c._blueBuffUntil || 0) > t ? 0.15 : 0;
     let rankDmgMul = 1 + (rank - 1) * 0.12;
+    if (m._echo) rankDmgMul *= (m.echoMul || 1);
     const castOx = c.x, castOy = c.y;
     if (!freeCast) {
       if (this.noMana && isLocal) c.mana = c.maxMana;
       else c.mana -= sk.mana;
+      if (spend && spendUnits > 0) c._res[spend.res] -= spendUnits;
       if (sk.recast) c._recast[slot] = { until: t + (sk.recast.ms || 3000), x0: castOx, y0: castOy };
-      c[key] = (this.noCd && isLocal) ? 0 : t + R.skillCooldownMs(sk.cd, (c._haste || 0) + blueCdr, rank);
+      const cdMs = R.skillCooldownMs(sk.cd, (c._haste || 0) + blueCdr, rank);
+      c[key] = (this.noCd && isLocal) ? 0 : t + cdMs;
+      // v6 timebox: remember the cooldown length this cast started (W / R excluded by the spec)
+      if (c._tbox && c._tbox.until > t && sk.type !== 'timebox' && !(c._tbox.exclude || []).includes(slot)) c._tbox.spent[slot] = cdMs;
+      // v6 echo: the next non-excluded cast disarms the echo and queues a free copy
+      if (c._echo && c._echo.until > t && sk.type !== 'echo' && !c._echo.exclude.includes(slot)) {
+        const ec = c._echo; c._echo = null;
+        this._echoQueue(c, slot, m, castOx, castOy, ec);
+      }
     }
     c.action = slot; c.action_seq++;
     this._cancelRecall(c);
-    const roleP = championPassive(CHAMPIONS[c.champ])?.id;
-    const srcP = itemPassives(c.items);
-    const augs = c.augments || [];
+    // v6 echo copies run no passives / augments / item procs
+    const roleP = m._echo ? null : championPassive(CHAMPIONS[c.champ])?.id;
+    const srcP = m._echo ? new Set() : itemPassives(c.items);
+    const augs = m._echo ? [] : (c.augments || []);
     c._castCount = (c._castCount || 0) + 1;
     if (slot === 'q') c._lastQAt = t;
     if (augs.includes('evo_dev_cleave')) c._cleaveReady = true;
@@ -1458,14 +2676,15 @@ export class OfflineSim {
     if (isOverload) rankDmgMul *= 1.28;
     if (roleP === 'syntax_surge') { c._spMsUntil = Math.max(c._spMsUntil || 0, t + 1500); c._spMsPct = Math.max(c._spMsPct || 0, 0.12); }
     if (roleP === 'swipe_combo') c._swipeReady = true;
-    if (roleP === 'uptime_pulse' && (sk.heal || sk.shield || sk.type === 'allies')) {
+    const healing = !!(sk.heal || sk.shield || sk.self?.heal || sk.self?.shield || sk.tether || sk.link || sk.type === 'allies'); // v6: tether / link count as healing; v6.1: so does self{}
+    if (roleP === 'uptime_pulse' && healing) {
       c.cdR = Math.max(t, (c.cdR || 0) - 2000);
       c._spMsUntil = Math.max(c._spMsUntil || 0, t + 1500); c._spMsPct = Math.max(c._spMsPct || 0, 0.15);
     }
-    if ((sk.heal || sk.shield || sk.type === 'allies') && augs.includes('shared_resources')) {
+    if (healing && augs.includes('shared_resources')) {
       c.hp = Math.min(c.maxHp, c.hp + 40);
     }
-    if ((sk.heal || sk.type === 'allies') && augs.includes('evo_ops_field')) {
+    if ((sk.heal || sk.tether || sk.link || sk.type === 'allies') && augs.includes('evo_ops_field')) {
       this.state.champions.forEach((al) => { if (al.team === c.team && !al.dead && dist(al, c) <= 450) al.hp = Math.min(al.maxHp, al.hp + 70); });
     }
     if (roleP === 'caffeine_brew' && c._castCount % 2 === 0) {
@@ -1486,26 +2705,14 @@ export class OfflineSim {
       c._gradUntil = t + 4000;
       rankDmgMul *= 1 + c._gradStacks * 0.1;
     }
-    if (c.champ === 'pixel' && slot === 'e') c._empowerUntil = t + 3500;
-    if (c.champ === 'model' && slot === 'w') c._overfitUntil = t + 4500;
-    if ((c._empowerUntil || 0) > t && (slot === 'q' || slot === 'r')) { c._empowerUntil = 0; rankDmgMul *= 1.2; }
-    if ((c._overfitUntil || 0) > t && (slot === 'q' || slot === 'r')) { c._overfitUntil = 0; rankDmgMul *= 1.2; }
     if (slot === 'r' && c.champ === 'embedded' && augs.includes('evo_volt_overdrive')) c._servoOverdriveUntil = t + 4000;
     const skDmgType = skillDamageType(sk);
     const amt = (spec) => R.scaledAmount(spec, c.level, c.ad, c.ap, c.maxHp) * rankDmgMul;
-    const fx = (p) => this.emit('fx', p);
+    const fx = (p) => this.emit('fx', m._echo ? { ...p, echo: true } : p); // echo copies tag every fx
+    let strikePhase = false; // true while a suppress strike resolves (its CC already ran at the channel start)
     const effects = (e) => {
-      if (!e.champ) return;
-      // Champion Skill Combo Marks & Detonations
-      if (c.champ === 'pixel' && slot === 'q') e._pixelMarkUntil = t + 4000;
-      if (c.champ === 'pixel' && slot === 'r' && (e._pixelMarkUntil || 0) > t) { e._pixelMarkUntil = 0; this._damage(e, amt(sk.dmg) * 0.25, c, false, true, 'true'); }
-      if (c.champ === 'zero' && slot === 'q') e._vulnUntil = t + 4000;
-      if (c.champ === 'zero' && slot === 'e' && (e._vulnUntil || 0) > t) { e._vulnUntil = 0; this._damage(e, amt(sk.dmg) * 0.3, c, false, true, 'true'); c.cdQ = Math.max(t, (c.cdQ || 0) - 1500); }
-      if (c.champ === 'tester' && slot === 'r' && (e._bugUntil || 0) > t && (e._bugStacks || 0) > 0) {
-        const bonus = amt(sk.dmg) * 0.12 * e._bugStacks; e._bugStacks = 0;
-        this._damage(e, bonus, c, false, true, 'true');
-      }
-      // v5 mark / detonate / silence
+      if (!e.champ && e.kind !== 'dummy') return;
+      // v5 mark / detonate / silence (v6: the generic marks replace the per-champion specials)
       if (sk.detonate && e._marks && e._marks[sk.detonate.tag]) {
         const mk = e._marks[sk.detonate.tag]; delete e._marks[sk.detonate.tag];
         if (mk.until > t && mk.n > 0) this._damage(e, amt(sk.dmg) * (sk.detonate.pctPerStack || 0.2) * mk.n, c, false, true, 'true');
@@ -1528,6 +2735,7 @@ export class OfflineSim {
         const sms = e.champ ? R.applyHardCcDuration(e, sk.stun.ms, t) : sk.stun.ms;
         if (sms > 0) e.stunnedUntil = Math.max(e.stunnedUntil || 0, t + sms);
       }
+      if (!strikePhase && this._alive(e)) this._ccApplyAll(c, sk, e); // v6.1: airborne charm fear taunt blind disarm (+ suppress without strikeAtEnd)
       if (roleP === 'syntax_surge') c.mana = Math.min(c.maxMana, c.mana + c.maxMana * 0.04);
       // Augment skill-hit procs
       if (augs.includes('chain_reaction') && ((c._augCd.chain_reaction || 0) <= t || isOverload)) {
@@ -1548,11 +2756,12 @@ export class OfflineSim {
       if (e.champ && (e._spellShieldUntil || 0) > this.t) {
         e._spellShieldUntil = 0;
         fx({ k: 'hit', id: e.id, color: 0xffffff });
+        if (!strikePhase) this._ccApplyAll(c, sk, e, true); // v6.1: ccBlock why 'shield' for every CC of the skill
         return;
       }
       const wasChampAlive = !!e.champ && !e.dead;
       const useTrue = !!(isReturn && sk.returnTrueDmg);
-      this._damage(e, (amt(sk.dmg) + extra) * mul, c, false, useTrue, useTrue ? 'true' : skDmgType);
+      this._damage(e, (amt(sk.dmg) + extra) * mul, c, false, useTrue, useTrue ? 'true' : skillDamageType(sk));
       effects(e);
       if (sk.killReset && wasChampAlive && !this._alive(e)) {
         c[key] = 0;
@@ -1607,11 +2816,14 @@ export class OfflineSim {
       const dx = aimX - c.x, dy = aimY - c.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, range);
       return this.world.clampToMap(c.x + (dx / d) * r, c.y + (dy / d) * r);
     };
-    switch (sk.type) {
+    const ctx = { c, m, slot, key, t, amt, fx, hit, enemies, towardRange, aimX, aimY, castOx, castOy, rankDmgMul, getSk: () => sk, setSk: (s) => { sk = s; } };
+    const dispatch = () => { switch (sk.type) {
       case 'projectile': {
         const dx = aimX - c.x, dy = aimY - c.y, d = Math.hypot(dx, dy) || 1;
+        const base0 = Math.atan2(dy / d, dx / d);
+        const launch = (base) => {
         const count = Math.max(1, sk.count | 0 || 1), spread = count > 1 ? ((sk.spread || 0) * Math.PI) / 180 : 0;
-        const base = Math.atan2(dy / d, dx / d), hitSet = new Set(), from = { x: c.x, y: c.y };
+        const hitSet = new Set(), from = { x: c.x, y: c.y };
         for (let i = 0; i < count; i++) {
           const an = base + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0), ux = Math.cos(an), uy = Math.sin(an);
           fx({ k: 'proj', sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), dx: ux, dy: uy, speed: sk.speed, range: sk.range, width: sk.width, color: sk.color, boomerang: !!sk.boomerang });
@@ -1637,6 +2849,22 @@ export class OfflineSim {
             }]);
           }
         }
+        };
+        if (sk.global) { // v6.1 map-wide shot: public gping at cast, caster locked for windupMs (moveSlow 0.5), then the bolt launches
+          const ox = c.x, oy = c.y, dd = Math.hypot(aimX - ox, aimY - oy) || 1;
+          const end = this.world.clampToMap(ox + Math.cos(base0) * Math.min(dd, sk.range), oy + Math.sin(base0) * Math.min(dd, sk.range));
+          const wu = { until: t + (sk.windupMs || 0), moveSlow: 0.5 };
+          c._windup = wu; c._order = null; c._nav = null;
+          this._emitRaw('fx', { k: 'gping', sid: c.id, x0: Math.round(ox), y0: Math.round(oy), x1: Math.round(end.x), y1: Math.round(end.y), ms: CCT.GLOBAL_WARN_MS }); // BOTH teams
+          this._timers.push([wu.until, () => {
+            if (c._windup !== wu) return; // a hard CC (or death) cancelled the shot: mana already spent
+            c._windup = null;
+            if (!this._alive(c) || this._hardCc(c)) return;
+            launch(base0);
+          }]);
+          break;
+        }
+        launch(base0);
         break;
       }
       case 'circle': {
@@ -1666,18 +2894,25 @@ export class OfflineSim {
           }
           break;
         }
-        fx({ k: 'circle', sid: c.id, slot, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, delay: sk.delay || 0, color: sk.color });
-        this._timers.push([t + (sk.delay || 0), () => { for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e))) hit(e, 0, p); }]);
+        // v6 alsoAtShadow (Zero E): a second identical area at the shadow; each target is hit at most once per cast
+        const centers = [p];
+        if (sk.alsoAtShadow && c._shadow && c._shadow.until > t) centers.push({ x: c._shadow.x, y: c._shadow.y });
+        for (const ctr of centers) fx({ k: 'circle', sid: c.id, slot, x: Math.round(ctr.x), y: Math.round(ctr.y), r: sk.radius, delay: sk.delay || 0, color: sk.color, ...(sk.inner ? { inner: sk.inner } : {}) });
+        const sk0 = sk;
+        this._timers.push([t + (sk0.delay || 0), () => {
+          const seen = new Set();
+          for (const ctr of centers) for (const e of enemies((e) => !seen.has(e.id) && dist(e, ctr) <= sk0.radius + this._radius(e) && dist(e, ctr) >= (sk0.inner || 0))) { seen.add(e.id); hit(e, 0, ctr); }
+        }]);
         break;
       }
       case 'zone': {
         const p = sk.range ? towardRange(sk.range) : { x: c.x, y: c.y };
         const tick = Math.max(100, sk.tickMs || 500), dur = Math.max(tick, sk.duration || 3000);
-        fx({ k: 'zone', sid: c.id, slot, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, ms: dur, tickMs: tick, color: sk.color });
+        fx({ k: 'zone', sid: c.id, slot, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, ms: dur, tickMs: tick, color: sk.color, ...(sk.inner ? { inner: sk.inner } : {}) });
         for (let k = 1; k * tick <= dur; k++) {
           this._timers.push([t + k * tick, () => {
             if (this.state.phase !== 'playing') return;
-            for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e))) hit(e, 0, p);
+            for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e) && dist(e, p) >= (sk.inner || 0))) hit(e, 0, p);
             if (sk.heal) this.state.champions.forEach((a) => { if (!a.dead && a.team === c.team && dist(a, p) <= sk.radius) a.hp = Math.min(a.maxHp, a.hp + amt(sk.heal)); });
           }]);
         }
@@ -1685,8 +2920,9 @@ export class OfflineSim {
       }
       case 'target': {
         const e = this._ent(m.id);
-        if (e && e.kind !== 'pet' && this._alive(e) && e.team !== c.team && (sk.targets !== 'enemyChamp' || this._champTargetOk(e)) && dist(c, e) <= sk.range + 80) {
+        if (e && e.kind !== 'pet' && this._alive(e) && this._isTargetable(e) && e.team !== c.team && (sk.targets !== 'enemyChamp' || this._champTargetOk(e)) && dist(c, e) <= sk.range + 80) {
           fx({ k: 'tgt', sid: c.id, slot, x0: Math.round(c.x), y0: Math.round(c.y), x1: Math.round(e.x), y1: Math.round(e.y), color: sk.color });
+          if (sk.shadowAt === 'origin') this._shadowSet(c, c.x, c.y, def.skills.q?.shadow?.ms || 6000); // Zero-Day leaves a shadow where you stood
           if (sk.behindTarget) {
             const x0 = c.x, y0 = c.y, d = dist(c, e) || 1, ux = (e.x - x0) / d, uy = (e.y - y0) / d;
             const b = this.world.clampToMap(e.x + ux * (this._radius(e) + CHAMP_RADIUS + 14), e.y + uy * (this._radius(e) + CHAMP_RADIUS + 14));
@@ -1694,7 +2930,14 @@ export class OfflineSim {
             c.x = bp.x; c.y = bp.y; c._order = null; c._nav = null;
             fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
           }
-          hit(e, sk.execute ? sk.execute.missingHpPct * (e.maxHp - e.hp) : 0, { x: c.x, y: c.y });
+          if (sk.suppress?.strikeAtEnd) { // v6.1 Zero R: the channel locks both bodies; the hit lands at the end (3.4)
+            const skS = sk;
+            this._suppressCast(c, e, skS, key, (ee) => {
+              strikePhase = true;
+              hit(ee, skS.execute ? skS.execute.missingHpPct * (ee.maxHp - ee.hp) : 0, { x: c.x, y: c.y });
+              strikePhase = false;
+            });
+          } else hit(e, sk.execute ? sk.execute.missingHpPct * (e.maxHp - e.hp) : 0, { x: c.x, y: c.y });
         }
         break;
       }
@@ -1710,12 +2953,19 @@ export class OfflineSim {
             : Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
           want = this.world.clampToMap(x0 + ((tgt.x - x0) / d) * reach, y0 + ((tgt.y - y0) / d) * reach);
         } else want = towardRange(sk.range);
-        const p = sk.behindTarget ? this.nav.nearestFree(want.x, want.y, CHAMP_RADIUS) : this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS);
+        let p = sk.behindTarget ? this.nav.nearestFree(want.x, want.y, CHAMP_RADIUS) : this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS);
+        if (!sk.behindTarget && !sk.phase) { const co = this._clipObjs(x0, y0, p.x, p.y, CHAMP_RADIUS); if (co.hit) p = { x: co.x, y: co.y }; } // barricades / barriers stop dashes
+        let phased = null;
+        if (sk.phase && !sk.behindTarget) { // v6.1 phase dash: crosses thin walls, barriers and barricades; lands on a free cell
+          phased = this._phasePath(x0, y0, want.x, want.y, sk.phase.maxWall);
+          p = { x: phased.x, y: phased.y };
+        }
         let end = p, struck = [];
         if (okT) {
           if (sk.behindTarget || dist(p, tgt) <= this._radius(tgt) + CHAMP_RADIUS + Math.max(sk.hitRadius || 0, 40)) struck = [tgt];
         } else if (sk.hitRadius) {
-          struck = enemies((e) => distToSeg(e.x, e.y, x0, y0, p.x, p.y) <= sk.hitRadius + this._radius(e))
+          struck = enemies((e) => distToSeg(e.x, e.y, x0, y0, p.x, p.y) <= sk.hitRadius + this._radius(e)
+            && (!phased?.crossed || phased.free.some((s) => dist(e, s) <= sk.hitRadius + this._radius(e) + CCT.PHASE_STEP_PX / 2))) // hitRadius only counts on free samples
             .sort((a, b) => dist(a, c) - dist(b, c));
           const first = struck[0];
           if (first && sk.stopAtFirst) {
@@ -1726,7 +2976,8 @@ export class OfflineSim {
         }
         c.x = end.x; c.y = end.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
-        fx({ k: 'dash', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color });
+        if (sk.untarget) this._untargetFor(c, sk.untarget.ms); // starts with the move; offline dashes are instant so total = ms
+        fx({ k: 'dash', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color, ...(phased?.crossed ? { phase: 1 } : {}), ...(sk.untarget ? { ghost: 1 } : {}) });
         if (sk.trail) {
           const tr = sk.trail, tp = { x: (x0 + c.x) / 2, y: (y0 + c.y) / 2 };
           const tick = Math.max(100, tr.tickMs || 500), dur = Math.max(tick, tr.duration || 3000);
@@ -1745,10 +2996,12 @@ export class OfflineSim {
         break;
       }
       case 'blink': {
-        const x0 = c.x, y0 = c.y, tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
+        const x0 = c.x, y0 = c.y, tr0 = towardRange(sk.range), co = this._clipObjs(x0, y0, tr0.x, tr0.y, CHAMP_RADIUS); // v6.1: blinks stop at a barrier / barricade too
+        const tr = co.hit ? { x: co.x, y: co.y } : tr0, p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
-        fx({ k: 'blink', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
+        if (sk.untarget) this._untargetFor(c, sk.untarget.ms);
+        fx({ k: 'blink', sid: c.id, slot, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), ...(sk.untarget ? { ghost: 1 } : {}) });
         break;
       }
       case 'swap': {
@@ -1765,7 +3018,7 @@ export class OfflineSim {
         fx({ k: 'blink', sid: c.id, slot, x0: Math.round(cx), y0: Math.round(cy), x1: Math.round(ax), y1: Math.round(ay) }); // one fx links both ends
         for (const a of [c, ally]) {
           if (sk.shield) { a.shield = Math.round(amt(sk.shield)); a._shieldUntil = t + (sk.duration || 3000); }
-          if (sk.buff) a._buffs[slot] = t + (sk.duration || 3000);
+          if (sk.buff) this._setBuff(a, slot, sk.buff, sk.duration || 3000);
         }
         fx({ k: 'buff', sid: c.id, slot, color: sk.color });
         break;
@@ -1776,16 +3029,100 @@ export class OfflineSim {
         for (const a of group) {
           if (sk.heal) a.hp = Math.min(a.maxHp, a.hp + amt(sk.heal));
           if (sk.shield) { a.shield = Math.round(amt(sk.shield)); a._shieldUntil = t + (sk.duration || 3000); }
-          if (sk.buff) a._buffs[slot] = t + (sk.duration || 3000);
+          if (sk.buff) this._setBuff(a, slot, sk.buff, sk.duration || 3000);
           if (sk.spellShieldMs > 0) a._spellShieldUntil = Math.max(a._spellShieldUntil || 0, t + sk.spellShieldMs);
+          if (sk.reviveGuard) { a._reviveUntil = t + sk.reviveGuard.ms; a._reviveCfg = sk.reviveGuard; } // v6.1: armed until consumed / expired (tag cc:revive)
           if (sk.invisMs > 0 && a === c) a._stealthUntil = t + sk.invisMs;
           if (sk.stasis && a === c) { a._stasisUntil = t + sk.stasis.ms; a.stunnedUntil = Math.max(a.stunnedUntil || 0, t + sk.stasis.ms); a.rootedUntil = Math.max(a.rootedUntil || 0, t + sk.stasis.ms); }
         }
+        if (sk.resetOnCast) for (const sl of sk.resetOnCast) c[`cd${sl.toUpperCase()}`] = 0; // Rush R: Pick Up Order is ready again
+        if (sk.tipMul) c._tipMulUntil = t + (sk.tipMul.ms || 0);
         if (sk.heal) fx({ k: 'heal', sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), r: sk.radius || 120, color: sk.color });
         fx({ k: 'buff', sid: c.id, slot, color: sk.color });
         break;
       }
-      default: break;
+      // ── v6 kit types (rules: docs/02_CHAMPIONS_AND_SKILLS.md [v6 numbering] section 4) ──
+      case 'stance': {
+        c._stance = nextStance(sk, c._stance);
+        c._recast = {}; // a stance switch closes every open recast window
+        if (sk.shield) { c.shield = Math.round((c.shield || 0) + amt(sk.shield)); c._shieldUntil = Math.max(c._shieldUntil || 0, t + (sk.duration || 3000)); }
+        if (sk.buff) this._setBuff(c, slot, sk.buff, sk.duration || 3000);
+        fx({ k: 'stance', sid: c.id, name: c._stance });
+        // Stack: the toggle re-filters the owner's live portals
+        for (const o of this._objs) if (o.kind === 'portal' && o.owner === c.id) { o.filter = c._stance === 'allies' ? 'allies' : 'open'; fx({ k: 'objUpd', oid: o.oid, filter: o.filter }); }
+        break;
+      }
+      case 'shadow': {
+        if (sk.shadow?.mode === 'place') {
+          const tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
+          this._shadowSet(c, p.x, p.y, sk.shadow.ms || 6000);
+        } else { // swap
+          const sh = c._shadow, cx = c.x, cy = c.y;
+          if (!sh || sh.until <= t) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); break; }
+          const p = this.nav.nearestFree(sh.x, sh.y, CHAMP_RADIUS);
+          c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
+          sh.x = cx; sh.y = cy; // the shadow keeps its remaining time
+          if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
+          if (sk.buff) this._setBuff(c, slot, sk.buff, sk.duration || 1500);
+          fx({ k: 'blink', sid: c.id, slot, x0: Math.round(cx), y0: Math.round(cy), x1: Math.round(c.x), y1: Math.round(c.y), shadow: true });
+          fx({ k: 'shadow', sid: c.id, x: Math.round(sh.x), y: Math.round(sh.y), ms: Math.max(0, sh.until - t) });
+        }
+        break;
+      }
+      case 'tether': {
+        const ally = this._allyFor(c, sk, m, false);
+        if (!ally) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); break; }
+        if (c._tether) this._tetherEnd(c);
+        const tp = sk.tether, tid = `th_${++this._uid}`;
+        c._tether = { tid, to: ally.id, until: t + tp.durationMs, next: t + Math.max(K.TETHER_MIN_TICK_MS, tp.tickMs), spec: sk, amount: amt(tp.heal) };
+        fx({ k: 'tether', tid, sid: c.id, to: ally.id, ms: tp.durationMs, color: sk.color });
+        break;
+      }
+      case 'link': {
+        const pr = this._linkPair(c, sk, m);
+        if (!pr) { c[key] = 0; c.mana = Math.min(c.maxMana, c.mana + sk.mana); break; }
+        const lp = sk.link;
+        if (c._linkOwn) this._linkEnd(c._linkOwn);
+        const rec = { lid: `lk_${++this._uid}`, a: pr.a.id, b: pr.b.id, owner: c.id, until: t + lp.ms, sharePct: lp.sharePct, breakRange: lp.breakRange, fxAt: 0 };
+        c._linkOwn = rec;
+        for (const e of [pr.a, pr.b]) { if (e._link && e._link !== rec) e._link = null; e._link = rec; }
+        for (const e of [pr.a, pr.b]) e.hp = Math.min(e.maxHp, e.hp + amt(lp.heal) * this._healMul(e));
+        fx({ k: 'link', lid: rec.lid, a: pr.a.id, b: pr.b.id, ms: lp.ms, color: sk.color });
+        break;
+      }
+      case 'echo': {
+        const ep = sk.echo;
+        c._echo = { until: t + ep.armMs, delayMs: ep.delayMs, mulPct: ep.mulPct, exclude: ep.exclude || [] };
+        fx({ k: 'echo', sid: c.id, ms: ep.armMs });
+        break;
+      }
+      case 'timebox': {
+        const tb = sk.timebox;
+        c._tbox = { until: t + tb.ms, spent: {}, exclude: tb.exclude || [], refundPct: tb.refundPct };
+        if (tb.buff) this._setBuff(c, slot, tb.buff, tb.ms);
+        fx({ k: 'timebox', sid: c.id, ms: tb.ms });
+        break;
+      }
+      case 'pickup': {
+        c._pkg = { since: t, dist: 0, lx: c.x, ly: c.y };
+        this._recalc(c, false);
+        fx({ k: 'pkg', sid: c.id, on: true, tip: Math.round(this._pkgTip(c) * 100) });
+        break;
+      }
+      default: { const h = KIT_HANDLERS[sk.type]; if (h) this[h](ctx, dispatch); break; } // v6.1: a new primitive = one KIT_HANDLERS entry + one method
+    } };
+    if (sk.self && SELF_TYPES.has(sk.type)) this._applySelf(ctx, sk.self); // v6.1: self{} lands at CAST START, before any delay
+    if (sk.untarget && sk.type !== 'dash' && sk.type !== 'blink') this._untargetFor(c, sk.untarget.ms); // movement skills start it with the move
+    dispatch();
+    // v6 post-cast: Brew mix, Model/Swipe shield per spent unit
+    if (sk.addMix && def.kit?.mix) {
+      c._mix.push(sk.addMix);
+      while (c._mix.length > def.kit.mix.max) c._mix.shift();
+      c._mixAt = t;
+    }
+    if (spendUnits > 0 && spend.per?.shield) {
+      c.shield = Math.round((c.shield || 0) + amt(scaleAmt(spend.per.shield, spendUnits)));
+      c._shieldUntil = Math.max(c._shieldUntil || 0, t + (sk.duration || 3000));
     }
   }
 
@@ -1802,7 +3139,7 @@ export class OfflineSim {
     if (!slot || this.state.phase !== 'playing') return false;
     const t = this.t, sp = SPELLS[c['spell' + slot]];
     this._tickSpellCharges(c, t);
-    if (!sp || c.dead || c.stunnedUntil > t || c[`cd${slot}`] > t) return false;
+    if (!sp || c.dead || c.stunnedUntil > t || this._noSpell(c, t) || c[`cd${slot}`] > t) return false;
     if (sp.maxCharges > 1 && (c[`charges${slot}`] || 0) <= 0) return false;
     if (m.id && this._hiddenFrom(this._ent(m.id), c.team)) return false;
     if (sp.kind !== 'blink' && sp.kind !== 'heal') this._reveal(c);

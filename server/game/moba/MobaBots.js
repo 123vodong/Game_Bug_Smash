@@ -35,6 +35,7 @@ import { clipMove, segmentClear } from '../../../shared/moba/nav.js';
 import { ITEMS, buyBlocker } from '../../../shared/moba/items.js';
 import { SPELLS } from '../../../shared/moba/spells.js';
 import { classifySkill } from './SkillEngine.js';
+import { resolveSkill } from '../../../shared/moba/champions.js';
 import { lanePath, dist, otherTeam, LANE_IDS } from './geo.js';
 import { BOT_TEAM_LINES, BOT_TEAM_REPLIES } from './lines.js';
 import { VOTE_BOT_KILL_GAP } from './tuning.js';
@@ -149,9 +150,9 @@ export class MobaBots {
   /** Register a bot brain for an existing champion record. */
   add(sid, role, { silent = false } = {}) {
     const ch = this.room.champs.get(sid);
-    const skills = {};
+    const skills = {}; // legacy snapshot of the default-stance specs; live decisions use this._sk(b, slot) (stance-aware)
     for (const slot of SLOTS) {
-      const spec = ch?.def.skills[slot];
+      const spec = ch ? resolveSkill(ch.def, slot, '') : null;
       skills[slot] = spec ? { spec, cls: classifySkill(spec) } : null;
     }
     const b = {
@@ -294,6 +295,7 @@ export class MobaBots {
       return;
     }
     const ctx = this._sense(ch, now);
+    this._kitCasts(b, ch, ctx, now); // v6 kit systems (stances, objects, rewinds, reload, serve ...)
     this._supportCasts(b, ch, ctx, now);
     this._spellUtility(b, ch, ctx, now);
 
@@ -346,7 +348,7 @@ export class MobaBots {
       else if (d < 1800 && room.canSee(ch.team, o, now)) ctx.enemyChamps.push({ e: o, d });
     }
     for (const u of room.units.values()) {
-      if (!u.alive || u.utype === 'pet') continue; // pets are scenery for decisions
+      if (!u.alive || u.utype === 'pet' || u.utype === 'obj') continue; // pets and placed objects are scenery for decisions
       if (u.team !== ch.team && !room.canSee(ch.team, u, now)) continue; // v4: hidden in a bush
       const d = dist(ch, u);
       if (d > 1300) continue;
@@ -375,10 +377,27 @@ export class MobaBots {
     return { ally, enemy };
   }
 
+  /** v6: the bot's ACTIVE spec for a slot (stance-resolved) + its cached classification. */
+  _sk(b, slot) {
+    const ch = this.room.champs.get(b.sid);
+    const spec = ch ? resolveSkill(ch.def, slot, ch._stance) : null;
+    if (!spec) return null;
+    this._clsCache = this._clsCache || new WeakMap();
+    let cls = this._clsCache.get(spec);
+    if (!cls) { cls = classifySkill(spec); this._clsCache.set(spec, cls); }
+    return { spec, cls };
+  }
+
   _ready(ch, slot, now) {
-    const spec = ch.def.skills[slot];
-    if (!spec || now < ch.cd[slot] || ch.mana < spec.mana) return false;
+    const spec = resolveSkill(ch.def, slot, ch._stance);
+    if (!spec || spec.bot === 'skip' || now < ch.cd[slot] || ch.mana < spec.mana) return false;
     if (slot === 'r' && ch.level < ULT_UNLOCK_LEVEL) return false;
+    if (ch._reload?.lock) return false;
+    if (spec.spend && ch._res) { // v6: cast only with enough of the resource; Model keeps its ult for a full orb stack
+      const have = this.room.kits.units(ch, spec.spend.res);
+      if (have < (spec.spend.min || 0)) return false;
+      if (ch.champ === 'model' && slot === 'r' && have < spec.spend.max) return false;
+    }
     return true;
   }
 
@@ -386,7 +405,7 @@ export class MobaBots {
   _burst(ch, t, now) {
     let raw = ch.ad * 2;
     for (const slot of SLOTS) {
-      const spec = ch.def.skills[slot];
+      const spec = resolveSkill(ch.def, slot, ch._stance);
       if (!spec?.dmg || !this._ready(ch, slot, now)) continue;
       raw += scaledAmount(spec.dmg, ch.level, ch.ad, ch.ap, ch.maxHp);
       if (spec.execute) raw += spec.execute.missingHpPct * Math.max(0, t.maxHp - t.hp);
@@ -472,7 +491,7 @@ export class MobaBots {
     if (Math.random() > prob) return; // hesitate based on difficulty
     const d = dist(ch, foe);
     for (const slot of ['r', 'q', 'e', 'w']) {
-      const k = b.skills[slot];
+      const k = this._sk(b, slot);
       if (!k || !this._ready(ch, slot, now)) continue;
       if (this._tryOffensive(b, ch, slot, k.spec, k.cls, foe, d, ctx, now)) return;
     }
@@ -484,6 +503,7 @@ export class MobaBots {
     switch (spec.type) {
       case 'projectile': {
         if (!cls.damage) return false;
+        if (cls.global && !this._globalOk(ch, foe, ctx)) return false; // v6.1 map-wide shot: finish low champions or break a 2v1
         if (d > spec.range * (spec.champOnly ? 0.95 : 0.88)) return false;
         // A fan ult is worth it on 2+ champions in its cone even when nobody is low.
         if (isR && foeHp > 0.55 && foe.hp > this._burst(ch, foe, now) && !(cls.fan && this._enemiesInCone(ch, foe, spec) >= 2)) return false;
@@ -492,7 +512,7 @@ export class MobaBots {
         return this._cast(b, slot, p.x, p.y);
       }
       case 'zone': {
-        if (!cls.damage && !cls.cc) return false;
+        if (!cls.damage && !cls.cc.length) return false;
         if (cls.selfCentered) {
           if (d > spec.radius * 0.8) return false;
           return this._cast(b, slot, ch.x, ch.y);
@@ -503,6 +523,11 @@ export class MobaBots {
         return this._cast(b, slot, p.x, p.y);
       }
       case 'circle': {
+        if (cls.cc.includes('taunt')) { // v6.1 Brick W: 2+ enemies on top of me, or an ally below 40% HP close by
+          const allyLow = ctx.allyChamps.some((a) => a.d <= 450 && hpPct(a.e) < 0.4);
+          if (this._enemiesNear(ch, ch.x, ch.y, spec.radius) >= 2 || (allyLow && d <= spec.radius)) return this._cast(b, slot, ch.x, ch.y);
+          return false;
+        }
         if (!cls.damage) return false;
         if (cls.trap) {
           if (d > spec.range) return false;
@@ -519,6 +544,11 @@ export class MobaBots {
         }
         if (cls.selfCentered) {
           if (d > spec.radius * 0.85) return false;
+          if (cls.cc.includes('fear')) { // v6.1 Pager E: someone is on me and I am hurt, or I am swarmed
+            const near = this._enemiesNear(ch, ch.x, ch.y, spec.radius);
+            if (!(near >= 1 && (ctx.hp < 0.7 || near >= 2))) return false;
+          }
+          if (cls.cc.includes('airborne') && this._enemiesNear(ch, ch.x, ch.y, spec.radius) < 2) return false; // v6.1 Stack R
           if (isR && foeHp > 0.75 && this._enemiesNear(ch, ch.x, ch.y, spec.radius) < 2) return false;
           return this._cast(b, slot, ch.x, ch.y);
         }
@@ -527,8 +557,24 @@ export class MobaBots {
         if (isR && foeHp > 0.7 && this._enemiesNear(ch, p.x, p.y, spec.radius) < 2) return false;
         return this._cast(b, slot, p.x, p.y);
       }
+      case 'cone': case 'arc': { // v6.1: aimed at the champion, so it is inside the angle by construction
+        if (!cls.damage && !cls.cc.length) return false;
+        if (d > spec.range + foe.radius * 0.5 || d < (spec.inner || 0)) return false;
+        return this._cast(b, slot, foe.x, foe.y);
+      }
+      case 'line': { // v6.1 Pixel R: target within 90% of the range and not walking away
+        if (d > spec.range * 0.9) return false;
+        if (isR && foeHp > 0.55 && foe.hp > this._burst(ch, foe, now)) return false;
+        if ((foe.vx || 0) * (foe.x - ch.x) + (foe.vy || 0) * (foe.y - ch.y) > 0) return false;
+        const p = this._lead(b, ch, foe, spec.delay || 0);
+        return this._cast(b, slot, p.x, p.y);
+      }
       case 'target': {
         if (d > spec.range + foe.radius) return false;
+        if (cls.suppress) { // v6.1 Zero R: a low champion that nobody can peel (no other enemy champion within 500 px of it)
+          if (foeHp >= 0.6) return false;
+          for (const c of this.room.champs.values()) if (c !== foe && !c.dead && c.team !== ch.team && dist(c, foe) <= 500) return false;
+        }
         if (spec.execute && foe.hp > this._burst(ch, foe, now) && foeHp > 0.45) return false;
         if (cls.knockback && !this._knockWouldWall(ch, foe, spec.knockback.dist)) {
           // No wall to pin them on: keep it for a peel (they're on top of us) or a finisher — mostly.
@@ -546,7 +592,7 @@ export class MobaBots {
         }
         if (d > spec.range + foe.radius * 0.5) return false;
         const clip = clipMove(ch.x, ch.y, foe.x, foe.y, CHAMP_RADIUS);
-        if (clip.hit && Math.hypot(clip.x - foe.x, clip.y - foe.y) > (spec.hitRadius || 40) + foe.radius) return false;
+        if (!cls.phase && clip.hit && Math.hypot(clip.x - foe.x, clip.y - foe.y) > (spec.hitRadius || 40) + foe.radius) return false; // phase dashes cross thin walls
         if (spec.stopAtFirst && this._lineBlocked(ch, foe, spec.hitRadius || 40)) return false;
         if (this._enemyTowerAt(foe.x, foe.y, ch.team, 0) && now >= b.diveUntil) return false;
         return this._cast(b, slot, foe.x, foe.y);
@@ -573,9 +619,15 @@ export class MobaBots {
     }
   }
 
+  /** v6.1 global shot gate: a champion in range below 55% HP, or a 2v1 (2+ enemies on me, no ally near). */
+  _globalOk(ch, foe, ctx) {
+    if (hpPct(foe) < 0.55) return true;
+    return ctx.enemyChamps.filter((e) => e.d < 900).length >= 2 && !ctx.allyChamps.some((a) => a.d < 900);
+  }
+
   /** Champion-only long-range ults (e.g. Regression Barrage): finish a low enemy anywhere in range. */
   _snipe(b, ch, now) {
-    const k = b.skills.r;
+    const k = this._sk(b, 'r');
     if (!k || k.spec.type !== 'projectile' || !k.spec.champOnly || !this._ready(ch, 'r', now)) return;
     const raw = scaledAmount(k.spec.dmg, ch.level, ch.ad, ch.ap, ch.maxHp);
     for (const e of this.room.champs.values()) {
@@ -583,7 +635,7 @@ export class MobaBots {
       if (this._spareHuman(ch, e, now)) continue;
       const d = dist(ch, e);
       if (d > k.spec.range * 0.9 || d < 300) continue;
-      if (e.hp > damageAfterArmor(raw, e.armor) * 0.95) continue;
+      if (k.cls.global ? hpPct(e) >= 0.55 : e.hp > damageAfterArmor(raw, e.armor) * 0.95) continue; // v6.1 global: below 55% HP is enough
       const p = this._lead(b, ch, e, (d / k.spec.speed) * 1000);
       if (this._cast(b, 'r', p.x, p.y)) return;
     }
@@ -625,7 +677,7 @@ export class MobaBots {
     const threat = ctx.enemyChamps[0];
     const chased = threat && threat.d < 900;
     for (const slot of SLOTS) {
-      const k = b.skills[slot];
+      const k = this._sk(b, slot);
       if (!k || !this._ready(ch, slot, now)) continue;
       const { spec, cls } = k;
       if (slot === 'r' && !cls.defensive && !cls.heal) continue;
@@ -653,10 +705,120 @@ export class MobaBots {
     }
   }
 
+  /**
+   * v6 (docs/02_CHAMPIONS_AND_SKILLS.md [v6 numbering] section 6): behaviour for the new skill types. Bots tap-cast (no hold / drag
+   * phases) and never use `bot:'skip'` slots; stances follow `kit.stance.botPref`.
+   */
+  _kitCasts(b, ch, ctx, now) {
+    const room = this.room;
+    const kit = ch.def.kit;
+    const foe = ctx.enemyChamps[0] || null;
+    const dFoe = foe ? foe.d : Infinity;
+    const spared = foe && this._spareHuman(ch, foe.e, now);
+    // stance preference: at most one toggle per 2 s
+    const pref = kit?.stance?.botPref;
+    if (pref && now - (b.lastStanceAt || 0) >= 2000) {
+      let want = dFoe <= pref.dist ? pref.near : pref.far;
+      if (pref.lowHp && ctx.hp < pref.lowHpPct) want = pref.lowHp;
+      if (want && want !== ch._stance) {
+        for (const slot of SLOTS) {
+          const spec = resolveSkill(ch.def, slot, ch._stance);
+          if (spec?.type !== 'stance' || now < ch.cd[slot]) continue;
+          b.lastStanceAt = now;
+          this._cast(b, slot, ch.x, ch.y);
+          return;
+        }
+      }
+    }
+    for (const slot of SLOTS) {
+      const k = this._sk(b, slot);
+      if (!k || !this._ready(ch, slot, now)) continue;
+      const { spec } = k;
+      const hint = spec.bot || '';
+      switch (spec.type) {
+        case 'place': {
+          const kind = spec.obj.kind;
+          if (kind === 'portal' || kind === 'beacon' || !foe || spared) break;
+          if (kind === 'turret' && (ch._ntur || 0) >= 2) break;
+          if (kind === 'pin' && spec.obj.trigger === 'ally') break;
+          if (kind === 'barricade' && ctx.hp < 0.5 && dFoe < 500) { // peel: wall between me and the chaser
+            const t = foe.e;
+            if (this._cast(b, slot, ch.x + (t.x - ch.x) * 0.45, ch.y + (t.y - ch.y) * 0.45)) return;
+            break;
+          }
+          if (dFoe <= spec.range + 40 && (spec.dmg || kind === 'barricade' || kind === 'turret')) {
+            const p = this._lead(b, ch, foe.e, 300);
+            if (this._cast(b, slot, p.x, p.y)) return;
+          }
+          break;
+        }
+        case 'rewind': {
+          const rw = spec.rewind;
+          if (hint === 'escape' && ctx.hp < 0.35 && now - b.hurtAt < 900) { if (this._cast(b, slot, ch.x, ch.y)) return; }
+          if (hint === 'self' && rw.allies) {
+            let low = ctx.hp < 0.55 ? 1 : 0;
+            for (const a of ctx.allyChamps) if (a.d <= rw.radius && hpPct(a.e) < 0.55) low++;
+            if (low >= 2 && now - b.hurtAt < 1500 && this._cast(b, slot, ch.x, ch.y)) return;
+          }
+          break;
+        }
+        case 'shadow':
+          if (hint === 'escape' && spec.shadow.mode === 'swap' && ch._shadow && ctx.hp < 0.35 && now - b.hurtAt < 900) {
+            if (this._cast(b, slot, ch.x, ch.y)) return;
+          }
+          break;
+        case 'tether':
+        case 'link': {
+          let best = null;
+          for (const a of ctx.allyChamps) if (a.d <= spec.range && hpPct(a.e) < 0.6 && (!best || hpPct(a.e) < hpPct(best.e))) best = a;
+          if (best && this._cast(b, slot, best.e.x, best.e.y, best.e.id)) return;
+          break;
+        }
+        case 'echo': case 'timebox': case 'objcmd': {
+          if (!foe || dFoe > 700 || spared) break;
+          if (spec.type === 'objcmd' && !(ch._ntur > 0)) break; // no turrets, nothing to command
+          if (this._cast(b, slot, ch.x, ch.y)) return;
+          break;
+        }
+        case 'self':
+          if (hint === 'self' && foe && dFoe <= 700 && this._cast(b, slot, ch.x, ch.y)) return; // Peak Hours
+          break;
+        case 'resolve': {
+          if (!foe || (ch._npin || 0) < 2) break;
+          let near = false;
+          for (const ob of room.objects.list.values()) {
+            if (ob.ownerId === ch.id && ob.kind === 'pin' && Math.hypot(ob.x - foe.e.x, ob.y - foe.e.y) <= 400) { near = true; break; }
+          }
+          if (near && this._cast(b, slot, ch.x, ch.y)) return;
+          break;
+        }
+        case 'reload': {
+          const key = kit?.res?.key;
+          const ammo = key ? room.kits.units(ch, key) : 6;
+          if (ammo < kit.res.max && (ammo === 0 || (dFoe > 900 && ammo < 4))) {
+            // taps only: natural reload, no perfect timing
+            if (this._cast(b, slot, ch.x + (ch.faceX || 1) * 120, ch.y + (ch.faceY || 0) * 120)) return;
+          }
+          break;
+        }
+        case 'serve': {
+          const size = ch._mix && ch._mix.until > now ? ch._mix.list.length : 0;
+          const hurtAlly = ctx.allyChamps.some((a) => a.d <= 650 && hpPct(a.e) < 0.65) || ctx.hp < 0.65;
+          if (size >= 2 && ((foe && dFoe <= spec.serve.range && !spared) || hurtAlly)) {
+            const t = foe && dFoe <= spec.serve.range ? foe.e : ch;
+            if (this._cast(b, slot, t.x, t.y)) return;
+          }
+          break;
+        }
+        default: break; // summon, pickup, deliver, stance toggles w/o botPref: skipped by design
+      }
+    }
+  }
+
   /** Heals / team shields — any mode. */
   _supportCasts(b, ch, ctx, now) {
     for (const slot of SLOTS) {
-      const k = b.skills[slot];
+      const k = this._sk(b, slot);
       if (!k || !k.cls.allies || !(k.cls.heal || k.cls.shield) || !this._ready(ch, slot, now)) continue;
       const r = (k.spec.radius || 0) + CHAMP_RADIUS;
       let hurt = 0, low = hpPct(ch), sum = hpPct(ch), n = 1;
@@ -669,6 +831,12 @@ export class MobaBots {
         low = Math.min(low, p);
       }
       const fighting = ctx.enemyChamps.some((e) => e.d < 1000);
+      if (k.cls.revive) { // v6.1 Ops R: 2+ allied champions (me included) within 800 px below 60% HP and an enemy champion within 900
+        let low2 = hpPct(ch) < 0.6 ? 1 : 0;
+        for (const a of ctx.allyChamps) if (a.d <= 800 && hpPct(a.e) < 0.6) low2++;
+        if (low2 >= 2 && ctx.enemyChamps.some((e) => e.d < 900) && this._cast(b, slot, ch.x, ch.y)) return;
+        continue;
+      }
       const want = slot === 'r'
         ? (fighting && ((hurt >= 2 && low < 0.55) || low < 0.3))
         : (low < 0.55 || (hurt >= 2 && sum / n < 0.75));
@@ -680,7 +848,7 @@ export class MobaBots {
   _farmCasts(b, ch, target, ctx, now, minMana) {
     if (ctx.mana < minMana || Math.random() > 0.6) return;
     for (const slot of ['q', 'e', 'w']) {
-      const k = b.skills[slot];
+      const k = this._sk(b, slot);
       if (!k || !this._ready(ch, slot, now)) continue;
       const { spec, cls } = k;
       const d = dist(ch, target);
@@ -691,6 +859,8 @@ export class MobaBots {
         if (cls.selfCentered ? d <= spec.radius * 0.8 : d <= spec.range) { if (this._cast(b, slot, target.x, target.y)) return; }
       } else if (spec.type === 'projectile' && !spec.champOnly && d <= spec.range * 0.8) {
         if (this._cast(b, slot, target.x, target.y)) return;
+      } else if ((spec.type === 'cone' || spec.type === 'arc' || spec.type === 'line') && d <= spec.range * 0.9) {
+        if (this._cast(b, slot, target.x, target.y)) return; // v6.1 shapes clear minions too
       } else if (spec.type === 'target' && d <= spec.range + target.radius) {
         if (this._cast(b, slot, target.x, target.y, target.id)) return;
       } else if (spec.type === 'dash' && spec.toTarget && d <= spec.range && target.team === 'neutral') {
@@ -711,6 +881,8 @@ export class MobaBots {
 
   _spell(b, slot, x, y, id) {
     if (this.k.spellUse === false) return false;
+    const me = this.room.champs.get(b.sid), tnow = Date.now();
+    if (me && (this.room.cc.cantCast(me, tnow) || tnow < (me.disarmUntil || 0) || tnow < (me.blindUntil || 0))) return false; // v6.1: no summoner spells while CC'd
     return this.room._doSpell(b.sid, { slot, x, y, ...(id ? { id } : {}) });
   }
 
@@ -949,7 +1121,7 @@ export class MobaBots {
   /** Use ults / big skills on an epic monster (ignores the champion-only heuristics). */
   _offensiveCastsOnUnit(b, ch, u, now) {
     for (const slot of ['r', 'q', 'e']) {
-      const k = b.skills[slot];
+      const k = this._sk(b, slot);
       if (!k || !k.cls.damage || !this._ready(ch, slot, now)) continue;
       const { spec } = k;
       if (spec.type === 'projectile' && spec.champOnly) continue;

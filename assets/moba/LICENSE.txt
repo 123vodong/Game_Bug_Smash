@@ -12,3 +12,6 @@ Curated by Duke Nguyen (duc.nguyen@onethesis.com).
 - vfx/*.png (52 sprites in use, downscaled to 256 px): Kenney Particle Pack 1.1 (CC0 1.0)
 - fb/*.webp (35 animated flipbooks, 8 columns x 128 px frames): "RPG VFX Pack" by System G6 / Qoma, CC0 1.0
   (https://opengameart.org/content/rpg-vfx-pack) — converted from the original 256 px sequences.
+- fb/vf*.webp (22 flipbooks, 8 columns x 128 px frames): "Free VFX asset pack" (Effect_Anima, BigHit, BloodImpact, Charged, Constellation,
+  DitheredFire, EldenRing, ElectricShield, Explosion, Explosion2, FastPixelFire, Hyperspeed, Impact, Kabooms, Magma, PowerChords,
+  PuffAndStars, SmallHit, Tentacles, TheVortex, Wheel, Worm), CC0 1.0 — https://opengameart.org/content/free-vfx-asset-pack

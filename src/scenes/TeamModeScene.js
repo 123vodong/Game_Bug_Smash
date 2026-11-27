@@ -38,7 +38,7 @@
 // room is adopted (hello again). EP-08 🏳 rollback vote (button from 12:00, `/rollback` in chat,
 // Y / N, panel; hidden offline). EP-10 first-siege coaching tips (flag `tipsSiege`, ≤ 1 per 20 s).
 // EP-11 join option `hat`. EP-21 first-buy nudge, AudioManager team hooks, short offline timers.
-import { CHAMPIONS, isChampionId, autoAimsAtEnemy, autoAimReach } from '../../shared/moba/champions.js';
+import { CHAMPIONS, isChampionId, autoAimsAtEnemy, autoAimReach, resolveSkill, parseKitTags, parseCcTags, CC_TYPES } from '../../shared/moba/champions.js';
 import * as R from '../../shared/moba/rules.js';
 import { CHAMP_RADIUS, MINION_RADIUS, distToSeg } from '../../shared/moba/map.js';
 import { SPELLS, DEFAULT_SPELLS, validSpellPair } from '../../shared/moba/spells.js';
@@ -79,7 +79,9 @@ const WORLD_PHASES = new Set(['playing', 'ended']); // the match world is only s
 const PRED_SNAP_PX = 120;          // reconcile: snap the predicted position when this far off
 const STICK_ORDER_MS = 110;        // joystick / arrow-key move order cadence
 const AUTO_AIM_SELF_PX = 60;       // v4 §3.3: cursor this close to your champion → auto-aim
-const MOUSE_IDLE_MS = 1000;        // mouse not moved for this long → auto-aim (player request 2026-11-08)
+const NO_AIM_TYPES = new Set(['stance', 'echo', 'timebox', 'pickup', 'objcmd', 'resolve', 'rewind']); // v6: cast at self, no aim needed
+const FORCED_CC = new Set(['suppress', 'airborne', 'charm', 'fear', 'taunt']); // v6.1: no casts, no orders, no local walking
+const MOUSE_IDLE_MS = 1000;       // mouse not moved for this long → auto-aim (player request 2026-11-08)
 const CULL_PAD = 260;              // views farther than this outside the camera are hidden + not updated
 const FX_PREF_KEY = 'bugsmash.team.fx'; // 'auto' | 'high' | 'low' (localStorage)
 const CAM_LOCK_KEY = 'bugsmash.team.camLock'; // Pass 2 RP-08: '1' locked (default) | '0' free
@@ -147,13 +149,22 @@ export default class TeamModeScene extends Phaser.Scene {
     for (const [k, f] of MOBA_ASSETS) if (!this.textures.exists(k)) this.load.image(k, `assets/moba/${f}`);
     // v5 skill VFX sprites (Kenney Particle Pack, CC0) — see SkillFx.js
     for (const n of VFX_NAMES) if (!this.textures.exists(`vfx-${n}`)) this.load.image(`vfx-${n}`, `assets/moba/vfx/${n}.png`);
-    loadFb(this); // animated flipbooks (RPG VFX Pack)
+    // animated flipbooks (RPG VFX Pack, ~8 MB): skipped when the player chose Low effects (?fx=low or the saved pref);
+    // fb() already returns null for a missing sheet, so switching to High later just plays without the flipbook layers.
+    let lowPref = false;
+    try { lowPref = (new URLSearchParams(window.location.search).get('fx') || window.localStorage?.getItem(FX_PREF_KEY)) === 'low'; } catch (_) { /* storage blocked */ }
+    if (!lowPref) loadFb(this);
   }
 
   /** The skill spec a cast `fx` message belongs to (needs sid + slot), or null. */
   _skillOf(m) {
     const c = m && m.sid && m.slot ? this._state()?.champions?.get?.(m.sid) : null;
-    return c ? CHAMPIONS[c.champ]?.skills?.[m.slot] || null : null;
+    return c ? this._specFor(c, m.slot) : null;
+  }
+
+  /** v6: the ACTIVE spec of a champion's slot (stance variants replace the base spec). */
+  _specFor(c, slot) {
+    return c ? resolveSkill(CHAMPIONS[c.champ], slot, parseKitTags(c.buffs).stance) : null;
   }
 
   create() {
@@ -180,6 +191,7 @@ export default class TeamModeScene extends Phaser.Scene {
     this._lastOrderAt = 0; this._pendingOrder = null; this._lastCastAt = 0; this._pendingCast = null; this._castQueue = [];
     this._mine = new Map(); this._myCastAt = -1e9; this._minePrunedAt = 0;
     this._stickDir = null; this._stickSentAt = 0; this._sticking = false;
+    this._held = null; this._recastUntil = {};
     this._hoverSlot = null; this._aimFlash = null; this._mouseWorld = null; this._mouseHeld = false; this._dragAt = 0;
     this._hoverPickAt = 0; this._hoverEnemy = null; this._hoverEntity = null; this._selectedId = null; this._cursorKind = '';
     this._hoverGlow = null; this._hoverEntity = null; this._hoverCursor = '';
@@ -243,6 +255,7 @@ export default class TeamModeScene extends Phaser.Scene {
     this.hud = new MobaHud(this, {
       touch: this._isTouch, map: this.map, world: this.world,
       onSkill: (slot, viaButton) => this._tryCast(slot, viaButton),
+      onSkillUp: (slot) => this._releaseCast(slot), // HUD button pointer up = key up (hold / drag skills, mouse + touch)
       onUpgrade: (slot) => this._upgradeSkill(slot),
       onSpell: (slot, viaButton) => this._trySpell(slot, viaButton),
       onInfo: () => this._toggleInfo(),
@@ -250,7 +263,7 @@ export default class TeamModeScene extends Phaser.Scene {
       onRecall: () => this._recall(),
       onShop: () => this._toggleShop(),
       onStartNow: () => this._send('startNow'),
-      onMinimap: (x, y) => { if (this._canAct()) this._moveOrder(x, y, true); },
+      onMinimap: (x, y) => this._minimapTap(x, y), // v6.1: also aims an armed global skill
       onMinimapView: (x, y, phase) => this._minimapView(x, y, phase), // Pass 2 RP-08
       onCamToggle: () => this._toggleCamLock(),
       onScoreboard: () => this._setScoreboard(!this._sbOpen),
@@ -782,12 +795,15 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _onFx(m) {
-    if (m.sid && m.sid === this.localId && m.k !== 'spell' && m.k !== 'hit' && m.k !== 'knock') this._castSfx(m.slot);
+    if (m.sid && m.sid === this.localId && m.k !== 'spell' && m.k !== 'hit' && m.k !== 'knock' && m.k !== 'cc' && m.k !== 'suppress' && m.k !== 'gping') this._castSfx(m.slot);
+    // v6.1: the local champion's CC timer rings (HUD status row); every v6.1 kind then reaches fx.handle through the default branch
+    if ((m.k === 'cc' || m.k === 'ccBreak') && m.id && m.id === this.localId) this.hud.onCcFx?.(m);
+    else if (m.k === 'revive' && m.id === this.localId) this.hud.onCcFx?.({ k: 'ccBreak', id: m.id, type: 'revive' });
     switch (m.k) {
       case 'proj': {
         if (![m.x, m.y, m.dx, m.dy].every(Number.isFinite)) return;
         const c = this._state()?.champions?.get?.(m.sid);
-        const sk = c ? CHAMPIONS[c.champ]?.skills?.[m.slot] : null;
+        const sk = c ? this._specFor(c, m.slot) : null;
         const pst = styleFor(sk, 'proj');
         this.fx.skillshot(m, !!sk?.pierce, c ? projectileTex(this, c.champ, m.slot) : null, pst);
         if (!pst) this.fx.burstTex?.(m.x, m.y, 'moba-vfx-slash', 88, Number.isFinite(m.color) ? m.color : 0x39c2ff, 260, 100);
@@ -798,7 +814,7 @@ export default class TeamModeScene extends Phaser.Scene {
       case 'circle':
         if (Number.isFinite(m.x) && Number.isFinite(m.y)) {
           const cst = styleFor(this._skillOf(m), 'circle');
-          if (cst && castFx(this.fx, 'circle', cst, { x: m.x, y: m.y, r: m.r, delay: m.delay || 0, color: m.color })) {
+          if (cst && castFx(this.fx, 'circle', cst, { x: m.x, y: m.y, r: m.r, inner: m.inner, delay: m.delay || 0, color: m.color })) {
             this.fx.telegraph(m, true); // thin warning ring only; the style draws the windup + impact
             break;
           }
@@ -845,7 +861,7 @@ export default class TeamModeScene extends Phaser.Scene {
       case 'zone': {
         if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
         const c = this._state()?.champions?.get?.(m.sid);
-        const zsk = c ? CHAMPIONS[c.champ]?.skills?.[m.slot] : null;
+        const zsk = c ? this._specFor(c, m.slot) : null;
         this.fx.zone(m, zsk ? (styleFor(zsk, 'zone') ? null : zsk.icon) : null);
         const zst = !m.trap && styleFor(zsk, 'zone');
         if (zst && castFx(this.fx, 'zone', zst, { x: m.x, y: m.y, r: m.r, ms: m.ms, color: m.color })) break;
@@ -901,8 +917,23 @@ export default class TeamModeScene extends Phaser.Scene {
         if (this.time.now - this._myCastAt < 1600) this._markMine(m.id);
         break;
       }
-      default: break;
+      // v6: teleports of the local champion must also move the prediction (portal exit, rewind); the visuals stay in fx.handle
+      case 'tp':
+        if (m.id === this.localId) this._snapPred(m.x1, m.y1);
+        this.fx.handle?.(m); break;
+      case 'rewind': {
+        const mine = Array.isArray(m.list) ? m.list.find((e) => e && e.id === this.localId) : null;
+        if (mine) this._snapPred(mine.x1, mine.y1);
+        this.fx.handle?.(m); break;
+      }
+      default: this.fx.handle?.(m); break; // v6 kit fx kinds (charge, obj, tp, rewind ...): VFX developer owns handle()
     }
+  }
+
+  _snapPred(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    this._moveDest = null; this._movePath = null;
+    if (this._pred) { this._pred.x = x; this._pred.y = y; }
   }
 
   _isChampSid(id) { const st = this._state(); return !!(st?.scores?.get?.(id) || st?.champions?.get?.(id)); }
@@ -1005,7 +1036,7 @@ export default class TeamModeScene extends Phaser.Scene {
   _onKeyDown(ev) {
     if (this._shuttingDown || this._chatActive) return;
     const code = ev.code;
-    if (code === 'Escape') { this._onEscape(); return; }
+    if (code === 'Escape') { if (this._held) { this._cancelHeld(); return; } this._onEscape(); return; }
     if (this.hud.modalOpen) return;
     if (code === 'Tab') { ev.preventDefault?.(); this._setScoreboard(true); return; }
     if (code === 'Enter') { this._openChat(); return; }
@@ -1025,7 +1056,7 @@ export default class TeamModeScene extends Phaser.Scene {
       case 'KeyB': this._recall(); break;
       case 'KeyP': this._toggleShop(); break;
       case 'Space': this._attackNearest(); break;
-      case 'KeyS': if (this._canAct()) { this._order({ type: 'stop' }); this._moveDest = null; } break;
+      case 'KeyS': if (this._held) this._cancelHeld(); if (this._canAct()) { this._order({ type: 'stop' }); this._moveDest = null; } break;
       case 'Digit1': if (this._canAct()) this._send('active', {}); break; // Active item (Stasis / Cleanse / Veil)
       case 'Digit4': if (this._canAct()) {
         const p = this.input.activePointer;
@@ -1042,6 +1073,7 @@ export default class TeamModeScene extends Phaser.Scene {
 
   _onKeyUp(ev) {
     if (ev.code === 'Tab') this._setScoreboard(false); // key events only come from real keyboards
+    if (this._held && (ev.code === 'KeyQ' || ev.code === 'KeyW' || ev.code === 'KeyE' || ev.code === 'KeyR')) this._releaseCast(ev.code[3].toLowerCase());
     if (ev.code === 'KeyZ' && this._centerHeld) { // released: a free camera stays on your champion
       this._centerHeld = false;
       this._camFreeX = this._camX; this._camFreeY = this._camY;
@@ -1394,8 +1426,28 @@ export default class TeamModeScene extends Phaser.Scene {
     if (++this._voteKey % 6 === 0) this.hud.showVote({ ...this._vote, mine: this._voteMine }, srvNow, R.ROLLBACK_VOTE_MS);
   }
 
+  // ───────────────────────── v6.1 CC input rules ─────────────────────────
+  /** CC tags of the local champion (parseCcTags on the synced buffs, memoized per string). */
+  _ccList(me) {
+    const b = me?.buffs || '';
+    if (b !== this._ccKey) { this._ccKey = b; this._ccVal = parseCcTags(b); }
+    return this._ccVal || [];
+  }
+  /** First forced CC (suppress / airborne / charm / fear / taunt) or ''. */
+  _ccForced(me) { return this._ccList(me).find((k) => FORCED_CC.has(k)) || ''; }
+  /** Localized label of a CC type (`cc.<type>` key, CC_TYPES label as the English default). */
+  _ccLabel(k) { return this._kt(`cc.${k}`, CC_TYPES[k]?.label || k); }
+  /** Throttled toast for an ignored input while crowd controlled. */
+  _ccToast(k) {
+    const now = this.time.now;
+    if (now - (this._ccToastAt || -1e9) < 700) return;
+    this._ccToastAt = now;
+    this.hud.toast(`${CC_TYPES[k]?.icon || ''} ${this._ccLabel(k)}`.trim(), '#ff8a8a');
+  }
+
   // ───────────────────────── orders + casts ─────────────────────────
   _order(msg) {
+    if (msg?.type !== 'stop' && this._ccForced(this._me())) return; // the server drives a charmed / feared / taunted / suppressed / airborne champion
     const now = performance.now();
     if (now - this._lastOrderAt < R.MOVE_ORDER_RATE_MS + 10) { this._pendingOrder = msg; return; }
     this._lastOrderAt = now; this._pendingOrder = null;
@@ -1404,6 +1456,8 @@ export default class TeamModeScene extends Phaser.Scene {
 
   /** Move order + local path (nav.findPath, same as the server) for prediction and the path preview. */
   _moveOrder(x, y, mark, preview = mark) {
+    const fc = this._ccForced(this._me());
+    if (fc) { this._moveDest = null; this._movePath = null; this._ccToast(fc); return; }
     const c = this.world.clampToMap(x, y);
     this._order({ type: 'move', x: Math.round(c.x), y: Math.round(c.y) });
     const from = this._pred || this._me();
@@ -1419,6 +1473,8 @@ export default class TeamModeScene extends Phaser.Scene {
   }
 
   _attackOrder(view) {
+    const me = this._me(), fc = this._ccForced(me) || (this._ccList(me).includes('disarm') ? 'disarm' : '');
+    if (fc) { this._ccToast(fc); return; } // no basic attacks while disarmed; forced states choose their own target
     this._order({ type: 'attack', id: view.id });
     this._moveDest = null;
     this.fx.clickMark(view.x, view.y, true);
@@ -1462,22 +1518,49 @@ export default class TeamModeScene extends Phaser.Scene {
   _tryCast(slot, viaButton) {
     const me = this._me();
     if (!me || this._blocked()) return;
-    const sk = CHAMPIONS[me.champ]?.skills?.[slot];
+    const sk = this._specFor(me, slot); // v6: stance-resolved spec
     if (!sk) return;
     const srvNow = this._srvNow();
     if (me.dead) return this._deny(slot, '💀 You are respawning');
     if (slot === 'r' && (me.level || 1) < R.ULT_UNLOCK_LEVEL) return this._deny(slot, `🔒 ${sk.name} unlocks at level ${R.ULT_UNLOCK_LEVEL}`);
     if (me.ranks && !(me.ranks[slot] > 0)) return this._deny(slot, t('skill.unlearned'));
+    const kit = parseKitTags(me.buffs);
     // v5 recast: a live recast window makes the second press free (server enforces the real window).
-    const rcLive = !!sk.recast && ((this._recastUntil && this._recastUntil[slot]) || 0) > this.time.now;
+    // v6: a second press that is a state action (reload press, tether cut) is free too.
+    const rcLive = (!!sk.recast && ((this._recastUntil && this._recastUntil[slot]) || 0) > this.time.now)
+      || (sk.type === 'reload' && !!kit.reload) || (sk.type === 'tether' && !!kit.tether && !!sk.tether?.recastEnds);
     const left = (me[`cd${slot.toUpperCase()}`] || 0) - srvNow;
     if (!rcLive && left > 0) return this._deny(slot, `${sk.icon} ${sk.name} ready in ${(left / 1000).toFixed(1)}s`);
     if (!rcLive && (me.mana || 0) < sk.mana) return this._deny(slot, '💧 Not enough mana');
     if ((me.stunnedUntil || 0) > srvNow) return this._deny(slot, '💫 Stunned!');
+    const fc = this._ccForced(me); // v6.1: suppress / airborne / charm / fear / taunt: toast `cc.<type>`, nothing is sent
+    if (fc) return this._deny(slot, `${CC_TYPES[fc]?.icon || ''} ${this._ccLabel(fc)}`.trim());
+    const kd = rcLive ? '' : this._kitDenyLocal(me, sk, kit);
+    if (kd) return this._deny(slot, kd);
     const pos = this._pred || me;
-    const auto = viaButton || this._autoAimWanted(pos);
-    let aim = auto ? this._autoAim(sk, pos) : { x: this._mouseWorld.x, y: this._mouseWorld.y, id: null };
-    if (!aim) return this._deny(slot, '🎯 No target in range');
+    // v6.1 global skills: a pointer on the minimap aims them (cast flag mm:1); touch: first tap arms, tap the minimap to fire or tap again to auto-aim
+    let mmAim = null;
+    if (sk.global) {
+      const fa = this._forcedAim; this._forcedAim = null;
+      const mp = fa || this._mmPoint();
+      if (mp) mmAim = { x: mp.x, y: mp.y, id: null };
+      else if (this._isTouch && viaButton && !this._globalArmed(slot)) return;
+    }
+    const auto = !mmAim && (viaButton || this._autoAimWanted(pos));
+    let aim = mmAim || (auto ? this._autoAim(sk, pos) : { x: this._mouseWorld.x, y: this._mouseWorld.y, id: null });
+    if (!aim) return this._deny(slot, sk.targets === 'ally' ? this._kt('kit.noAlly', 'No ally in range') : '🎯 No target in range');
+    // v6 ally targeting: the hovered / nearest ally champion id (link / tether / deliver)
+    if (sk.targets === 'ally' && !aim.id) { const al = this._allyNear(aim.x, aim.y, sk.range, pos); if (al) aim = { x: al.x, y: al.y, id: al.id }; }
+    // v6 input modes are data-driven off the resolved spec: hold = down now / up on release, drag = A now / B on release
+    const mode = sk.input || 'tap';
+    if (mode === 'hold' || mode === 'drag') {
+      this._held = { slot, mode, viaButton: !!viaButton, auto, since: this.time.now, ax: aim.x, ay: aim.y, spec: sk };
+      if (mode === 'hold') this._castSend({ slot, x: Math.round(aim.x), y: Math.round(aim.y), ph: 'down' });
+      this._aimFlash = { slot, until: this.time.now + 260, x: aim.x, y: aim.y, id: null, auto };
+      this.hud.flashSlot(slot, false);
+      return;
+    }
+    if (sk.type === 'stance') this._recastUntil = {}; // a stance switch closes every recast window
     let id = aim.id || null;
     const wantsTarget = sk.type === 'target' || (sk.type === 'dash' && sk.toTarget);
     if (wantsTarget && !id) {
@@ -1492,6 +1575,8 @@ export default class TeamModeScene extends Phaser.Scene {
     }
     const msg = { slot, x: Math.round(aim.x), y: Math.round(aim.y) };
     if (id) msg.id = id;
+    if (mmAim) msg.mm = 1; // aim came from a minimap click: the server skips its on-screen sanity check
+    this._globalArm = null;
     this._castSend(msg);
     if (sk.recast) { this._recastUntil = this._recastUntil || {}; this._recastUntil[slot] = rcLive ? 0 : this.time.now + sk.recast.ms; }
     this._myCastAt = this.time.now;
@@ -1499,6 +1584,86 @@ export default class TeamModeScene extends Phaser.Scene {
     if (sk.type === 'dash' || sk.type === 'blink') this._moveDest = null;
     this._aimFlash = { slot, until: this.time.now + 260, x: aim.x, y: aim.y, id: auto ? id : null, auto };
     this.hud.flashSlot(slot, false);
+  }
+
+  /** Text through t() with an English default (new kit strings are localized later). */
+  _kt(key, def) { const s = t(key); return s === key ? def : s; }
+
+  /** World point under a pointer that is on the minimap (mouse cursor, or any finger that is down on touch), else null. */
+  _mmPoint() {
+    const mgr = this.input?.manager;
+    const list = this._isTouch ? (mgr?.pointers || []).filter((p) => p.isDown) : [this.input?.mousePointer];
+    for (const p of list) { const w = p && this.hud.minimapWorld?.(p.x, p.y); if (w) return w; }
+    return null;
+  }
+  /** Touch: first tap on a global skill arms it (toast), a second tap within 4 s fires with auto-aim. Returns true when it may fire now. */
+  _globalArmed(slot) {
+    const now = this.time.now, g = this._globalArm;
+    if (g && g.slot === slot && now < g.until) { this._globalArm = null; return true; }
+    this._globalArm = { slot, until: now + 4000 };
+    this.hud.toast(this._kt('ui.mm.aim', 'Tap the minimap to aim, or tap the skill again for auto-aim'), '#9fdcff');
+    this.hud.flashSlot(slot, false);
+    return false;
+  }
+  /** A minimap tap while a global skill is armed fires it there (mm:1); otherwise it is a move order. */
+  _minimapTap(x, y) {
+    const g = this._globalArm;
+    if (g && this.time.now < g.until) { this._globalArm = null; this._forcedAim = { x, y }; this._tryCast(g.slot, true); this._forcedAim = null; return; }
+    if (this._canAct()) this._moveOrder(x, y, true);
+  }
+
+  /** v6 local denial toasts (nothing is sent): resource, shadow, package, pins, turrets, reloading. '' = ok. */
+  _kitDenyLocal(me, sk, kit) {
+    const sp = sk.spend;
+    if (sp && Number(kit[sp.res] || 0) < sp.min) return this._kt('kit.needRes', 'Not enough resource');
+    if (sk.type === 'shadow' && sk.shadow?.mode === 'swap' && !kit.shadow) return this._kt('kit.noShadow', 'No shadow to swap with');
+    if (sk.type === 'deliver' && !kit.pkg) return this._kt('kit.noPackage', 'You are not carrying a package');
+    if (sk.type === 'resolve' && !(Number(kit.pins) > 0)) return this._kt('kit.noPins', 'No pins placed');
+    if (sk.type === 'objcmd' && !(Number(kit.turrets) > 0)) return this._kt('kit.noTurrets', 'No turrets deployed');
+    if (kit.reload && sk.type !== 'reload' && Object.values(CHAMPIONS[me.champ]?.skills || {}).some((s) => s.reload?.lockCasts)) return this._kt('kit.reloading', 'Reloading');
+    return '';
+  }
+
+  /** Hovered ally champion first, else the nearest living ally (never self) within range of the caster. */
+  _allyNear(x, y, range, pos) {
+    let best = null, bd = Infinity;
+    for (const v of this.views.champs.values()) {
+      if (v.dead || v.team !== this.myTeam || v.id === this.localId) continue;
+      if (Math.hypot(v.x - pos.x, v.y - pos.y) > (range || 600) + 40) continue;
+      const d = v.hitTest?.(x, y) ? 0 : Math.hypot(v.x - x, v.y - y);
+      if (d < bd) { bd = d; best = v; }
+    }
+    return best;
+  }
+
+  /** Key / button up: fire a held skill at the release aim, or send a drag's second point. */
+  _releaseCast(slot) {
+    const h = this._held;
+    if (!h || h.slot !== slot) return;
+    this._held = null;
+    const me = this._me();
+    if (!me || this._blocked()) return;
+    const pos = this._pred || me;
+    const mw = this._mouseWorld;
+    let aim = h.auto || !mw ? this._autoAim(h.spec, pos) : { x: mw.x, y: mw.y, id: null };
+    if (!aim) aim = { x: h.ax, y: h.ay, id: null };
+    if (h.mode === 'hold') {
+      this._send('cast', { slot, x: Math.round(aim.x), y: Math.round(aim.y), ph: 'up' }); // up / cancel are exempt from the cast rate limit
+    } else {
+      const msg = { slot, x: Math.round(h.ax), y: Math.round(h.ay) };
+      if (!h.auto && mw) { msg.x2 = Math.round(mw.x); msg.y2 = Math.round(mw.y); } // auto / touch tap: no B = server default wall
+      this._castSend(msg);
+    }
+    this._myCastAt = this.time.now;
+    this._aimFlash = { slot, until: this.time.now + 260, x: aim.x, y: aim.y, id: null, auto: h.auto };
+  }
+
+  /** Esc / S / stun / death: cancel a held charge (free) or drop a drag in progress. */
+  _cancelHeld(send = true) {
+    const h = this._held;
+    if (!h) return;
+    this._held = null;
+    if (h.mode === 'hold' && send) this._send('cast', { slot: h.slot, x: Math.round(h.ax), y: Math.round(h.ay), ph: 'cancel' });
   }
 
   /** v4 §3.3: no usable mouse direction → auto-aim (touch, no cursor yet, cursor outside the
@@ -1516,6 +1681,12 @@ export default class TeamModeScene extends Phaser.Scene {
    *  visible enemy unit (never a pet), else straight ahead (stick / last move / facing). */
   _autoAim(sk, pos) {
     if (sk.type === 'self' || sk.type === 'allies') return { x: pos.x, y: pos.y, id: null };
+    if (NO_AIM_TYPES.has(sk.type)) return { x: pos.x, y: pos.y, id: null };
+    if (sk.targets === 'ally') { // v6: nearest living allied champion in range (never self); link falls back to self, others fail
+      const al = this._allyNear(pos.x, pos.y, sk.range, pos);
+      if (al) return { x: al.x, y: al.y, id: al.id };
+      return sk.type === 'link' ? { x: pos.x, y: pos.y, id: null } : null;
+    }
     if (sk.type === 'swap') { // v5: nearest allied champion in range
       let best = null, bd = (sk.range || 600) + 40;
       for (const v of this.views.champs.values()) {
@@ -1525,7 +1696,22 @@ export default class TeamModeScene extends Phaser.Scene {
       }
       return best ? { x: best.x, y: best.y, id: null } : null;
     }
-    if ((sk.type === 'circle' || sk.type === 'zone') && !sk.range) return { x: pos.x, y: pos.y, id: null };
+    if ((sk.type === 'circle' || sk.type === 'zone' || sk.type === 'place') && !sk.range) return { x: pos.x, y: pos.y, id: null };
+    if (sk.global) { // v6.1 map-wide shot: nearest Spotted enemy champion, else the lowest-HP% visible enemy champion in range, else facing
+      const st = this._state();
+      let spot = null, sd = Infinity, low = null, lp = Infinity;
+      for (const v of this.views.champs.values()) {
+        if (v.dead || v.team === this.myTeam) continue;
+        const d = Math.hypot(v.x - pos.x, v.y - pos.y);
+        if (d > autoAimReach(sk)) continue;
+        const c = st?.champions?.get?.(v.id);
+        if (String(c?.buffs || '').split(',').includes('spotted') && d < sd) { sd = d; spot = v; }
+        const f = (c?.hp ?? v.hp) / Math.max(1, c?.maxHp ?? v.maxHp ?? 1);
+        if (f < lp) { lp = f; low = v; }
+      }
+      const gt = spot || low;
+      if (gt) return { x: gt.x, y: gt.y, id: gt.id };
+    } else
     // Escape moves (blinks, pure dashes) never auto-aim at an enemy — shared policy with the server.
     if (autoAimsAtEnemy(sk)) {
       const reach = autoAimReach(sk, R.AUTO_AIM_SLACK ?? 150);
@@ -1536,7 +1722,7 @@ export default class TeamModeScene extends Phaser.Scene {
     if (sk.type === 'target') return null;
     const v = this.views.champs.get(this.localId);
     const dir = this._stickDir || this._lastMoveDir || { x: v?.facing || 1, y: 0 };
-    const r = Math.min(sk.range || 400, 450);
+    const r = sk.type === 'place' ? Math.min(sk.range || 350, 350) : Math.min(sk.range || 400, 450); // place: min(range, 350) ahead
     return { x: pos.x + dir.x * r, y: pos.y + dir.y * r, id: null };
   }
 
@@ -1859,6 +2045,8 @@ export default class TeamModeScene extends Phaser.Scene {
       this._mouseWorld.x = wp.x; this._mouseWorld.y = wp.y;
     }
     this._updateLocal(me, dt, now, srvNow);
+    // v6: a held charge / drag in progress ends on stun, death or when the match stops accepting input
+    if (this._held && (!me || me.dead || (me.stunnedUntil || 0) > srvNow || this._ccForced(me) || this._blocked())) this._cancelHeld(!(me?.dead || (me?.stunnedUntil || 0) > srvNow));
     this._tickQuality(now);
     const view = this.cameras.main.worldView;
     this.map.update(dt, view, {
@@ -1870,7 +2058,7 @@ export default class TeamModeScene extends Phaser.Scene {
     // Throttle HUD refresh to 20 Hz (matches server 50ms tick rate; cuts 60-FPS HUD polling overhead 3x)
     if (now >= (this._hudAt || 0)) {
       this._hudAt = now + 50;
-      this.hud.update({ st, me, myId: this.localId, srvNow, now, mePos: this._pred, view, canShop, phase: this._phase, hidden: this._meHidden });
+      this.hud.update({ st, me, myId: this.localId, srvNow, now, mePos: this._pred, view, canShop, phase: this._phase, hidden: this._meHidden, held: this._held });
     }
     if (me && this.shop) this.shop.update({ gold: me.gold | 0, items: toArr(me.items), canShop });
     if (this.augmentPanel) {
@@ -2250,7 +2438,7 @@ export default class TeamModeScene extends Phaser.Scene {
           p.x = c.x; p.y = c.y;
           if (err > 400) this._moveDest = null;
         } else {
-          const canMove = !((c.stunnedUntil || 0) > srvNow) && !((c.rootedUntil || 0) > srvNow) && !((c.recallUntil || 0) > srvNow);
+          const canMove = !((c.stunnedUntil || 0) > srvNow) && !((c.rootedUntil || 0) > srvNow) && !((c.recallUntil || 0) > srvNow) && !this._ccForced(c); // v6.1: forced states follow the server
           if (this._moveDest && canMove && this._replan) {
             this._replan = false;
             const path = this.world.nav.findPath(p.x, p.y, this._moveDest.x, this._moveDest.y, CHAMP_RADIUS);
@@ -2358,6 +2546,7 @@ export default class TeamModeScene extends Phaser.Scene {
           this._updateTargetPanel(this._state());
         }
         this._drawAim(me, now);
+        this.hud.setMmAim?.(this._mmAimWanted); // global skill preview: a dot on the minimap (null clears it)
       }
 
       // ───────────────────────── aim previews ─────────────────────────
@@ -2448,9 +2637,66 @@ export default class TeamModeScene extends Phaser.Scene {
       }
 
       /** Skill range / shape preview: while hovering a HUD skill, and briefly after a cast. */
+      /** Annular sector (r0 = 0: a wedge) filled alpha 0.18, outlined 0.6, in the spec colour (v6.1 cone / arc previews). */
+      _drawSector(g, x, y, r0, r1, a0, a1, col, a) {
+        g.beginPath();
+        if (r0 > 0) { g.arc(x, y, r1, a0, a1, false); g.arc(x, y, r0, a1, a0, true); }
+        else { g.moveTo(x, y); g.arc(x, y, r1, a0, a1, false); }
+        g.closePath();
+        g.fillStyle(col, 0.18 * a); g.fillPath();
+        g.lineStyle(2, col, 0.6 * a); g.strokePath();
+      }
+
+      /** Dashed straight line (barrier / phase previews). */
+      _dashedLine(g, x0, y0, x1, y1, col, a, dash = 16, gap = 10) {
+        const L = Math.hypot(x1 - x0, y1 - y0) || 1, ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+        g.lineStyle(3, col, 0.85 * a);
+        for (let s = 0; s < L; s += dash + gap) { const e = Math.min(L, s + dash); g.lineBetween(x0 + ux * s, y0 + uy * s, x0 + ux * e, y0 + uy * e); }
+      }
+
+      /** Dashed circle outline (the safe inner edge of a donut). */
+      _dashedCircle(g, x, y, r, col, a) {
+        g.lineStyle(2, col, 0.7 * a);
+        const n = 28;
+        for (let i = 0; i < n; i += 2) { g.beginPath(); g.arc(x, y, r, (i / n) * Math.PI * 2, ((i + 1) / n) * Math.PI * 2, false); g.strokePath(); }
+      }
+
+      /** Knockback arrows for the knockable enemies inside a wedge (pushed away from its origin). */
+      _knockArrowsInSector(g, p, base, half, sk, col, a) {
+        let n = 0;
+        this._knockables((v, vr) => {
+          const dx = v.x - p.x, dy = v.y - p.y, d = Math.hypot(dx, dy);
+          if (n >= 8 || d > sk.range + vr) return;
+          if (d > 50 && Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - base), Math.cos(Math.atan2(dy, dx) - base))) > half) return;
+          n++;
+          this._knockArrow(g, v.x, v.y, d > 1 ? dx / d : 1, d > 1 ? dy / d : 0, sk.knockback.dist, vr, sk.wallStun?.ms || 0, col, a);
+        });
+      }
+
+      /** Phase dash lane: free stretches solid, wall stretches the dash can cross dashed, stops at a wall that is too thick. Returns the landing point. */
+      _drawPhaseLane(g, p, ux, uy, len, maxWall, col, a) {
+        const step = 20, n = Math.max(1, Math.ceil(len / step)), gap = len / n, nav = this.world.nav;
+        let lx = p.x, ly = p.y, run = -1, end = null;
+        const seg = (x0, y0, x1, y1, dashed) => { if (dashed) this._dashedLine(g, x0, y0, x1, y1, col, a, 8, 7); else { g.lineStyle(6, col, 0.6 * a); g.lineBetween(x0, y0, x1, y1); } };
+        for (let i = 1; i <= n; i++) {
+          const x = p.x + ux * gap * i, y = p.y + uy * gap * i, blocked = nav.isBlocked(x, y, CHAMP_RADIUS);
+          if (blocked) { if (run < 0) run = i; continue; }
+          if (run >= 0) {
+            if ((i - run) * gap > maxWall) { end = { x: lx, y: ly, stop: true }; break; }
+            const sx = p.x + ux * gap * (run - 1), sy = p.y + uy * gap * (run - 1); seg(sx, sy, x, y, true); run = -1;
+          } else seg(lx, ly, x, y, false);
+          lx = x; ly = y;
+        }
+        if (!end) end = run >= 0 ? { x: lx, y: ly, stop: true } : { x: lx, y: ly, stop: false };
+        g.lineStyle(3, col, 0.8 * a); g.strokeCircle(end.x, end.y, 28);
+        if (end.stop) { g.lineStyle(6, 0xff8a3c, 0.95 * a); g.lineBetween(end.x + ux * 32 - uy * 24, end.y + uy * 32 + ux * 24, end.x + ux * 32 + uy * 24, end.y + uy * 32 - ux * 24); }
+        return end;
+      }
+
       _drawAim(me, now) {
         const g = this._aimG;
         g.clear();
+        this._mmAimWanted = null;
         if (this._aimTxt.visible) this._aimTxt.setVisible(false);
         if (!me || me.dead || !this._pred) return;
         this._drawPathPreview(g, now);
@@ -2463,7 +2709,7 @@ export default class TeamModeScene extends Phaser.Scene {
           this._drawSpellAim(g, me, sp, this._pred, fl, fl ? Math.max(0, (fl.until - now) / 260) : 1);
           return;
         }
-        const sk = slot && CHAMPIONS[me.champ]?.skills?.[slot];
+        const sk = slot && this._specFor(me, slot);
         if (!sk) return;
         const p = this._pred, col = sk.color ?? 0xffffff;
         const a = flash && !this._hoverSlot ? Math.max(0, (flash.until - now) / 260) : 1;
@@ -2479,11 +2725,12 @@ export default class TeamModeScene extends Phaser.Scene {
           if (kb) this._knockArrowsInCircle(g, c.x, c.y, sk.radius, sk, col, pa);
           return;
         }
-        if (sk.range) { g.lineStyle(3, col, 0.55 * a); g.strokeCircle(p.x, p.y, sk.range); }
+        if (sk.range && !sk.global) { g.lineStyle(3, col, 0.55 * a); g.strokeCircle(p.x, p.y, sk.range); } // a map-wide range ring would fill the screen
         const selfArea = sk.type === 'self' || sk.type === 'allies' || ((sk.type === 'circle' || sk.type === 'zone') && !sk.range);
         if (selfArea && sk.radius) {
           g.fillStyle(col, 0.1 * a); g.fillCircle(p.x, p.y, sk.radius);
           g.lineStyle(3, col, 0.75 * a); g.strokeCircle(p.x, p.y, sk.radius);
+          if (sk.inner) this._dashedCircle(g, p.x, p.y, sk.inner, col, a);
           if (sk.type === 'zone') { g.lineStyle(2, 0xffffff, 0.35 * a); g.strokeCircle(p.x, p.y, sk.radius * 0.7); }
           if (kb) this._knockArrowsInCircle(g, p.x, p.y, sk.radius, sk, col, a);
           return;
@@ -2502,8 +2749,36 @@ export default class TeamModeScene extends Phaser.Scene {
           g.lineStyle(2, 0xffd23f, 0.5 * a); g.strokeCircle(autoT.x, autoT.y, 56);
           if (!this._aimTxt.visible && sk.type !== 'target') this._aimTxt.setText('🎯 AUTO').setPosition(autoT.x + 70, autoT.y - 40).setVisible(true);
         }
+        if (sk.global && !flash) { const mp = this._mmPoint(); if (mp) aim = mp; } // a pointer on the minimap aims a global skill
         const dx = aim.x - p.x, dy = aim.y - p.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
-        if (sk.type === 'projectile') {
+        if (sk.global) {
+          // v6.1 map-wide shot: a thin line from the caster along the aim for the full range, plus a dot on the minimap
+          const mp2 = this.world.clampToMap(p.x + ux * sk.range, p.y + uy * sk.range);
+          g.lineStyle(2, col, 0.7 * a); g.lineBetween(p.x, p.y, mp2.x, mp2.y);
+          g.lineStyle(2, col, 0.35 * a); g.strokeCircle(aim.x, aim.y, 40);
+          this._mmAimWanted = { x: aim.x, y: aim.y };
+        } else if (sk.type === 'cone' || sk.type === 'arc') {
+          // v6.1 wedge (cone) / crescent (arc: inner..range, with a looping sweep line): drawn exactly from the spec
+          const base = Math.atan2(uy, ux), half = ((sk.angle || 90) * Math.PI) / 360, r0 = sk.type === 'arc' ? sk.inner || 0 : 0;
+          this._drawSector(g, p.x, p.y, r0, sk.range, base - half, base + half, col, a);
+          if (sk.type === 'arc') {
+            const sweep = Math.max(200, sk.sweepMs || 260) + 500, an = base - half + ((now % sweep) / sweep) * half * 2;
+            g.lineStyle(3, 0xffffff, 0.8 * a); g.lineBetween(p.x + Math.cos(an) * r0, p.y + Math.sin(an) * r0, p.x + Math.cos(an) * sk.range, p.y + Math.sin(an) * sk.range);
+          }
+          if (kb && sk.type === 'cone') this._knockArrowsInSector(g, p, base, half, sk, col, a);
+        } else if (sk.type === 'line') {
+          const L = sk.range, hw = (sk.width || 100) / 2, nx = -uy * hw, ny = ux * hw;
+          const pts = [{ x: p.x + nx, y: p.y + ny }, { x: p.x + ux * L + nx, y: p.y + uy * L + ny }, { x: p.x + ux * L - nx, y: p.y + uy * L - ny }, { x: p.x - nx, y: p.y - ny }];
+          g.fillStyle(col, 0.18 * a); g.fillPoints(pts, true);
+          g.lineStyle(2, col, 0.6 * a); g.strokePoints(pts, true);
+        } else if (sk.type === 'place' && sk.obj?.kind === 'barrier') {
+          // v6.1 barrier: a segment centred on the aim (clamped to range), perpendicular to the cast direction, length obj.len (+ spent orbs)
+          const sp = sk.spend, kit = parseKitTags(me.buffs), u = sp ? Math.min(Number(kit[sp.res] || 0), sp.max) : 0;
+          const len = sk.obj.len * (1 + ((sp?.per?.radius) || 0) * u), r = Math.min(d, sk.range), cx = p.x + ux * r, cy = p.y + uy * r, hl = len / 2;
+          const x0 = cx - uy * hl, y0 = cy + ux * hl, x1 = cx + uy * hl, y1 = cy - ux * hl;
+          g.lineStyle(sk.obj.thick || 40, col, 0.2 * a); g.lineBetween(x0, y0, x1, y1);
+          this._dashedLine(g, x0, y0, x1, y1, col, a);
+        } else if (sk.type === 'projectile') {
           const L = sk.range, hw = (sk.width || 70) / 2;
           const count = Math.max(1, Math.min(12, sk.count | 0 || 1));
           const spread = count > 1 ? ((sk.spread || 0) * Math.PI) / 180 : 0;
@@ -2542,6 +2817,10 @@ export default class TeamModeScene extends Phaser.Scene {
           const r = Math.min(d, sk.range), cx = p.x + ux * r, cy = p.y + uy * r;
           g.fillStyle(col, (sk.type === 'zone' ? 0.2 : 0.16) * a); g.fillCircle(cx, cy, sk.radius);
           g.lineStyle(3, col, 0.85 * a); g.strokeCircle(cx, cy, sk.radius);
+          if (sk.inner) { // donut: the centre is safe (inner edge dashed)
+            g.fillStyle(0x000000, 0.1 * a); g.fillCircle(cx, cy, sk.inner);
+            this._dashedCircle(g, cx, cy, sk.inner, col, a);
+          }
           if (sk.type === 'zone') { // persistent: concentric "puddle" rings
             g.lineStyle(2, 0xffffff, 0.35 * a); g.strokeCircle(cx, cy, sk.radius * 0.7);
             g.lineStyle(2, 0xffffff, 0.2 * a); g.strokeCircle(cx, cy, sk.radius * 0.4);
@@ -2549,10 +2828,9 @@ export default class TeamModeScene extends Phaser.Scene {
           if (kb) this._knockArrowsInCircle(g, cx, cy, sk.radius, sk, col, a);
         } else if (sk.type === 'dash') {
           const r = Math.min(d, sk.range), tx = p.x + ux * r, ty = p.y + uy * r;
-          const end = this.world.nav.clipMove(p.x, p.y, tx, ty, CHAMP_RADIUS);
-          g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, end.x, end.y);
-          g.strokeCircle(end.x, end.y, 28);
-          if (end.hit) { // stopped by furniture
+          const end = sk.phase ? this._drawPhaseLane(g, p, ux, uy, r, sk.phase.maxWall, col, a) : this.world.nav.clipMove(p.x, p.y, tx, ty, CHAMP_RADIUS);
+          if (!sk.phase) { g.lineStyle(6, col, 0.6 * a); g.lineBetween(p.x, p.y, end.x, end.y); g.strokeCircle(end.x, end.y, 28); } // v6.1 phase: the lane draws itself (dashed wall stretches)
+          if (end.hit && !sk.phase) { // stopped by furniture
             g.lineStyle(2, col, 0.25 * a); g.lineBetween(end.x, end.y, tx, ty);
             g.lineStyle(6, 0xff8a3c, 0.95 * a);
             g.lineBetween(end.x + ux * 32 - uy * 24, end.y + uy * 32 + ux * 24, end.x + ux * 32 + uy * 24, end.y + uy * 32 - ux * 24);
@@ -2742,6 +3020,8 @@ export default class TeamModeScene extends Phaser.Scene {
         const left = (me['cd' + K] || 0) - srvNow;
         if (left > 0) return this._deny(slot, `${sp.icon} ${sp.name} ready in ${left >= 10000 ? fmtTime(left) : `${(left / 1000).toFixed(1)}s`}`);
         if ((me.stunnedUntil || 0) > srvNow) return this._deny(slot, '💫 Stunned!');
+        const hc = this._ccList(me).find((k) => k === 'suppress' || k === 'airborne'); // summoner spells stay usable under charm / fear / taunt / silence / disarm / blind
+        if (hc) return this._deny(slot, `${CC_TYPES[hc]?.icon || ''} ${this._ccLabel(hc)}`.trim());
         if (sp.kind === 'blink' && (me.rootedUntil || 0) > srvNow) return this._deny(slot, `🌿 Rooted — can't ${sp.name}`);
         if (sp.kind === 'blink' && this.time.now < this._dashUntil) return this._deny(slot, `💨 Can't ${sp.name} while displaced`);
         const pos = this._pred || me;

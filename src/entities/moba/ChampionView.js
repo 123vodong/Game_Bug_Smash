@@ -7,7 +7,7 @@
 // v2: a procedural costume from `def.look` (looks.js): outfit (between the team
 // outline and the stickman), hat + held prop (in front), and for Rush a scooter
 // (deck + 2 spinning wheels; he leans instead of running). ≤ 6 extra images.
-import { CHAMPIONS } from '../../../shared/moba/champions.js';
+import { CHAMPIONS, parseKitTags, parseCcTags, CC_TYPES, CC_TUNING } from '../../../shared/moba/champions.js';
 import { RECALL_MS } from '../../../shared/moba/rules.js';
 import { FONT, BAR, ME_COLOR, D, depthAt, teamColor, teamCss, relation, approach, calmPrefs, hatEmoji } from './mobaGfx.js';
 
@@ -16,6 +16,7 @@ import { FONT, BAR, ME_COLOR, D, depthAt, teamColor, teamCss, relation, approach
 // y-sorted in front of the champion never cover them. It follows the display position.
 const OVERLAY_DEPTH = D.numbers - 1;
 import { ensureMobaLooks, costumeLayout, costumeKeys, lookMeta, SCOOTER_LIFT } from './looks.js';
+import { loopFb } from './SkillFx.js';
 
 export const POSE_KEYS = {
   idle: 'stick-idle', run: 'stick-run', run2: 'stick-run2', smash: 'stick-smash', kick: 'stick-kick',
@@ -28,6 +29,11 @@ const BUFF_PRIORITY = ['deadline', 'r', 'q', 'w', 'e'];
 // v4 bushes: an own-team champion standing in a bush is drawn translucent with a leaf tint.
 const HIDDEN_ALPHA = 0.5, HIDDEN_OV_ALPHA = 0.8, LEAF_TINT = 0xa6f0a0, SLOW_TINT = 0x8fc4ff;
 const FADE_MS = 200;
+const CC_TINT = { suppress: 0x8a8a99, charm: 0xffb0d6, fear: 0xb79cff }; // v6.1 body tints (grey = desaturated)
+const CC_ALPHA = { untarget: 0.3, ghost: 0.35 };
+// v6 kit visuals (docs/02_CHAMPIONS_AND_SKILLS.md [v6 numbering] 3.2): stance body tint, orbiting data orbs, carried box, drink cup.
+const STANCE_TINT = { hotfix: 0xffb0d0, feature: 0xb8f5a0, bucket: 0xb0dcff }; // main / mop = default look
+const MIX_COLOR = { S: 0x5a3a22, M: 0xf5e6d3, G: 0xffb347 };
 
 /** Map the server's free-form `action` string onto one of the stickman poses (null = none). */
 export function poseForAction(action, def, alt) {
@@ -69,6 +75,8 @@ export class ChampionView {
     this.hp = -1; this.maxHp = -1; this.shield = -1; this.mana = -1; this.maxMana = -1;
     this.level = 0;
     this._buffs = null; this._auraColor = null;
+    this._kit = {}; this._kitKey = ''; this._stanceTint = null; this._spotted = false;
+    this._ccList = []; this._ccTint = null; this._ccO = null; this._airY = 0; this._shakeX = 0; this._stealth = false; this._bodyA = -1; // v6.1 CC looks
     this._flashUntil = 0;
     this._phase = Math.random() * 4000;
     this.moving = false;
@@ -82,6 +90,7 @@ export class ChampionView {
     const c = scene.add.container(ch.x, ch.y).setDepth(depthAt(ch.y));
     this.c = c;
     const shadow = scene.add.ellipse(0, 3, 62, 18, 0x000000, 0.42);
+    this.shadow = shadow;
     ensureMobaLooks(scene);
     this._buildCostume(scene);
     this.ring = scene.add.ellipse(0, 2, 76, 27, col, isMe ? 0.3 : 0.2)
@@ -100,6 +109,7 @@ export class ChampionView {
     this.spellBubble = scene.add.circle(0, -46, 46, 0x7b61ff, 0.14).setStrokeStyle(2.5, 0xa78bfa, 0.92).setVisible(false);
     this.stunFx = scene.add.text(0, -150, '💫', { fontSize: 24 }).setOrigin(0.5).setVisible(false);
     this.silenceFx = scene.add.text(0, -178, '🔇', { fontSize: 22 }).setOrigin(0.5).setVisible(false);
+    this.ccIcon = scene.add.text(0, BAR_Y - 66, '', { fontSize: 28, padding: { y: 4 } }).setOrigin(0.5).setVisible(false); // v6.1: top CC icon above the plate
     this.status = scene.add.text(BAR_W / 2 + 6, BAR_Y + 20, '', { fontSize: 15 }).setOrigin(0, 0.5);
     // Bars
     this.hpBg = scene.add.rectangle(0, BAR_Y, BAR_W + 4, 11, 0x000000, 0.82);
@@ -128,11 +138,93 @@ export class ChampionView {
     this._hat = null;
     this.hatT = scene.add.text(0, BAR_Y - 40, '', { fontSize: 20, padding: { y: 4 } }).setOrigin(0.5).setVisible(false);
     this._setHat(ch.hat);
-    over.push(this.lvBg, this.lvText, this.name, this.status, this.stunFx, this.hatT);
+    over.push(this.lvBg, this.lvText, this.name, this.status, this.stunFx, this.hatT, this.ccIcon);
     c.add(parts);
     this.ov = scene.add.container(ch.x, ch.y, over).setDepth(OVERLAY_DEPTH);
     this._setPose('idle');
+    this._buildKit(scene, c);
     if (this.dead) { c.setVisible(false); this.ov.setVisible(false); }
+  }
+
+  // ───────────────────────── v6 kit visuals ─────────────────────────
+  _buildKit(scene, c) {
+    // Model: up to 3 data orbs orbiting the body (kit:orbs)
+    this._orbs = [];
+    if (this.def.kit?.res?.show === 'orbs' && scene.textures.exists('vfx-magic_01')) {
+      for (let i = 0; i < 3; i++) {
+        const o = scene.add.image(0, -46, 'vfx-magic_01').setBlendMode(1).setTint(this.def.color || 0x6cffd6).setDisplaySize(22, 22).setVisible(false);
+        c.add(o); this._orbs.push(o);
+      }
+    }
+    // Rush: the carried package (kit:pkg)
+    this._box = null;
+    if (this.def.kit?.pkg) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xc8a165, 1); g.fillRect(-12, -10, 24, 20);
+      g.fillStyle(0xe8d4a8, 1); g.fillRect(-2, -10, 4, 20);
+      g.lineStyle(2, 0x5a4020, 1); g.strokeRect(-12, -10, 24, 20);
+      g.setVisible(false); c.add(g); this._box = g;
+    }
+    // Brew: a cup whose layers show the mix (kit:mix, oldest first)
+    this._cup = null;
+    if (this.def.kit?.mix) { this._cup = scene.add.graphics().setVisible(false); c.add(this._cup); }
+    // Zero: a purple ring while a shadow clone exists (the clone itself is a world fx)
+    this._shadowRing = null;
+    if (this.def.kit?.shadow || this.champ === 'zero') {
+      this._shadowRing = scene.add.ellipse(0, 2, 98, 36).setStrokeStyle(3, 0xa77bff, 0.85).setVisible(false);
+      c.add(this._shadowRing);
+    }
+    // Tester: crosshair on an enemy while Spotted (buff tag 'spotted')
+    this._cross = null;
+  }
+
+  /** Re-read the kit tags (only when the buffs string changed). */
+  _applyKit(tags) {
+    const k = parseKitTags(this._buffs);
+    this._kit = k;
+    const st = this.def.kit?.stance?.affectsSkills ? (STANCE_TINT[k.stance] ?? null) : null;
+    if (st !== this._stanceTint) {
+      this._stanceTint = st;
+      this._applyTint();
+      this.light.setTint(st ?? this.outlineColor);
+    }
+    const n = Math.max(0, Math.min(3, parseInt(k.orbs, 10) || 0));
+    this._orbs.forEach((o, i) => o.setVisible(i < n));
+    if (this._box) this._box.setVisible(!!k.pkg);
+    if (this._shadowRing) this._shadowRing.setVisible(k.shadow === '1');
+    if (this._cup) {
+      const mix = (k.mix || '').slice(0, 3);
+      this._cup.setVisible(mix.length > 0);
+      if (mix !== this._mix) {
+        this._mix = mix;
+        const g = this._cup;
+        g.clear();
+        g.fillStyle(0x000000, 0.35); g.fillRect(-9, -12, 18, 24);
+        for (let i = 0; i < mix.length; i++) { g.fillStyle(MIX_COLOR[mix[i]] ?? 0xffffff, 1); g.fillRect(-7, 8 - (i + 1) * 6, 14, 6); }
+        g.lineStyle(2, 0xffffff, 0.9); g.strokeRect(-9, -12, 18, 24);
+      }
+    }
+    const spotted = tags.includes('spotted') && this.rel === 'enemy';
+    if (spotted !== this._spotted) {
+      this._spotted = spotted;
+      if (spotted && !this._cross) {
+        this._cross = loopFb({ scene: this.scene }, 'crosshair', 0, -46, { size: 130, tint: 0xff4040, add: true, a: 0.9, rate: 12 });
+        if (this._cross) { this._cross.setDepth(0); this.ov.add(this._cross); this.ov.sendToBack(this._cross); }
+      }
+      this._cross?.setVisible(spotted);
+    }
+  }
+
+  /** Per-frame kit motion: orbiting orbs, bobbing box / cup (cheap, only visible nodes move). */
+  _kitMotion(now) {
+    const n = Math.max(0, Math.min(3, parseInt(this._kit.orbs, 10) || 0));
+    for (let i = 0; i < n; i++) {
+      const o = this._orbs[i], a = now / 520 + (i * Math.PI * 2) / 3;
+      o.setPosition(Math.cos(a) * 40, -46 + Math.sin(a) * 14).setAlpha(0.75 + 0.25 * Math.sin(a));
+    }
+    const f = this.facing < 0 ? -1 : 1;
+    if (this._box?.visible) this._box.setPosition(26 * f, -62 + Math.sin(now / 260) * 2);
+    if (this._cup?.visible) this._cup.setPosition(-30 * f, -58 + Math.sin(now / 300 + 1) * 1.5);
   }
 
   _setHat(id) {
@@ -175,6 +267,9 @@ export class ChampionView {
       const sp = Math.min(1 - p, this.shield / this.maxHp);
       this.shieldFill.x = -BAR_W / 2 + BAR_W * p;
       this.shieldFill.width = BAR_W * Math.max(0, sp);
+      if (this.shieldFx.visible && !(this.shield > 0) && this.def.kit?.res?.show === 'orbs' && !this.dead) {
+        this.scene.fx?.sparks?.(this.x, this.y - 42, this.def.color || 0x6cffd6, 12, 230); // Overfit layers shatter
+      }
       this.shieldFx.setVisible(this.shield > 0);
     }
     if (this.mpFill && (ch.mana !== this.mana || ch.maxMana !== this.maxMana)) {
@@ -247,7 +342,7 @@ export class ChampionView {
       bob = (!this.moving && !acting) ? Math.sin((now + this._phase) / 480) * 1.6 : 0;
       this._lean = 0;
     }
-    const lift = this._vehicle ? -SCOOTER_LIFT : 0;
+    const lift = (this._vehicle ? -SCOOTER_LIFT : 0) - this._airY;
     const rot = this._lean * this.facing;
     this.sprite.y = bob + lift;
     this.sprite.rotation = rot;
@@ -272,7 +367,9 @@ export class ChampionView {
       this.aura.setScale(s);
     }
     this._drawRecall(srvNow);
-    this.c.setPosition(this.x, this.y);
+    this._kitMotion(now);
+    this._ccFrame(dt, now);
+    this.c.setPosition(this.x + this._shakeX, this.y);
     if (this._plateDy !== this.plateDy) {
       const d = this.plateDy - this._plateDy;
       this._plateDy = Math.abs(d) < 0.5 ? this.plateDy : this._plateDy + d * approach(dt, 14);
@@ -280,6 +377,93 @@ export class ChampionView {
     this.ov.setPosition(this.x, this.y + this._plateDy);
     const dep = depthAt(this.y);
     if (Math.abs(dep - this.c.depth) > 0.01) this.c.setDepth(dep);
+  }
+
+  // ───────────────────────── v6.1 CC looks (docs/02_CHAMPIONS_AND_SKILLS.md [v6.1 numbering] section 7.1) ─────────────────────────
+  /** Re-read the cc: tags (called when the buffs string changes): top icon, tint, lazily built overlays (built once per view, then only toggled). */
+  _applyCc(list) {
+    const was = this._ccList;
+    if (list.length === was.length && list.every((k, i) => k === was[i])) return;
+    this._ccList = list;
+    const has = (k) => list.includes(k);
+    if (was.includes('airborne') && !has('airborne')) this.scene.fx?.part?.(this.x, this.y, { tex: 'vfx-smoke_04', tint: 0xffffff, s0: 40, s1: 130, a0: 0.5, life: 0.4, depth: D.fx }); // thud
+    this._ccTint = has('suppress') ? CC_TINT.suppress : has('charm') ? CC_TINT.charm : has('fear') ? CC_TINT.fear : null;
+    this._applyTint();
+    if (list.length) { this.ccIcon.setText(CC_TYPES[list[0]].icon).setVisible(true); if (!this._ccO) this._ccO = this._buildCc(); } else this.ccIcon.setVisible(false);
+    const o = this._ccO;
+    if (!o) return;
+    o.hearts.forEach((h) => h.setVisible(has('charm')));
+    o.stars.forEach((s) => s.setVisible(has('airborne')));
+    o.sweat.forEach((s) => s.setVisible(has('fear')));
+    o.anger.setVisible(has('taunt'));
+    o.visor.setVisible(has('blind'));
+    o.halo.setVisible(has('revive'));
+    o.dots.setVisible(has('untarget'));
+    if (!has('charm') && !has('taunt')) o.line.clear().setVisible(false);
+  }
+
+  _buildCc() {
+    const sc = this.scene;
+    const img = (k, tint, size) => {
+      if (!sc.textures.exists('vfx-' + k)) return sc.add.circle(0, 0, size / 2, tint).setVisible(false);
+      return sc.add.image(0, 0, 'vfx-' + k).setTint(tint).setBlendMode(1).setDisplaySize(size, size).setVisible(false);
+    };
+    const o = {
+      hearts: [0, 1, 2].map(() => sc.add.text(0, 0, '\u2665', { fontSize: 16, color: '#ff8fb3', stroke: '#000', strokeThickness: 2 }).setOrigin(0.5).setVisible(false)),
+      stars: [0, 1, 2].map(() => img('star_04', 0xffe066, 20)),
+      sweat: [0, 1, 2].map(() => img('symbol_01', 0x9fd4ff, 16)),
+      anger: img('symbol_01', 0xff4040, 30),
+      visor: sc.add.graphics().setVisible(false),
+      halo: sc.add.graphics().setVisible(false),
+      dots: sc.add.graphics().setVisible(false),
+      line: sc.add.graphics().setVisible(false),
+    };
+    o.visor.fillStyle(0x0a0a14, 0.85); o.visor.fillRoundedRect(-17, -88, 34, 10, 3);
+    o.halo.lineStyle(9, 0xfff3a0, 0.25); o.halo.strokeEllipse(0, 0, 54, 15); o.halo.lineStyle(4, 0xfff3a0, 0.95); o.halo.strokeEllipse(0, 0, 54, 15);
+    o.dots.lineStyle(3, 0xbfd4ff, 0.9);
+    for (let i = 0; i < 28; i += 2) { // dotted outline: 14 short arcs of an ellipse around the body
+      o.dots.beginPath();
+      for (let k = 0; k <= 3; k++) { const t = ((i + k / 3) / 28) * Math.PI * 2; const px = Math.cos(t) * 36, py = -46 + Math.sin(t) * 58; if (k) o.dots.lineTo(px, py); else o.dots.moveTo(px, py); }
+      o.dots.strokePath();
+    }
+    this.c.add([...o.hearts, ...o.stars, ...o.sweat, o.anger, o.visor, o.halo, o.dots, o.line]);
+    return o;
+  }
+
+  /** Per-frame CC motion: air lift + shadow, orbiting hearts / stars, shake, halo bob, lines to the charm / taunt source; also the body alpha. */
+  _ccFrame(dt, now) {
+    const fx = this.scene.fx, list = this._ccList, has = (k) => list.includes(k);
+    const a = Math.min(this._stealth ? 0.42 : 1, has('untarget') ? CC_ALPHA.untarget : 1, (fx?.ghostUntil?.get(this.id) || 0) > now ? CC_ALPHA.ghost : 1);
+    if (a !== this._bodyA) {
+      this._bodyA = a;
+      this.sprite.setAlpha(a);
+      for (const ol of this.outlines) ol.setAlpha(a < 1 ? a : 0.95);
+      for (const im of this._costumeImgs) im.setAlpha(a);
+    }
+    const air = has('airborne') ? CC_TUNING.AIR_LIFT_PX : 0;
+    if (air || this._airY) {
+      this._airY += (air - this._airY) * approach(dt, 16);
+      if (Math.abs(air - this._airY) < 0.5) this._airY = air;
+      this.shadow.setScale(1 - 0.4 * (this._airY / CC_TUNING.AIR_LIFT_PX));
+    }
+    this._shakeX = has('fear') ? ((Math.floor(now / 40) & 1) ? 2 : -2) : 0;
+    const o = this._ccO;
+    if (!o || !list.length) return;
+    if (has('airborne')) o.stars.forEach((s, i) => { const t = now / 220 + i * 2.09; s.setPosition(Math.cos(t) * 24, -112 - this._airY + Math.sin(t) * 6).setRotation(t); });
+    if (has('charm')) o.hearts.forEach((h, i) => { const t = now / 380 + i * 2.09; h.setPosition(Math.cos(t) * 30, -104 + Math.sin(t) * 9).setAlpha(0.7 + 0.3 * Math.sin(t)); });
+    if (has('fear')) o.sweat.forEach((s, i) => { const k = (now / 7 + i * 13) % 36; s.setPosition((i - 1) * 24, -96 + k).setAlpha(0.9 - k / 50); });
+    if (has('taunt')) { const z = 30 + 4 * Math.sin(now / 90); o.anger.setPosition(22, -110 + Math.sin(now / 90) * 2).setDisplaySize(z, z); }
+    if (has('blind')) o.visor.setY(-this._airY);
+    if (has('revive')) o.halo.setPosition(0, -150 - 3 * Math.sin(now / 300)).setAlpha(0.75 + 0.25 * Math.sin(now / 200));
+    const lk = has('charm') ? 'charm' : has('taunt') ? 'taunt' : '';
+    if (lk) {
+      const info = fx?.ccInfo?.get(this.id + '|' + lk), sv = info && info.sid ? this.scene.views?.champs?.get(info.sid) : null;
+      o.line.clear();
+      if (sv && !sv.dead) {
+        o.line.setVisible(true).lineStyle(2, lk === 'charm' ? 0xff7eb6 : 0xff4040, 0.55);
+        o.line.beginPath(); o.line.moveTo(0, -46); o.line.lineTo(sv.x - this.x, sv.y - this.y - 46); o.line.strokePath();
+      } else o.line.setVisible(false);
+    }
   }
 
   /** Brief white outline (took damage). */
@@ -337,7 +521,7 @@ export class ChampionView {
 
   /** Body tint: slow (blue) beats bush (leaf); none otherwise. */
   _applyTint() {
-    const t = this.slowed ? SLOW_TINT : (this.hidden ? LEAF_TINT : null);
+    const t = this._ccTint ?? (this.slowed ? SLOW_TINT : (this.hidden ? LEAF_TINT : this._stanceTint));
     for (const o of [this.sprite, ...this._costumeImgs]) { if (t != null) o.setTint(t); else o.clearTint(); }
     this.light.setAlpha(this.hidden ? 0.1 : 0.26);
   }
@@ -423,14 +607,13 @@ export class ChampionView {
     this._buffs = str;
     const tags = str ? str.split(',').map((t) => t.trim()).filter(Boolean) : [];
     this._coffee = tags.includes('coffee');
+    this._applyKit(tags);
     this._silenced = tags.includes('silenced');
     this.spellBubble?.setVisible(tags.includes('spellshield'));
     this.silenceFx?.setVisible(tags.includes('silenced'));
-    const stealthed = tags.includes('stealth');
-    const visAlpha = stealthed ? 0.42 : 1;
-    this.sprite?.setAlpha(visAlpha);
-    for (const o of this.outlines || []) o.setAlpha(stealthed ? 0.42 : 0.95);
-    this._costume?.forEach?.((img) => img.setAlpha(visAlpha));
+    this._stealth = tags.includes('stealth');
+    this._bodyA = -1; // body alpha (stealth / untargetable / ghost dash) is re-applied in update()
+    this._applyCc(parseCcTags(str));
     let color = null;
     for (const t of BUFF_PRIORITY) {
       if (!tags.includes(t)) continue;
