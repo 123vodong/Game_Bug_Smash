@@ -45,7 +45,7 @@ import { SPELLS, DEFAULT_SPELLS, validSpellPair } from '../../shared/moba/spells
 import { WORLD_5V5 } from '../entities/moba/world.js';
 import { AudioManager } from '../core/AudioManager.js';
 import { SaveManager } from '../core/SaveManager.js';
-import { t, getLang, toggleLang } from '../core/I18n.js';
+import { t, getLang, toggleLang, onLangChange } from '../core/I18n.js';
 import { getPid, takeover, joinError, saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { ITEMS, buyBlocker, recipePlan } from '../../shared/moba/items.js';
 import { ensureMobaTextures, D, teamColor, toArr, approach, setLooks, projectileTex, fmtTime, shakeCam } from '../entities/moba/mobaGfx.js';
@@ -581,7 +581,39 @@ export default class TeamModeScene extends Phaser.Scene {
     });
     this.localId = this._sim.localId;
     this._sim.receive('hello');
-    this.hud.setStatus('OFFLINE PRACTICE · bots only', '#ffb347');
+    this.hud.setStatus(t('prac.status'), '#ffb347');
+    this._buildPracticeBar();
+  }
+
+  _buildPracticeBar() {
+    if (!this._sim || this._pracBar) return;
+    const x0 = 10, y0 = (this.hud?.mm?.y || 10) + (this.hud?.mm?.size || 200) + 34;
+    const mk = (x, y, w, label, color, fn) => this.hud._button(x + w / 2, y, w, 26, label, color, fn, 52, 11);
+    const swap = mk(x0, y0, 102, t('prac.swap'), 0xffb347, () => { AudioManager.uiClick?.(); this._openChampSwapModal(); });
+    const cd = mk(x0 + 108, y0, 86, '', 0x39ff14, () => { this._sim.receive('setNoCd', { enabled: !this._sim.noCd }); this._syncPracticeBar(); AudioManager.uiClick?.(); });
+    const mp = mk(x0 + 200, y0, 96, '', 0x39c2ff, () => { this._sim.receive('setNoMana', { enabled: !this._sim.noMana }); this._syncPracticeBar(); AudioManager.uiClick?.(); });
+    const hp = mk(x0 + 302, y0, 92, '', 0x7ed957, () => { this._sim.receive('setGodMode', { enabled: !this._sim.godMode }); this._syncPracticeBar(); AudioManager.uiClick?.(); });
+    const lv = mk(x0, y0 + 32, 62, t('prac.lvUp'), 0xffd23f, () => {
+      const me = this._me(); if (me) this._sim.debug('level', Math.min(R.MAX_LEVEL, (me.level || 1) + 1));
+      AudioManager.uiClick?.();
+    });
+    const gold = mk(x0 + 68, y0 + 32, 76, t('prac.gold'), 0xffd23f, () => { this._sim.debug('gold', 5000); AudioManager.uiClick?.(); });
+    const wave = mk(x0 + 150, y0 + 32, 64, '+30s', 0xb084ff, () => { for (let i = 0; i < 300; i++) this._sim.update(100); AudioManager.uiClick?.(); });
+    this._pracBar = { swap, cd, mp, hp, lv, gold, wave, all: [swap, cd, mp, hp, lv, gold, wave] };
+    this._pracLangUnsub = onLangChange(() => this._syncPracticeBar());
+    this._syncPracticeBar();
+  }
+
+  _syncPracticeBar() {
+    const p = this._pracBar;
+    if (!p || !this._sim) return;
+    p.swap?._label?.setText(t('prac.swap'));
+    p.lv?._label?.setText(t('prac.lvUp'));
+    p.gold?._label?.setText(t('prac.gold'));
+    p.cd?._label?.setText(`${t('prac.noCd')}:${this._sim.noCd ? 'ON' : 'OFF'}`);
+    p.mp?._label?.setText(`${t('prac.noMana')}:${this._sim.noMana ? 'ON' : 'OFF'}`);
+    p.hp?._label?.setText(`${t('prac.noDmg')}:${this._sim.godMode ? 'ON' : 'OFF'}`);
+    this.hud?.setStatus(t('prac.status'), '#ffb347');
   }
 
   _state() { return this._sim ? (this._sim.clientState || this._sim.state) : this.room?.state; }
@@ -748,6 +780,7 @@ export default class TeamModeScene extends Phaser.Scene {
         break;
       }
       case 'heal': if (Number.isFinite(m.x) && Number.isFinite(m.y)) this.fx.heal(m); break;
+      case 'zap': if ([m.x0, m.y0, m.x1, m.y1].every(Number.isFinite)) this.fx.zap(m.x0, m.y0 - 40, m.x1, m.y1 - 40, m.color); break;
       case 'zone': {
         if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
         const c = this._state()?.champions?.get?.(m.sid);
@@ -1012,6 +1045,17 @@ export default class TeamModeScene extends Phaser.Scene {
     if (!this._isTouch) {
       btns.push({ label: camLbl(), color: 0xffd23f, fn: (btn) => { this._toggleCamLock(); btn?._label?.setText(camLbl()); } });
     }
+    if (this._sim) {
+      const cdLbl = () => `${t('prac.noCd')}: ${this._sim?.noCd ? 'ON' : 'OFF'}`;
+      const mpLbl = () => `${t('prac.noMana')}: ${this._sim?.noMana ? 'ON' : 'OFF'}`;
+      const hpLbl = () => `${t('prac.noDmg')}: ${this._sim?.godMode ? 'ON' : 'OFF'}`;
+      btns.push(
+        { label: cdLbl(), color: 0x39c2ff, fn: (btn) => { this._sim.receive('setNoCd', { enabled: !this._sim.noCd }); btn?._label?.setText(cdLbl()); this._syncPracticeBar(); AudioManager.uiClick?.(); } },
+        { label: mpLbl(), color: 0x7ec8ff, fn: (btn) => { this._sim.receive('setNoMana', { enabled: !this._sim.noMana }); btn?._label?.setText(mpLbl()); this._syncPracticeBar(); AudioManager.uiClick?.(); } },
+        { label: hpLbl(), color: 0x7ed957, fn: (btn) => { this._sim.receive('setGodMode', { enabled: !this._sim.godMode }); btn?._label?.setText(hpLbl()); this._syncPracticeBar(); AudioManager.uiClick?.(); } },
+        { label: t('prac.swap'), color: 0xffb347, fn: () => this._openChampSwapModal() },
+      );
+    }
     btns.push(
       {
         label: langLbl(), color: 0xb084ff,
@@ -1034,6 +1078,32 @@ export default class TeamModeScene extends Phaser.Scene {
       title: t('menu.title'),
       body: t('menu.body'),
       buttons: btns,
+    });
+  }
+
+  /** Offline practice only: open an in-match champion picker to swap champions live. */
+  _openChampSwapModal() {
+    if (!this._sim) return;
+    const ids = Object.keys(CHAMPIONS);
+    const btns = ids.map((id) => {
+      const def = CHAMPIONS[id];
+      const active = id === this.myChamp;
+      return {
+        label: active ? `[${def.name}]` : def.name,
+        color: active ? 0x7ed957 : 0x39c2ff,
+        fn: () => {
+          this._sim.receive('switchChamp', { champ: id });
+          this.hud.closeModal();
+          AudioManager.uiClick?.();
+        },
+      };
+    });
+    btns.push({ label: t('menu.resume'), color: 0xff5e5e, fn: () => this.hud.closeModal() });
+    this.hud.modal({
+      title: t('prac.swapTitle'),
+      body: t('prac.swapBody'),
+      buttons: btns,
+      cols: 4,
     });
   }
 
@@ -1697,6 +1767,7 @@ export default class TeamModeScene extends Phaser.Scene {
       if (!this.myTeam && me0) this.myTeam = me0.team;
       if (me0 && this._hudChamp !== me0.champ && CHAMPIONS[me0.champ]) {
         this._hudChamp = me0.champ;
+        this.myChamp = me0.champ;
         this.hud.setChampion(me0.champ, me0.team);
         try { this.shop?.setChampion?.(me0.champ); } catch (_) { /* optional extra */ }
       }
@@ -1923,6 +1994,12 @@ export default class TeamModeScene extends Phaser.Scene {
         st.champions.forEach((c, id) => {
           let v = this.views.champs.get(id);
           const isMe = id === this.localId;
+          if (v && v.champ !== c.champ && CHAMPIONS[c.champ]) {
+            v.destroy();
+            this.views.champs.delete(id);
+            v = null;
+            if (isMe) this.myChamp = c.champ;
+          }
           if (!v) {
             v = new ChampionView(this, id, c, { isMe, myTeam: this.myTeam });
             this.views.champs.set(id, v);
@@ -2542,6 +2619,8 @@ export default class TeamModeScene extends Phaser.Scene {
       _cleanup() {
         if (this._cleanedVisit === this._visit) return;
         this._cleanedVisit = this._visit;
+        if (this._pracLangUnsub) { this._pracLangUnsub(); this._pracLangUnsub = null; }
+        if (this._pracBar) { for (const b of this._pracBar.all) b.destroy(); this._pracBar = null; }
         this._setHoverOutline?.(null, '');
         this._setHoverCursor?.('');
         if (this._relicViews) { for (const rv of this._relicViews.values()) rv.c.destroy(); this._relicViews.clear(); }

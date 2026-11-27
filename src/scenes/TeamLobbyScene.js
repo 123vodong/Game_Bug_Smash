@@ -24,7 +24,7 @@ import { getPid, takeover, joinError, fetchMe, loadMatch, clearMatch, DUP_TAB_TE
 import { LeaderboardPanel } from '../ui/LeaderboardPanel.js';
 import { TIERS } from '../../shared/moba/ranks.js';
 import { AudioManager } from '../core/AudioManager.js';
-import { tText } from '../core/I18n.js';
+import { tText, t } from '../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
   fillRR, strokeRR, fillCircleLP, strokeCircleLP, fadeToScene, teamServerUrl, startClockSync,
@@ -377,7 +377,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
 
     // BACK (top-left) + ESC hint
     makeButton(this, {
-      x: 84, y: 38, w: 124, h: 40, label: '◀ BACK', color: NEON.teal, fontSize: 14,
+      x: 84, y: 38, w: 124, h: 40, label: t('ui.back'), color: NEON.teal, fontSize: 14,
       onClick: () => this._back(),
     }).root.setDepth(10);
     this.add.text(84, 68, 'ESC', { fontFamily: FONT_MONO, fontSize: 10, color: '#4f6380' })
@@ -392,7 +392,7 @@ export default class TeamLobbyScene extends Phaser.Scene {
     }).setOrigin(1, 0.5).setDepth(10).setAlpha(0.85);
     // Pass 2 RP-13: leaderboard
     makeButton(this, {
-      x: this.W - 84, y: 84, w: 120, h: 32, label: '🏆 RANKS', color: NEON.yellow, fontSize: 13,
+      x: this.W - 84, y: 84, w: 120, h: 32, label: t('lobby.ranks'), color: NEON.yellow, fontSize: 13,
       onClick: () => {
         if (this._queue || this._prompt || this._leaving || (this._panel && !this._panel.closed)) return;
         AudioManager.uiClick();
@@ -974,19 +974,19 @@ export default class TeamLobbyScene extends Phaser.Scene {
 
   _drawPlayButton() {
     this._practiceBtn = makeButton(this, {
-      x: PRACTICE.x, y: PRACTICE.y, w: PRACTICE.w, h: PRACTICE.h, label: '🤖 PRACTICE',
+      x: PRACTICE.x, y: PRACTICE.y, w: PRACTICE.w, h: PRACTICE.h, label: t('lobby.practice'),
       sub: 'O · offline', color: NEON.orange, fontSize: 16,
       onClick: () => this._practice(),
     });
     this._practiceBtn.root.setDepth(10);
     this._customBtn = makeButton(this, {
-      x: CUSTOM.x, y: CUSTOM.y, w: CUSTOM.w, h: CUSTOM.h, label: '🏠 CUSTOM ROOMS',
+      x: CUSTOM.x, y: CUSTOM.y, w: CUSTOM.w, h: CUSTOM.h, label: t('lobby.custom'),
       sub: 'C · pick your side', color: NEON.cyan, fontSize: 15,
       onClick: () => this._customRooms(),
     });
     this._customBtn.root.setDepth(10);
     this._playBtn = makeButton(this, {
-      x: PLAY.x, y: PLAY.y, w: PLAY.w, h: PLAY.h, label: 'QUICK MATCH',
+      x: PLAY.x, y: PLAY.y, w: PLAY.w, h: PLAY.h, label: t('lobby.quickMatch'),
       sub: 'ENTER ⏎ · auto queue', color: NEON.green, fontSize: 21, primary: true,
       onClick: () => this._findMatch(),
     });
@@ -1149,11 +1149,11 @@ export default class TeamLobbyScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
     c.add([dim, g, radar, title, portrait, line, sub]);
     const startBtn = makeButton(this, {
-      x: W / 2 - 138, y: py + ph - 46, w: 236, h: 56, label: '▶ START NOW', sub: 'ENTER · bots fill seats',
+      x: W / 2 - 138, y: py + ph - 46, w: 236, h: 56, label: t('ui.startNow'), sub: 'ENTER · bots fill seats',
       color: NEON.green, fontSize: 18, onClick: () => this._startNow(),
     });
     const cancelBtn = makeButton(this, {
-      x: W / 2 + 138, y: py + ph - 46, w: 236, h: 56, label: '✕ CANCEL', sub: 'ESC',
+      x: W / 2 + 138, y: py + ph - 46, w: 236, h: 56, label: t('ui.cancel'), sub: 'ESC',
       color: NEON.red, fontSize: 18, onClick: () => this._cancelQueue(),
     });
     c.add([startBtn.root, cancelBtn.root]);

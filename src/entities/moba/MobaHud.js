@@ -47,6 +47,17 @@ export function skillMechanics(sk, def) {
   if (sk.shield) L.push(`🛡 shield ${amountText(sk.shield)}`);
   if (sk.type === 'zone') L.push(`🟦 Zone lasts ${sec(sk.duration)} · ticks every ${sec(sk.tickMs)}`);
   if ((sk.count | 0) > 1) L.push(`📱 Fan of ${sk.count} across ${sk.spread || 0}° · each enemy hit once`);
+  if (sk.boomerang) L.push(`🪃 Boomerang: returns to you${sk.returnTrueDmg ? ' dealing True Damage' : ''}`);
+  if (sk.chain) L.push(`⚡ Chains up to ${sk.chain.bounces || 2} nearby enemies`);
+  if (sk.pull) L.push('🪝 Hook: pulls enemy toward you');
+  if (sk.pullIn) L.push('🌀 Pulls enemies inward toward center');
+  if (sk.trap) L.push(`💣 Trap: arms briefly, lasts ${sec(sk.trap.durationMs || 25000)} (max ${sk.trap.maxActive || 3})`);
+  if (sk.behindTarget) L.push('🗡 Blinks directly behind target');
+  if (sk.invisMs) L.push(`👻 Stealth for ${sec(sk.invisMs)}`);
+  if (sk.spellShieldMs) L.push(`🛡️ Spell Shield blocks next enemy skill (${sec(sk.spellShieldMs)})`);
+  if (sk.killReset) L.push('♻ Resets cooldown on champion kill');
+  if (sk.healOnHit) L.push(`💚 Heals ${amountText(sk.healOnHit)} per champion hit`);
+  if (sk.cdRefundOnHit) L.push(`⏩ Refunds ${sec(sk.cdRefundOnHit.ms || 1000)} CD on champion hit`);
   if (sk.pierce) L.push('➡ pierces every enemy in the line');
   if (sk.champOnly) L.push('🎯 flies past minions');
   if (sk.knockback) L.push(`💨 Knockback ${sk.knockback.dist}px${sk.wallStun ? ` · into a WALL → stun ${sec(sk.wallStun.ms)}` : ''}`);
@@ -109,14 +120,19 @@ export class MobaHud {
     const s = this.s;
     const c = s.add.container(x, y).setScrollFactor(0).setDepth(depth);
     // Rectangle shapes cache their triangulation (Graphics re-tessellates every frame).
-    const bg = s.add.rectangle(0, 0, w, h, 0x111a28, 0.95).setStrokeStyle(2, color, 0.8);
-    const t = s.add.text(0, 0, label, { fontFamily: FONT, fontSize: size, color: css(color), stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+    const bg = s.add.rectangle(0, 0, w, h, 0x111a28, 0.95).setStrokeStyle(2, color, 0.8).setScrollFactor(0);
+    const t = s.add.text(0, 0, label, { fontFamily: FONT, fontSize: size, color: css(color), stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0);
     bg.setInteractive({ useHandCursor: true });
     bg.on('pointerover', () => bg.setFillStyle(0x1d2a40, 0.98).setStrokeStyle(2, color, 1));
     bg.on('pointerout', () => bg.setFillStyle(0x111a28, 0.95).setStrokeStyle(2, color, 0.8));
-    bg.on('pointerdown', (p, lx, ly, ev) => { ev?.stopPropagation?.(); fn(); });
+    bg.on('pointerdown', (p, lx, ly, ev) => {
+      if (p?.rightButtonDown?.()) return;
+      ev?.stopPropagation?.();
+      fn();
+    });
     c.add([bg, t]);
     c._label = t;
+    c._bg = bg;
     return c;
   }
 
@@ -947,27 +963,33 @@ export class MobaHud {
 
   // ───────────────────────── modal dialogs ─────────────────────────
   /** Generic modal: { title, body, buttons:[{label,color,fn}] } → returns close(). */
-  modal({ title, body, buttons }) {
+  modal({ title, body, buttons, cols }) {
     this.closeModal();
     const s = this.s, W = this.W, H = this.H;
     const arr = buttons || [];
-    const twoRows = arr.length > 2;
-    const rows = twoRows ? Math.ceil(arr.length / 2) : 1;
-    const boxH = twoRows ? (148 + rows * 56) : 210;
+    const perRow = Math.max(1, cols || (arr.length > 2 ? 2 : Math.max(1, arr.length)));
+    const rows = Math.max(1, Math.ceil(arr.length / perRow));
+    const multiRow = rows > 1;
+    const btnW = perRow >= 4 ? 168 : perRow === 3 ? 180 : 192;
+    const btnH = perRow >= 3 ? 38 : 42;
+    const stepX = btnW + 14;
+    const stepY = btnH + 12;
+    const boxW = Math.max(540, perRow * stepX + 56);
+    const boxH = multiRow ? (142 + rows * stepY) : 210;
     const c = s.add.container(0, 0).setScrollFactor(0).setDepth(102);
-    const dim = s.add.rectangle(0, 0, W, H, 0x000000, 0.6).setOrigin(0).setInteractive();
+    const dim = s.add.rectangle(0, 0, W, H, 0x000000, 0.6).setOrigin(0).setScrollFactor(0).setInteractive();
     dim.on('pointerdown', (p, lx, ly, ev) => ev?.stopPropagation?.());
-    const box = s.add.rectangle(W / 2, H / 2, 540, boxH, 0x0a0f18, 0.97).setStrokeStyle(2, 0x39c2ff, 0.9);
-    const t = s.add.text(W / 2, H / 2 - boxH / 2 + 34, title, { fontFamily: FONT, fontSize: 22, color: '#ffd23f', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
-    const b = s.add.text(W / 2, H / 2 - boxH / 2 + 74, body || '', { fontFamily: MONO, fontSize: 14, color: '#dfe7f5', align: 'center', wordWrap: { width: 490 } }).setOrigin(0.5);
+    const box = s.add.rectangle(W / 2, H / 2, boxW, boxH, 0x0a0f18, 0.97).setStrokeStyle(2, 0x39c2ff, 0.9).setScrollFactor(0);
+    const t = s.add.text(W / 2, H / 2 - boxH / 2 + 34, title, { fontFamily: FONT, fontSize: 22, color: '#ffd23f', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setScrollFactor(0);
+    const b = s.add.text(W / 2, H / 2 - boxH / 2 + 74, body || '', { fontFamily: MONO, fontSize: 14, color: '#dfe7f5', align: 'center', wordWrap: { width: boxW - 50 } }).setOrigin(0.5).setScrollFactor(0);
     c.add([dim, box, t, b]);
     const btns = arr.map((bt, i) => {
-      const col = twoRows ? (i % 2) : i;
-      const row = twoRows ? Math.floor(i / 2) : 0;
-      const rowCount = twoRows ? Math.min(2, arr.length - row * 2) : arr.length;
-      const bx = W / 2 + (col - (rowCount - 1) / 2) * 210;
-      const by = twoRows ? (H / 2 - boxH / 2 + 132 + row * 56) : (H / 2 + 56);
-      const btn = this._button(bx, by, 192, 42, bt.label, bt.color || 0x39c2ff, () => bt.fn?.(btn), 103, 14);
+      const col = i % perRow;
+      const row = Math.floor(i / perRow);
+      const rowCount = Math.min(perRow, arr.length - row * perRow);
+      const bx = W / 2 + (col - (rowCount - 1) / 2) * stepX;
+      const by = multiRow ? (H / 2 - boxH / 2 + 128 + row * stepY) : (H / 2 + 56);
+      const btn = this._button(bx, by, btnW, btnH, bt.label, bt.color || 0x39c2ff, () => bt.fn?.(btn), 103, perRow >= 4 ? 13 : 14);
       return btn;
     });
     this._modal = { c, btns, t, b };

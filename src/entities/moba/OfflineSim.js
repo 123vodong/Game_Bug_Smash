@@ -53,11 +53,15 @@ export class OfflineSim {
       emit(type, m);
     };
     this.t = Date.now();
+    this.noCd = true;    // Offline practice: 0s cooldowns for local player (toggleable)
+    this.noMana = true;  // Offline practice: 0 mana cost for local player (toggleable)
+    this.godMode = true; // Offline practice: 0 HP damage taken for local player (toggleable)
     this._uid = 0;
     this._wave = 0;
     this._waveAt = 0;
     this._atk = [];
     this._timers = [];
+    this._traps = [];
     this._firstBlood = false;
     this.state = {
       phase: 'lobby', lobbyEndsAt: this.t + lobbyMs, startedAt: 0, winner: '', blueKills: 0, redKills: 0,
@@ -120,6 +124,56 @@ export class OfflineSim {
     else if (type === 'buy') this._buy(me, m.item);
     else if (type === 'sell') this._sell(me, m.slot);
     else if (type === 'recall') this._recall(me);
+    else if (type === 'switchChamp') this._switchChamp(me, m?.champ);
+    else if (type === 'setNoCd') this._setNoCd(me, m?.enabled);
+    else if (type === 'setNoMana') this._setNoMana(me, m?.enabled);
+    else if (type === 'setGodMode') this._setGodMode(me, m?.enabled);
+  }
+
+  _setNoCd(me, enabled) {
+    this.noCd = enabled !== false;
+    if (this.noCd && me) this.debug('ready');
+    return this.noCd;
+  }
+
+  _setNoMana(me, enabled) {
+    this.noMana = enabled !== false;
+    if (this.noMana && me) me.mana = me.maxMana;
+    return this.noMana;
+  }
+
+  _setGodMode(me, enabled) {
+    this.godMode = enabled !== false;
+    if (this.godMode && me && !me.dead) me.hp = me.maxHp;
+    return this.godMode;
+  }
+
+  _switchChamp(me, champId) {
+    if (!me || !CHAMPIONS[champId]) return false;
+    this._despawnPet(me);
+    this._cancelRecall(me);
+    const changing = me.champ !== champId;
+    me.champ = champId;
+    me.dead = false; me.respawnAt = 0;
+    me.stunnedUntil = 0; me.rootedUntil = 0; me.slowUntil = 0; me.slowPct = 0;
+    me._dispUntil = 0; me._stealthUntil = 0; me._spellShieldUntil = 0;
+    me._order = null; me._nav = null; me.targetId = '';
+    me._buffs = {}; me.shield = 0; me._shieldUntil = 0;
+    me._castCount = 0; me._cacheStacks = 0; me._swipeReady = false; me._cleaveReady = false;
+    me.ranks = {
+      q: Math.max(1, me.ranks?.q || 1),
+      w: Math.max(1, me.ranks?.w || 1),
+      e: Math.max(1, me.ranks?.e || 1),
+      r: me.level >= R.ULT_UNLOCK_LEVEL ? Math.max(1, me.ranks?.r || 0) : (me.ranks?.r || 0),
+    };
+    this.debug('ready');
+    this._recalc(me, true);
+    this._spawnPet(me);
+    if (changing) {
+      const def = CHAMPIONS[champId];
+      this.emit('announce', { title: `🔄 ${def.name.toUpperCase()}`, sub: `${def.title || def.lane} · Offline Practice`, color: '#39c2ff' });
+    }
+    return true;
   }
 
   debug(cmd, a, b) {
@@ -137,8 +191,13 @@ export class OfflineSim {
       me.cdQ = me.cdR = me.cdW = me.cdE = me.cdD = me.cdF = 0;
       me.chargesD = spellInitialCharges(me.spellD); me.chargesF = spellInitialCharges(me.spellF);
       me._spellRechD = me._spellRechF = me._spellCastCdD = me._spellCastCdF = 0;
+      me._activeCd = 0; me._wardCd = 0;
       me.mana = me.maxMana;
     }
+    else if (cmd === 'champ') return this._switchChamp(me, a);
+    else if (cmd === 'noCd') return this._setNoCd(me, a);
+    else if (cmd === 'noMana') return this._setNoMana(me, a);
+    else if (cmd === 'godMode') return this._setGodMode(me, a);
     else if (cmd === 'spell') {
       const K = a?.slot === 'f' ? 'F' : 'D';
       me['cd' + K] = 0; me['_spellCastCd' + K] = 0;
@@ -354,6 +413,29 @@ export class OfflineSim {
     this._damage(tgt, R.scaledAmount(sp.dmg, c.level, c.ad, c.ap, c.maxHp) * (1 + pct + (od ? 0.35 : 0)), c, true, false, 'magic');
   }
 
+  _tickTraps(now) {
+    if (!this._traps.length) return;
+    const keep = [];
+    for (const tr of this._traps) {
+      if (now >= tr.until || !this._alive(tr.owner)) continue;
+      if (now < tr.armedAt) { keep.push(tr); continue; }
+      let vic = null;
+      for (const c of this.state.champions.values()) {
+        if (!c.dead && c.team !== tr.team && dist(c, tr) <= tr.r + CHAMP_RADIUS * 0.5) { vic = c; break; }
+      }
+      if (!vic) {
+        for (const u of this.state.units.values()) {
+          if (u.alive && !u.resetting && u.team !== tr.team && u.kind !== 'pet' && dist(u, tr) <= tr.r + (u.radius || 22) * 0.5) { vic = u; break; }
+        }
+      }
+      if (vic) {
+        this.emit('fx', { k: 'circle', x: Math.round(tr.x), y: Math.round(tr.y), r: tr.r, delay: 0, color: tr.color });
+        tr.onHit(vic);
+      } else keep.push(tr);
+    }
+    this._traps = keep;
+  }
+
   // ───────────────────────── tick ─────────────────────────
   update(dtMs) {
     const now = Date.now();
@@ -365,6 +447,7 @@ export class OfflineSim {
     for (let i = this._timers.length - 1; i >= 0; i--) {
       if (this._timers[i][0] <= now) { const fn = this._timers[i][1]; this._timers.splice(i, 1); fn(); }
     }
+    this._tickTraps(now);
     if (now >= this._waveAt) { this._spawnWave(); this._waveAt = now + R.WAVE_EVERY_MS; }
     st.units.forEach((u) => this._unitTick(u, dt));
     st.structures.forEach((s) => this._towerTick(s));
@@ -745,6 +828,7 @@ export class OfflineSim {
   _damage(target, raw, src, byPet = false, trueDmg = false, dmgType = 'physical') {
     if (!this._alive(target)) return 0;
     if (target.invulnerable || target.kind === 'pet') return 0;
+    if (this.godMode && target.id === this.localId) return 0;
     if (target.champ && (target._stasisUntil || 0) > this.t) return 0;
     if (src?.champ && target.champ && !byPet) src._lastChampHit = { id: target.id, t: this.t };
     const isMagic = dmgType === 'magic';
@@ -1113,7 +1197,7 @@ export class OfflineSim {
     if (!it || !it.active || (c._activeCd || 0) > this.t) return;
     const act = it.active;
     if (c.stunnedUntil > this.t && !act.usableWhileStunned) return;
-    c._activeCd = this.t + act.cd * 1000;
+    c._activeCd = (this.noCd && c.id === this.localId) ? 0 : this.t + act.cd * 1000;
     if (act.id === 'stasis') {
       c._stasisUntil = this.t + act.ms;
       c.stunnedUntil = Math.max(c.stunnedUntil || 0, this.t + act.ms);
@@ -1150,7 +1234,7 @@ export class OfflineSim {
     const id = this._addUnit({ team: c.team, kind: 'ward', x: pos.x, y: pos.y, hp: 3, owner: c.id });
     const w = this.state.units.get(id);
     if (w) w._expiresAt = this.t + R.WARD.durationMs;
-    c._wardCd = this.t + R.WARD.cdMs;
+    c._wardCd = (this.noCd && c.id === this.localId) ? 0 : this.t + R.WARD.cdMs;
     this.emit('fx', { k: 'circle', x: Math.round(pos.x), y: Math.round(pos.y), r: 120, delay: 0, color: 0x39ff14 });
     if (c.id === this.localId) this.emit('announce', { title: '👁️ WARD PLACED (45s)', color: '#39ff14' });
   }
@@ -1235,12 +1319,16 @@ export class OfflineSim {
     const rank = c.ranks?.[slot] || 0;
     if (rank <= 0) return;
     const key = `cd${slot.toUpperCase()}`;
-    if (c[key] > t || c.mana < sk.mana) return;
+    const isLocal = c.id === this.localId;
+    if (!(this.noCd && isLocal) && c[key] > t) return;
+    if (!(this.noMana && isLocal) && c.mana < sk.mana) return;
     if (m.id && this._hiddenFrom(this._ent(m.id), c.team)) return; // point-and-click at a hidden enemy
     this._reveal(c);
     const blueCdr = (c._blueBuffUntil || 0) > t ? 0.15 : 0;
     let rankDmgMul = 1 + (rank - 1) * 0.12;
-    c.mana -= sk.mana; c[key] = t + R.skillCooldownMs(sk.cd, (c._haste || 0) + blueCdr, rank);
+    if (this.noMana && isLocal) c.mana = c.maxMana;
+    else c.mana -= sk.mana;
+    c[key] = (this.noCd && isLocal) ? 0 : t + R.skillCooldownMs(sk.cd, (c._haste || 0) + blueCdr, rank);
     c.action = slot; c.action_seq++;
     this._cancelRecall(c);
     const roleP = championPassive(CHAMPIONS[c.champ])?.id;
@@ -1330,9 +1418,58 @@ export class OfflineSim {
       if (slot === 'r' && augs.includes('evo_tester_barrage')) { c.cdR = Math.max(t, t + Math.round(Math.max(0, (c.cdR || 0) - t) * 0.65)); }
       if (slot === 'r' && augs.includes('evo_model_nova')) { e.slowUntil = Math.max(e.slowUntil || 0, t + 2500); e.slowPct = Math.max(e.slowPct || 0, 30); e._auditUntil = t + 2500; }
     };
-    const hit = (e, extra = 0, from = null) => {
-      this._damage(e, amt(sk.dmg) + extra, c, false, false, skDmgType); effects(e); fx({ k: 'hit', id: e.id, color: sk.color });
-      if (sk.knockback && from && this._alive(e)) this._knock(e, from.x, from.y, sk.knockback.dist, sk.wallStun?.ms || 0);
+    const hit = (e, extra = 0, from = null, mul = 1, inChain = false, isReturn = false) => {
+      if (!this._alive(e)) return;
+      if (e.champ && (e._spellShieldUntil || 0) > this.t) {
+        e._spellShieldUntil = 0;
+        fx({ k: 'hit', id: e.id, color: 0xffffff });
+        return;
+      }
+      const wasChampAlive = !!e.champ && !e.dead;
+      const useTrue = !!(isReturn && sk.returnTrueDmg);
+      this._damage(e, (amt(sk.dmg) + extra) * mul, c, false, useTrue, useTrue ? 'true' : skDmgType);
+      effects(e);
+      if (sk.killReset && wasChampAlive && !this._alive(e)) {
+        c[key] = 0;
+        fx({ k: 'buff', sid: c.id, slot, color: 0xffd23f });
+      }
+      if (e.champ && sk.healOnHit && !c.dead) c.hp = Math.min(c.maxHp, c.hp + amt(sk.healOnHit));
+      if (e.champ && sk.cdRefundOnHit) {
+        const refMs = sk.cdRefundOnHit.ms || 1000;
+        const sls = sk.cdRefundOnHit.slot === 'all' ? ['q', 'w', 'e', 'r'] : [sk.cdRefundOnHit.slot || slot];
+        for (const sl of sls) {
+          const k2 = `cd${sl.toUpperCase()}`;
+          if ((c[k2] || 0) > this.t) c[k2] = Math.max(this.t, c[k2] - refMs);
+        }
+      }
+      fx({ k: 'hit', id: e.id, color: sk.color });
+      if (this._alive(e)) {
+        if (sk.pull && e.team !== 'neutral' && !R.EPICS[e.kind]) {
+          const pdx = c.x - e.x, pdy = c.y - e.y, pd = Math.hypot(pdx, pdy) || 1;
+          const pullDist = Math.min(Math.max(0, pd - (this._radius(e) + CHAMP_RADIUS + 36)), sk.pullDist || 650);
+          if (pullDist > 20) this._knock(e, c.x - pdx * 2, c.y - pdy * 2, pullDist, 0);
+        } else if (sk.pullIn && from) {
+          const pdx = from.x - e.x, pdy = from.y - e.y, pd = Math.hypot(pdx, pdy) || 1;
+          const pullDist = Math.min(pd * 0.65, sk.pullInDist || 160);
+          if (pullDist > 15) this._knock(e, e.x - pdx, e.y - pdy, pullDist, 0);
+        } else if (sk.knockback && from) {
+          this._knock(e, from.x, from.y, sk.knockback.dist, sk.wallStun?.ms || 0);
+        }
+      }
+      if (sk.chain && !inChain) {
+        const bounces = Math.max(1, sk.chain.bounces || 2), rng = sk.chain.range || 360, decay = sk.chain.decay || 0.85;
+        const seen = new Set([e.id]);
+        let prev = e, curMul = mul;
+        for (let b = 0; b < bounces; b++) {
+          curMul *= decay;
+          const nxt = enemies((x) => !seen.has(x.id) && dist(x, prev) <= rng).sort((a, z) => (!!z.champ - !!a.champ) || dist(a, prev) - dist(z, prev))[0];
+          if (!nxt) break;
+          seen.add(nxt.id);
+          fx({ k: 'zap', x0: Math.round(prev.x), y0: Math.round(prev.y), x1: Math.round(nxt.x), y1: Math.round(nxt.y), color: sk.color });
+          hit(nxt, 0, prev, curMul, true);
+          prev = nxt;
+        }
+      }
     };
     const enemies = (pred) => {
       const out = [];
@@ -1352,13 +1489,27 @@ export class OfflineSim {
         const base = Math.atan2(dy / d, dx / d), hitSet = new Set(), from = { x: c.x, y: c.y };
         for (let i = 0; i < count; i++) {
           const an = base + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0), ux = Math.cos(an), uy = Math.sin(an);
-          fx({ k: 'proj', sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), dx: ux, dy: uy, speed: sk.speed, range: sk.range, width: sk.width, color: sk.color });
+          fx({ k: 'proj', sid: c.id, slot, x: Math.round(c.x), y: Math.round(c.y), dx: ux, dy: uy, speed: sk.speed, range: sk.range, width: sk.width, color: sk.color, boomerang: !!sk.boomerang });
           const x1 = c.x + ux * sk.range, y1 = c.y + uy * sk.range;
           const hits = enemies((e) => !hitSet.has(e.id) && (!sk.champOnly || this._champTargetOk(e)) && distToSeg(e.x, e.y, c.x, c.y, x1, y1) <= sk.width / 2 + this._radius(e))
             .map((e) => ({ e, d: (e.x - c.x) * ux + (e.y - c.y) * uy })).filter((h) => h.d > 0).sort((a, b) => a.d - b.d);
-          for (const h of sk.pierce ? hits : hits.slice(0, 1)) {
+          const pierceOut = !!(sk.pierce || sk.boomerang);
+          for (const h of pierceOut ? hits : hits.slice(0, 1)) {
             hitSet.add(h.e.id); // one cast = one shared hit set (a fan hits each target once)
             this._timers.push([t + (h.d / sk.speed) * 1000, () => hit(h.e, 0, from)]);
+          }
+          if (sk.boomerang) {
+            const retAt = t + (sk.range / sk.speed) * 1000;
+            this._timers.push([retAt, () => {
+              if (!this._alive(c)) return;
+              const retHit = new Set();
+              const rhits = enemies((e) => !retHit.has(e.id) && distToSeg(e.x, e.y, x1, y1, c.x, c.y) <= sk.width / 2 + this._radius(e))
+                .map((e) => ({ e, d: dist(e, { x: x1, y: y1 }) })).sort((a, b) => a.d - b.d);
+              for (const h of rhits) {
+                retHit.add(h.e.id);
+                this._timers.push([this.t + (h.d / sk.speed) * 1000, () => hit(h.e, 0, c, sk.returnMul || 1.15, false, true)]);
+              }
+            }]);
           }
         }
         break;
@@ -1366,6 +1517,22 @@ export class OfflineSim {
       case 'circle': {
         const pet = sk.at === 'pet' ? this._petOf(c) : null;
         const p = pet ? { x: pet.x, y: pet.y } : sk.range ? towardRange(sk.range) : { x: c.x, y: c.y };
+        if (sk.trap) {
+          const tr = sk.trap, maxActive = Math.max(1, tr.maxActive || 3);
+          const owned = this._traps.filter((tp) => tp.ownerId === c.id && tp.slot === slot);
+          if (owned.length >= maxActive) {
+            const idx = this._traps.indexOf(owned[0]);
+            if (idx >= 0) this._traps.splice(idx, 1);
+          }
+          const dur = Math.max(1000, tr.durationMs || 25000);
+          this._traps.push({
+            owner: c, ownerId: c.id, team: c.team, slot, x: p.x, y: p.y, r: sk.radius || 95,
+            armedAt: t + Math.max(0, tr.armMs || 450), until: t + dur, color: sk.color,
+            onHit: (vic) => hit(vic, 0, p),
+          });
+          fx({ k: 'zone', sid: c.id, slot, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius || 95, ms: dur, tickMs: 1200, color: sk.color });
+          break;
+        }
         fx({ k: 'circle', x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, delay: sk.delay || 0, color: sk.color });
         this._timers.push([t + (sk.delay || 0), () => { for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e))) hit(e, 0, p); }]);
         break;
@@ -1377,7 +1544,7 @@ export class OfflineSim {
         for (let k = 1; k * tick <= dur; k++) {
           this._timers.push([t + k * tick, () => {
             if (this.state.phase !== 'playing') return;
-            for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e))) { this._damage(e, amt(sk.dmg), c); effects(e); }
+            for (const e of enemies((e) => dist(e, p) <= sk.radius + this._radius(e))) hit(e, 0, p);
             if (sk.heal) this.state.champions.forEach((a) => { if (!a.dead && a.team === c.team && dist(a, p) <= sk.radius) a.hp = Math.min(a.maxHp, a.hp + amt(sk.heal)); });
           }]);
         }
@@ -1386,6 +1553,13 @@ export class OfflineSim {
       case 'target': {
         const e = this._ent(m.id);
         if (e && e.kind !== 'pet' && this._alive(e) && e.team !== c.team && (sk.targets !== 'enemyChamp' || this._champTargetOk(e)) && dist(c, e) <= sk.range + 80) {
+          if (sk.behindTarget) {
+            const x0 = c.x, y0 = c.y, d = dist(c, e) || 1, ux = (e.x - x0) / d, uy = (e.y - y0) / d;
+            const b = this.world.clampToMap(e.x + ux * (this._radius(e) + CHAMP_RADIUS + 14), e.y + uy * (this._radius(e) + CHAMP_RADIUS + 14));
+            const bp = this.nav.nearestFree(b.x, b.y, CHAMP_RADIUS);
+            c.x = bp.x; c.y = bp.y; c._order = null; c._nav = null;
+            fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
+          }
           hit(e, sk.execute ? sk.execute.missingHpPct * (e.maxHp - e.hp) : 0, { x: c.x, y: c.y });
         }
         break;
@@ -1395,14 +1569,17 @@ export class OfflineSim {
         const okT = !!tgt && tgt.kind !== 'pet' && this._alive(tgt) && tgt.team !== c.team && !isStruct(tgt)
           && (sk.targets !== 'enemyChamp' || this._champTargetOk(tgt)) && dist(c, tgt) <= sk.range + 100;
         let want;
-        if (okT) {   // like the server: stop at contact, and only the target is hit
-          const d = dist(c, tgt) || 1, reach = Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
+        if (okT) {
+          const d = dist(c, tgt) || 1;
+          const reach = sk.behindTarget
+            ? Math.min(sk.range + this._radius(tgt) + CHAMP_RADIUS, d + this._radius(tgt) + CHAMP_RADIUS + 12)
+            : Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
           want = this.world.clampToMap(x0 + ((tgt.x - x0) / d) * reach, y0 + ((tgt.y - y0) / d) * reach);
         } else want = towardRange(sk.range);
-        const p = this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS); // dashes stop at walls
+        const p = sk.behindTarget ? this.nav.nearestFree(want.x, want.y, CHAMP_RADIUS) : this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS);
         let end = p, struck = [];
         if (okT) {
-          if (dist(p, tgt) <= this._radius(tgt) + CHAMP_RADIUS + Math.max(sk.hitRadius || 0, 40)) struck = [tgt];
+          if (sk.behindTarget || dist(p, tgt) <= this._radius(tgt) + CHAMP_RADIUS + Math.max(sk.hitRadius || 0, 40)) struck = [tgt];
         } else if (sk.hitRadius) {
           struck = enemies((e) => distToSeg(e.x, e.y, x0, y0, p.x, p.y) <= sk.hitRadius + this._radius(e))
             .sort((a, b) => dist(a, c) - dist(b, c));
@@ -1414,13 +1591,15 @@ export class OfflineSim {
           }
         }
         c.x = end.x; c.y = end.y; c._order = null; c._nav = null;
+        if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
         fx({ k: 'dash', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y), color: sk.color });
         if (sk.dmg) for (const e of struck) hit(e, 0, { x: c.x, y: c.y });
         break;
       }
       case 'blink': {
-        const x0 = c.x, y0 = c.y, tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS); // blinks land on the nearest free spot
+        const x0 = c.x, y0 = c.y, tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
+        if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
         fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
         break;
       }
@@ -1431,6 +1610,8 @@ export class OfflineSim {
           if (sk.heal) a.hp = Math.min(a.maxHp, a.hp + amt(sk.heal));
           if (sk.shield) { a.shield = Math.round(amt(sk.shield)); a._shieldUntil = t + (sk.duration || 3000); }
           if (sk.buff) a._buffs[slot] = t + (sk.duration || 3000);
+          if (sk.spellShieldMs > 0) a._spellShieldUntil = Math.max(a._spellShieldUntil || 0, t + sk.spellShieldMs);
+          if (sk.invisMs > 0 && a === c) a._stealthUntil = t + sk.invisMs;
         }
         if (sk.heal) fx({ k: 'heal', x: Math.round(c.x), y: Math.round(c.y), r: sk.radius || 120, color: sk.color });
         fx({ k: 'buff', sid: c.id, slot, color: sk.color });
@@ -1511,7 +1692,12 @@ export class OfflineSim {
     }
     const augMul = c.augments?.includes('flash_cache') ? 0.8 : 1;
     const scaledCdMs = spellCooldownMs(sp, c.level, augMul);
-    if (sp.maxCharges > 1) {
+    if (this.noCd && c.id === this.localId) {
+      c[`cd${slot}`] = 0;
+      c[`charges${slot}`] = spellInitialCharges(sp.id);
+      c[`_spellRech${slot}`] = 0;
+      c[`_spellCastCd${slot}`] = 0;
+    } else if (sp.maxCharges > 1) {
       const nextChg = Math.max(0, (c[`charges${slot}`] ?? sp.maxCharges) - 1);
       c[`charges${slot}`] = nextChg;
       if (!c[`_spellRech${slot}`]) c[`_spellRech${slot}`] = t + scaledCdMs;

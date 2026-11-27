@@ -158,7 +158,7 @@ export class MobaFx {
     const trail = this._img('moba-glow', color, ADD, D.fx).setOrigin(0.92, 0.5).setRotation(ang);
     this.shots.push({
       kind: 'skill', head, core, trail, x0: m.x, y0: m.y, x: m.x, y: m.y, ux, uy, speed, range, dist: 0,
-      width, color, pierce, t: 0, spin,
+      width, color, pierce: !!(pierce || m.boomerang), boomerang: !!m.boomerang, sid: m.sid || '', returning: false, t: 0, spin,
     });
   }
 
@@ -637,19 +637,34 @@ export class MobaFx {
       s.t += dt;
       if (s.kind === 'skill') {
         s.dist += s.speed * dt;
+        if (s.boomerang && !s.returning && s.dist >= s.range) {
+          s.returning = true;
+          s.dist = 0;
+          s.x0 = s.x; s.y0 = s.y;
+          s.range = s.range + 400;
+          s.ux = -s.ux; s.uy = -s.uy;
+        }
+        if (s.returning && s.sid) {
+          const op = this.posOf(s.sid);
+          if (op) {
+            const rdx = op.x - s.x, rdy = op.y - s.y, rd = Math.hypot(rdx, rdy);
+            if (rd <= 42) s.dist = s.range;
+            else { s.ux = rdx / rd; s.uy = rdy / rd; }
+          }
+        }
         if (s.dist >= s.range) {
           s.done = true;
-          const ex = s.x0 + s.ux * s.range, ey = s.y0 + s.uy * s.range;
+          const ex = s.x, ey = s.y;
           this._release(s.head); this._release(s.core); this._release(s.trail);
           if (this.onScreen(ex, ey)) this.part(ex, ey, { tint: s.color, add: true, s0: s.width * 1.6, s1: s.width * 0.4, a0: 0.8, life: 0.2 });
           shots.splice(i, 1);
           continue;
         }
-        s.x = s.x0 + s.ux * s.dist; s.y = s.y0 + s.uy * s.dist;
+        s.x += s.ux * s.speed * dt; s.y += s.uy * s.speed * dt;
         s.head.setPosition(s.x, s.y); s.core.setPosition(s.x, s.y);
         if (s.spin) s.core.rotation += s.spin * dt;
         const tl = Math.min(s.dist, 150 + s.width * 1.5);
-        s.trail.setPosition(s.x, s.y).setDisplaySize(Math.max(8, tl), s.width * 0.85).setAlpha(0.75);
+        s.trail.setPosition(s.x, s.y).setRotation(Math.atan2(s.uy, s.ux)).setDisplaySize(Math.max(8, tl), s.width * 0.85).setAlpha(0.75);
       } else {
         const p = this.posOf(s.target);
         if (p) { s.tx = p.x; s.ty = p.y; s.seen = true; }

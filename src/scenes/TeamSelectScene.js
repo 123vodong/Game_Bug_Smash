@@ -28,7 +28,7 @@ import { hatEmoji } from '../entities/moba/mobaGfx.js';
 import { SaveManager } from '../core/SaveManager.js';
 import { saveMatch, clearMatch, CLOSE_TAKEN_OVER, DUP_TAB_TEXT } from '../core/Identity.js';
 import { AudioManager } from '../core/AudioManager.js';
-import { tText } from '../core/I18n.js';
+import { tText, t } from '../core/I18n.js';
 import {
   FONT_TITLE, FONT_MONO, NEON, hex, glow, drawPanel, makePill, makeButton, clipName,
   fillRR, strokeRR, fillCircleLP, strokeCircleLP, loadSpellPrefs, saveSpellPrefs, startClockSync,
@@ -354,7 +354,7 @@ export default class TeamSelectScene extends Phaser.Scene {
       this.add.text(W / 2, H / 2 - 66, '📶 Wi-Fi went to lunch — reconnecting…', { fontFamily: FONT_TITLE, fontSize: 22, color: '#ffd23f' }).setOrigin(0.5),
       this._veilBody]);
     const b = makeButton(this, {
-      x: W / 2, y: H / 2 + 60, w: 260, h: 50, label: '◀ BACK TO LOBBY', color: NEON.blue, fontSize: 15,
+      x: W / 2, y: H / 2 + 60, w: 260, h: 50, label: t('ui.backLobby'), color: NEON.blue, fontSize: 15,
       onClick: () => this._goLobby(),
     });
     c.add(b.root);
@@ -867,7 +867,7 @@ export default class TeamSelectScene extends Phaser.Scene {
   // ───────────────────────── lock button + footer ─────────────────────────
   _buildLockButton() {
     this._lockBtn = makeButton(this, {
-      x: LOCKBTN.x, y: LOCKBTN.y, w: LOCKBTN.w, h: LOCKBTN.h, label: 'LOCK IN',
+      x: LOCKBTN.x, y: LOCKBTN.y, w: LOCKBTN.w, h: LOCKBTN.h, label: t('select.lockIn'),
       sub: 'ENTER ⏎', color: NEON.green, fontSize: 26, primary: true,
       onClick: () => this._lockIn(),
     });
@@ -877,7 +877,7 @@ export default class TeamSelectScene extends Phaser.Scene {
   _buildFooter() {
     const y0 = SLOT.y + SLOT.step * 5 + 8;
     this._leaveBtn = makeButton(this, {
-      x: SLOT.lx + 70, y: 676, w: 136, h: 44, label: '✕ LEAVE', color: NEON.red, fontSize: 14,
+      x: SLOT.lx + 70, y: 676, w: 136, h: 44, label: t('ui.leave'), color: NEON.red, fontSize: 14,
       onClick: () => this._leave(),
     });
     this._selRoot.add(this._leaveBtn.root);
@@ -1350,7 +1350,7 @@ export default class TeamSelectScene extends Phaser.Scene {
         fontFamily: FONT_MONO, fontSize: 13, color: '#cfe3f5', align: 'center', wordWrap: { width: 500 },
       }).setOrigin(0.5)]);
     const b = makeButton(this, {
-      x: W / 2, y: H / 2 + 56, w: 260, h: 54, label: '◀ BACK TO LOBBY', color: NEON.blue, fontSize: 16,
+      x: W / 2, y: H / 2 + 56, w: 260, h: 54, label: t('ui.backLobby'), color: NEON.blue, fontSize: 16,
       onClick: () => this._goLobby(),
     });
     c.add(b.root);
