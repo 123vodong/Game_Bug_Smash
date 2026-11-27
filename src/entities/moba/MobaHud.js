@@ -20,7 +20,7 @@
 // modalSet() updates an open modal (reconnect countdown), a 🏳 ROLLBACK button + team vote panel
 // (EP-08), a coaching tip card under the minimap (EP-10) and a pulsing "🛒 Buy <item> (P)" nudge
 // (EP-21). The left column (under the minimap) never overlaps the skill buttons.
-import { CHAMPIONS } from '../../../shared/moba/champions.js';
+import { CHAMPIONS, CHAMPION_PASSIVES } from '../../../shared/moba/champions.js';
 import { ITEMS } from '../../../shared/moba/items.js';
 import {
   TEAM_INFO, TEAM_SIZE, XP_TABLE, MAX_LEVEL, ULT_UNLOCK_LEVEL, RECALL_MS, EPICS,
@@ -72,6 +72,35 @@ export function skillMechanics(sk, def) {
   if (sk.type === 'dash') L.push('🧱 stops at walls');
   if (sk.type === 'blink') L.push('🧱 lands beside walls');
   return L;
+}
+
+/** Shared screen-pinned floating tooltip box used by MobaHud and pick scenes. */
+export function showFloatingTip(s, { x, y, title, body, color = 0x39c2ff, W, H, depth = 60, maxWidth = 316 } = {}) {
+  const sw = W || s.scale?.width || 1280, sh = H || s.scale?.height || 720;
+  const col = color ?? 0x39c2ff;
+  const c = s.add.container(0, 0).setScrollFactor(0).setDepth(depth);
+  const t1 = s.add.text(0, 0, title || '', { fontFamily: FONT, fontSize: 14, color: css(col), stroke: '#000', strokeThickness: 3 });
+  const t2 = s.add.text(0, 22, body || '', { fontFamily: MONO, fontSize: 12, color: '#dfe7f5', wordWrap: { width: maxWidth, useAdvancedWrap: true }, lineSpacing: 3 });
+  const w = Math.max(t1.width, t2.width) + 22, h = 22 + t2.height + 16;
+  const bx = Math.max(8, Math.min(sw - w - 8, x - w / 2));
+  const by = Math.max(8, Math.min(sh - h - 8, y - h));
+  const bg = s.add.rectangle(bx, by, w, h, 0x070b12, 0.96).setOrigin(0).setScrollFactor(0).setStrokeStyle(2, col, 0.85);
+  t1.setPosition(bx + 10, by + 8).setScrollFactor(0);
+  t2.setPosition(bx + 10, by + 30).setScrollFactor(0);
+  c.add([bg, t1, t2]);
+  return c;
+}
+
+/** Shared detailed Q/W/E/R skill tooltip for HUD and champion pick screens. */
+export function showSkillTipPanel(s, def, slot, opts = {}) {
+  const sk = def?.skills?.[slot];
+  if (!sk) return null;
+  const range = sk.at === 'pet' ? ` · radius ${sk.radius}` : sk.range ? ` · range ${sk.range}${sk.radius ? ` · radius ${sk.radius}` : ''}` : (sk.radius ? ` · radius ${sk.radius}` : '');
+  const mech = skillMechanics(sk, def);
+  const desc = tText(`skill.${def.id}.${slot}`, sk.desc || '');
+  const title = `${sk.icon || '✨'} ${sk.name}  [${slot.toUpperCase()}]${slot === 'r' ? `  (Lv ${ULT_UNLOCK_LEVEL}+)` : ''}`;
+  const body = `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${desc}${mech.length ? `\n${mech.join('\n')}` : ''}`;
+  return showFloatingTip(s, { ...opts, title, body, color: sk.color ?? 0x39c2ff });
 }
 
 const SLOTS = ['q', 'w', 'e', 'r'];
@@ -242,7 +271,7 @@ export class MobaHud {
       const x = L + SP + 425 + (i % 3) * 43, y = T + 26 + Math.floor(i / 3) * 43;
       const fr = addR(x, y, 38, 38, 0x0f1622, 1).setStrokeStyle(1, 0x2c3a55, 1);
       const t = addT(x, y + 1, '', { fontSize: 22 });
-      this.items.push({ fr, t, id: '' });
+      this.items.push({ fr, t, id: '', x, y });
     }
     this.stats = addT(L + SP + 404, T + 103, '', { fontFamily: MONO, fontSize: 11, color: '#aebbd2' }, 0, 0.5);
 
@@ -306,6 +335,74 @@ export class MobaHud {
     mkScaleBtn(42, '-', -0.1);
     this._shopLocalX = rx;
     root.setScale(this._hudScale);
+    this._setupDesktopHover();
+  }
+
+  _setupDesktopHover() {
+    const s = this.s;
+    if (!s?.input) return;
+    this._hoverKey = null;
+    const onMove = (p) => {
+      if (p?.wasTouch || this._modal || !this.panelRoot?.visible) { this._setHover(null); return; }
+      const sc = this._hudScale || 1;
+      const lx = (p.x - this.px) / sc, ly = (p.y - this.H) / sc;
+      if (lx < -PANEL_W / 2 - 20 || lx > PANEL_W / 2 + 20 || ly < -PANEL_H - 20 || ly > 10) {
+        this._setHover(null);
+        return;
+      }
+      for (const slot of SLOTS) {
+        const sl = this.slots?.[slot];
+        if (sl && Math.abs(lx - sl.x) <= 30 && Math.abs(ly - sl.y) <= 30) {
+          this._setHover(`skill:${slot}`);
+          return;
+        }
+      }
+      for (const slot of SPELL_SLOTS) {
+        const sp = this.spellSlots?.[slot];
+        if (sp && Math.abs(lx - sp.x) <= 25 && Math.abs(ly - sp.y) <= 25) {
+          this._setHover(`spell:${slot}`);
+          return;
+        }
+      }
+      if (this._xpPos && Math.hypot(lx - this._xpPos.x, ly - this._xpPos.y) <= 42) {
+        this._setHover('champ');
+        return;
+      }
+      for (let i = 0; i < (this.items?.length || 0); i++) {
+        const it = this.items[i];
+        if (it?.id && Math.abs(lx - it.x) <= 20 && Math.abs(ly - it.y) <= 20) {
+          this._setHover(`item:${i}`);
+          return;
+        }
+      }
+      this._setHover(null);
+    };
+    const onOut = () => this._setHover(null);
+    s.input.on('pointermove', onMove);
+    s.input.on('gameout', onOut);
+    s.events.once('shutdown', () => {
+      s.input?.off('pointermove', onMove);
+      s.input?.off('gameout', onOut);
+      this._setHover(null);
+    });
+  }
+
+  _setHover(key) {
+    if (key === this._hoverKey) return;
+    const prevSkill = this._hoverKey?.startsWith('skill:') ? this._hoverKey.slice(6) : null;
+    const nextSkill = key?.startsWith('skill:') ? key.slice(6) : null;
+    this._hoverKey = key;
+    if (prevSkill !== nextSkill) this.o.onSkillHover?.(nextSkill);
+    if (!key) { this._hideTip(); return; }
+    if (nextSkill) this._showSkillTip(nextSkill);
+    else if (key.startsWith('spell:')) this._showSpellTip(key.slice(6));
+    else if (key === 'champ') this._showChampTip();
+    else if (key.startsWith('item:')) {
+      const idx = Number(key.slice(5));
+      const it = this.items?.[idx];
+      if (it?.id) this._showItemTip(idx, this.px + it.x * (this._hudScale || 1));
+      else this._hideTip();
+    }
   }
 
   _panelTop() { return this.H - PANEL_H * (this._hudScale || 1); }
@@ -355,6 +452,8 @@ export class MobaHud {
       sl.frame.setStrokeStyle(2, sk.color, 0.85);
     }
     for (const b of this._touchSkills || []) b.icon.setText(def.skills[b.slot].icon);
+    if (this._hoverKey?.startsWith('skill:')) this._showSkillTip(this._hoverKey.slice(6));
+    else if (this._hoverKey === 'champ') this._showChampTip();
   }
 
   flashSlot(slot, bad) {
@@ -368,15 +467,13 @@ export class MobaHud {
   }
 
   _showSkillTip(slot) {
-    const sk = this.def?.skills?.[slot];
+    const def = this.def, sk = def?.skills?.[slot];
     if (!sk) return;
     const sl = this.slots[slot], sc = this._hudScale || 1;
-    const range = sk.at === 'pet' ? ` · radius ${sk.radius}` : sk.range ? ` · range ${sk.range}${sk.radius ? ` · radius ${sk.radius}` : ''}` : (sk.radius ? ` · radius ${sk.radius}` : '');
-    const mech = skillMechanics(sk, this.def);
-    const desc = tText(`skill.${this.def.id}.${slot}`, sk.desc);
-    this._showTip(this.px + sl.x * sc, this._panelTop() - 8,
-      `${sk.icon} ${sk.name}  [${slot.toUpperCase()}]${slot === 'r' ? `  (Lv ${ULT_UNLOCK_LEVEL}+)` : ''}`,
-      `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${desc}${mech.length ? `\n${mech.join('\n')}` : ''}`, sk.color);
+    this._hideTip();
+    this._tip = showSkillTipPanel(this.s, def, slot, {
+      x: this.px + sl.x * sc, y: this._panelTop() - 8, W: this.W, H: this.H, depth: 60,
+    });
   }
   _showSpellTip(slot) {
     const sl = this.spellSlots?.[slot], sp = sl && SPELLS[sl.id];
@@ -397,8 +494,10 @@ export class MobaHud {
     const def = this.def;
     if (!def) return;
     const sc = this._hudScale || 1;
+    const pass = CHAMPION_PASSIVES?.[def.id];
+    const passLine = pass ? `\n✨ ${pass.name}: ${pass.desc}` : '';
     const pet = def.pet ? `\n${def.pet.emoji || '🤖'} Pet: ${def.pet.name} — follows you, zaps your target (range ${def.pet.range}, every ${sec(def.pet.atkMs)}), can't be targeted` : '';
-    this._showTip(this.px + (this._xpPos.x + 40) * sc, this._panelTop() - 8, `${def.emoji} ${def.name} ${def.title || ''}`, `${def.role}${def.ranged ? ' · ranged' : ' · melee'}\n${def.blurb || ''}${pet}`, def.color || 0xffd23f);
+    this._showTip(this.px + (this._xpPos.x + 40) * sc, this._panelTop() - 8, `${def.emoji} ${def.name} ${def.title || ''}`, `${def.role}${def.ranged ? ' · ranged' : ' · melee'}\n${def.blurb || ''}${passLine}${pet}`, def.color || 0xffd23f);
   }
   _showItemTip(i, x) {
     const it = ITEMS[this.items[i].id];
@@ -408,16 +507,7 @@ export class MobaHud {
   }
   _showTip(x, y, title, body, color) {
     this._hideTip();
-    const s = this.s;
-    const c = s.add.container(0, 0).setScrollFactor(0).setDepth(60);
-    const t1 = s.add.text(0, 0, title, { fontFamily: FONT, fontSize: 14, color: css(color), stroke: '#000', strokeThickness: 3 });
-    const t2 = s.add.text(0, 22, body, { fontFamily: MONO, fontSize: 12, color: '#dfe7f5', wordWrap: { width: 300 }, lineSpacing: 3 });
-    const w = Math.max(t1.width, t2.width) + 20, h = 22 + t2.height + 16;
-    const bx = Math.max(8, Math.min(this.W - w - 8, x - w / 2)), by = y - h;
-    const bg = s.add.rectangle(bx, by, w, h, 0x070b12, 0.95).setOrigin(0).setStrokeStyle(2, color, 0.8);
-    t1.setPosition(bx + 10, by + 8); t2.setPosition(bx + 10, by + 30);
-    c.add([bg, t1, t2]);
-    this._tip = c;
+    this._tip = showFloatingTip(this.s, { x, y, title, body, color, W: this.W, H: this.H, depth: 60 });
   }
   _hideTip() { this._tip?.destroy(); this._tip = null; }
 
@@ -964,6 +1054,7 @@ export class MobaHud {
   // ───────────────────────── modal dialogs ─────────────────────────
   /** Generic modal: { title, body, buttons:[{label,color,fn}] } → returns close(). */
   modal({ title, body, buttons, cols }) {
+    this._setHover?.(null);
     this.closeModal();
     const s = this.s, W = this.W, H = this.H;
     const arr = buttons || [];

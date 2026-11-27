@@ -417,7 +417,10 @@ export class OfflineSim {
     if (!this._traps.length) return;
     const keep = [];
     for (const tr of this._traps) {
-      if (now >= tr.until || !this._alive(tr.owner)) continue;
+      if (now >= tr.until || !this._alive(tr.owner)) {
+        this.emit('fx', { k: 'trapEnd', tid: tr.tid });
+        continue;
+      }
       if (now < tr.armedAt) { keep.push(tr); continue; }
       let vic = null;
       for (const c of this.state.champions.values()) {
@@ -429,11 +432,26 @@ export class OfflineSim {
         }
       }
       if (vic) {
+        this.emit('fx', { k: 'trapEnd', tid: tr.tid });
         this.emit('fx', { k: 'circle', x: Math.round(tr.x), y: Math.round(tr.y), r: tr.r, delay: 0, color: tr.color });
         tr.onHit(vic);
       } else keep.push(tr);
     }
     this._traps = keep;
+  }
+
+  _teamSeesTrap(team, x, y) {
+    const st = this.state;
+    for (const c of st.champions.values()) {
+      if (c.team === team && !c.dead && Math.hypot(c.x - x, c.y - y) <= 1050) return true;
+    }
+    for (const s of st.structures.values()) {
+      if (s.alive && s.team === team && (s.kind === 'tower' || s.kind === 'core') && Math.hypot(s.x - x, s.y - y) <= 1050) return true;
+    }
+    for (const u of st.units.values()) {
+      if (u.alive && u.kind === 'ward' && u.team === team && Math.hypot(u.x - x, u.y - y) <= (R.WARD?.sightRadius || 750)) return true;
+    }
+    return false;
   }
 
   // ───────────────────────── tick ─────────────────────────
@@ -1522,15 +1540,23 @@ export class OfflineSim {
           const owned = this._traps.filter((tp) => tp.ownerId === c.id && tp.slot === slot);
           if (owned.length >= maxActive) {
             const idx = this._traps.indexOf(owned[0]);
-            if (idx >= 0) this._traps.splice(idx, 1);
+            if (idx >= 0) {
+              fx({ k: 'trapEnd', tid: owned[0].tid });
+              this._traps.splice(idx, 1);
+            }
           }
           const dur = Math.max(1000, tr.durationMs || 25000);
+          const tid = `tr_${++this._uid}`;
           this._traps.push({
-            owner: c, ownerId: c.id, team: c.team, slot, x: p.x, y: p.y, r: sk.radius || 95,
+            tid, owner: c, ownerId: c.id, team: c.team, slot, x: p.x, y: p.y, r: sk.radius || 95,
             armedAt: t + Math.max(0, tr.armMs || 450), until: t + dur, color: sk.color,
             onHit: (vic) => hit(vic, 0, p),
           });
-          fx({ k: 'zone', sid: c.id, slot, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius || 95, ms: dur, tickMs: 1200, color: sk.color });
+          if (c.team === 'blue') {
+            fx({ k: 'zone', sid: c.id, team: c.team, slot, tid, trap: true, stealthAfterMs: 3000, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius || 95, ms: dur, tickMs: 1200, color: sk.color });
+          } else if (!this._hiddenFrom(c, 'blue') && this._teamSeesTrap('blue', p.x, p.y)) {
+            fx({ k: 'zone', sid: c.id, team: c.team, slot, tid, trap: true, fadingStealth: true, x: Math.round(p.x), y: Math.round(p.y), r: sk.radius || 95, ms: 3000, tickMs: 1200, color: sk.color });
+          }
           break;
         }
         fx({ k: 'circle', x: Math.round(p.x), y: Math.round(p.y), r: sk.radius, delay: sk.delay || 0, color: sk.color });

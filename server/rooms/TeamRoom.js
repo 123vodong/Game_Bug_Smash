@@ -3638,6 +3638,11 @@ export class TeamRoom extends Room {
    */
   _fx(entry) {
     if (this.state.phase !== 'playing') { this.broadcast('fx', entry); return; }
+    if (entry.k === 'trapEnd') {
+      for (const team of VIEW_TEAMS) this._sendTeam(team, 'fx', entry);
+      this._sendTeam('all', 'fx', entry);
+      return;
+    }
     const now = Date.now();
     const a = entry.sid ? this._ent(entry.sid) : null;
     const b = entry.id ? this._ent(entry.id) : null;
@@ -3651,11 +3656,31 @@ export class TeamRoom extends Room {
     else if (Number.isFinite(entry.x1)) { x2 = entry.x1; y2 = entry.y1; }
     for (const team of VIEW_TEAMS) {
       if (!this.canSee(team, a, now) || !this.canSee(team, b, now) || !this.canSee(team, c, now)) continue;
+      if (entry.trap && entry.team && team !== entry.team) {
+        if (!this._teamHasTrapSight(team, x, y)) continue;
+        this._sendTeam(team, 'fx', { ...entry, ms: entry.enemyRevealMs || 3000, fadingStealth: true, stealthAfterMs: 0 });
+        continue;
+      }
       const own = (a && a.team === team) || (b && b.team === team) || (c && c.team === team);
       if (!own && Number.isFinite(x) && !this._nearTeam(team, x, y) && !(Number.isFinite(x2) && this._nearTeam(team, x2, y2))) continue;
       this._sendTeam(team, 'fx', entry);
     }
     this._sendTeam('all', 'fx', entry);
+  }
+
+  /** Enemy champions / towers within 1050 px or wards within sightRadius see trap placement briefly. */
+  _teamHasTrapSight(team, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    for (const ch of this.champs.values()) {
+      if (ch.team === team && !ch.dead && Math.hypot(ch.x - x, ch.y - y) <= 1050) return true;
+    }
+    for (const s of this.structs.values()) {
+      if (s.alive && s.team === team && (s.kind === 'tower' || s.kind === 'core') && Math.hypot(s.x - x, s.y - y) <= 1050) return true;
+    }
+    for (const u of this.units.values()) {
+      if (u.alive && u.utype === 'ward' && u.team === team && Math.hypot(u.x - x, u.y - y) <= WARD.sightRadius) return true;
+    }
+    return false;
   }
 
   /** v4: per-team `atk` batches (same visibility + interest rules as fx). */

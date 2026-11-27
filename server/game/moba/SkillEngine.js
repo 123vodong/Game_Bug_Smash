@@ -86,7 +86,8 @@ export class SkillEngine {
     this.projectiles = []; // { owner, team, slot, x, y, dx, dy, speed, left, half, pierce, champOnly, spec, amount, color, hit:Set }
     this.zones = [];       // delayed circles { at, owner, team, slot, x, y, r, spec, amount, color }
     this.areas = [];       // v2 persistent zones { owner, team, slot, x, y, r, spec, amount, heal, nextAt, until, tickMs }
-    this.traps = [];       // ground traps { owner, ownerId, team, slot, x, y, r, armedAt, until, spec, amount, color }
+    this.traps = [];       // ground traps { tid, owner, ownerId, team, slot, x, y, r, armedAt, until, spec, amount, color }
+    this._trapSeq = 0;
   }
 
   clear() { this.projectiles.length = 0; this.zones.length = 0; this.areas.length = 0; this.traps.length = 0; }
@@ -187,15 +188,22 @@ export class SkillEngine {
       const owned = this.traps.filter((tp) => tp.ownerId === ch.id && tp.slot === slot);
       if (owned.length >= maxActive) {
         const idx = this.traps.indexOf(owned[0]);
-        if (idx >= 0) this.traps.splice(idx, 1);
+        if (idx >= 0) {
+          this.room._fx({ k: 'trapEnd', tid: owned[0].tid });
+          this.traps.splice(idx, 1);
+        }
       }
       const dur = Math.max(1000, tr.durationMs || 25000);
+      const tid = `tr_${++this._trapSeq}`;
       this.traps.push({
-        owner: ch, ownerId: ch.id, team: ch.team, slot, x, y, r: spec.radius || 95,
+        tid, owner: ch, ownerId: ch.id, team: ch.team, slot, x, y, r: spec.radius || 95,
         armedAt: now + Math.max(0, tr.armMs || 450), until: now + dur,
         spec, amount: this.amount(ch, spec.dmg), color: spec.color,
       });
-      this.room._fx({ k: 'zone', sid: ch.id, slot, x: round(x), y: round(y), r: spec.radius || 95, ms: dur, tickMs: 1200, color: spec.color });
+      this.room._fx({
+        k: 'zone', sid: ch.id, team: ch.team, slot, tid, trap: true, enemyRevealMs: 3000, stealthAfterMs: 3000,
+        x: round(x), y: round(y), r: spec.radius || 95, ms: dur, tickMs: 1200, color: spec.color,
+      });
       return true;
     }
     const delay = Math.max(0, spec.delay || 0);
@@ -512,7 +520,10 @@ export class SkillEngine {
     if (this.traps.length) {
       const keepTraps = [];
       for (const tr of this.traps) {
-        if (now >= tr.until || !this.room._isAlive(tr.owner)) continue;
+        if (now >= tr.until || !this.room._isAlive(tr.owner)) {
+          this.room._fx({ k: 'trapEnd', tid: tr.tid });
+          continue;
+        }
         if (now < tr.armedAt) { keepTraps.push(tr); continue; }
         let victim = null;
         for (const c of this.room.champs.values()) {
@@ -524,6 +535,7 @@ export class SkillEngine {
           }
         }
         if (victim) {
+          this.room._fx({ k: 'trapEnd', tid: tr.tid });
           this.room._fx({ k: 'circle', x: round(tr.x), y: round(tr.y), r: tr.r, delay: 0, color: tr.color });
           this._applyHit(tr.owner, victim, tr.spec, tr.amount, now, tr.x, tr.y);
         } else {
