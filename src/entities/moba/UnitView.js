@@ -24,6 +24,7 @@ export function unitKindInfo(kind, campId = '') {
   if (MINIONS[kind]) return { cls: 'minion', sprite, name, size: MINIONS[kind].size, ranged: MINIONS[kind].range > 200 };
   if (CAMPS[kind]) return { cls: 'monster', sprite, name, size: CAMPS[kind].size };
   if (kind === 'pet') return { cls: 'pet', sprite, name, size: PET_SIZE };
+  if (kind === 'dummy') return { cls: 'dummy', sprite: 'bot-drone', name: 'Practice Dummy', size: 62, tint: 0xffd23f };
   if (EPICS[kind]) {
     const e = EPICS[kind];
     return { cls: 'epic', sprite, name, size: e.size, tint: e.tint, title: e.title };

@@ -1,15 +1,15 @@
 # Champions, Unique Passives, Skill Combos & Matchups
 
 **Author:** Duke Nguyen (`duc.nguyen@onethesis.com`)
-**Source:** `shared/moba/champions.js` (18 champions, **72 reworked LoL-inspired skills**, **18/18 unique passives**, **18/18 recommended builds**)
+**Source:** `shared/moba/champions.js` (18 champions, **72 LoL-inspired skills (v5 diversity rework: 6 new mechanics, see the Mechanic Ownership Matrix)**, **18/18 unique passives**, **18/18 recommended builds**)
 
 ## Champion Matchup & Counterplay Guide
 | Archetype / Champion | Excels Against | Vulnerable To | Key Counter Mechanics |
 | :--- | :--- | :--- | :--- |
 | **Zero / Rush / Sprint / Pager** (Dive / Assassins) | `Tester`, `Cache`, `Pixel`, `Model` | `Stack`, `Brick`, `Lint` | Hard CC (`SQL Hook`, `Escort Out`, `Database Lock`), `freeze_frame` stasis, stealth reveal (`Wards`) |
 | **Tester / Swipe / Cache** (Marksmen) | `Stack`, `Brick`, Structures | `Zero`, `Pager`, `Pixel` | Behind-target ambushes (`Pen Test`, `On My Way`), `Feedback Hook` drags, boomerang burst |
-| **Stack / Brick / Patch** (Frontline Tanks) | `Zero`, `Pixel`, `Mop` | `Tester`, `Cache`, `armor_shredder` | `CSS Boomerang` / `Broom Boomerang` return True Damage, `Merge Conflict` % missing-HP execute |
-| **Pixel / Mop / Model / Lint** (Mages / Control) | Grouped teams, melee bruisers | `Zero`, `Sprint`, `git_revert` | `Spell Shield` (`Ops E`, `Brick W`, `Patch W`, `Hira W`, `Lint E`, `Pager W`), Cleanse (`Git Revert`) |
+| **Stack / Brick / Patch** (Frontline Tanks) | `Zero`, `Pixel`, `Mop` | `Tester`, `Cache`, `armor_shredder` | `CSS Boomerang` return True Damage, `Nit` / `Stale` / `Paged` mark detonations, `Zero-Day` % missing-HP execute |
+| **Pixel / Mop / Model / Lint** (Mages / Control) | Grouped teams, melee bruisers | `Zero`, `Sprint`, `git_revert` | `Spell Shield` (`Brick W`, `Hira W`), `Hibernate` stasis (`Model W`), `Hot Swap` rescues (`Ops E`), Silence (`Hira R`, `Lint E`), Cleanse (`Git Revert`) |
 | **Ops / Volt / Hira / Brew** (Supports) | Poke lanes, long skirmishes | `grievous_linter`, `shield_breaker` | `Strict Linter` (-40% heal), `Escalate` (-50% heal), baiting `Spell Shield` before core CC |
 
 | ID | Champion | Role | Lane | Unique Passive | Recommended Build |
@@ -42,24 +42,24 @@
 
 | Champion | Role | Lv1 / Lv18 HP | Lv18 Armor / MR | Dmg Channel | Hard CC Budget | Mobility | Power Curve (E / M / L) | Primary Balance Lever |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Pixel** (`pixel`) | Mage | 520 / 1982 | 77.8 / 50.4 | Magic + True Q Return / R | None | High (`E` 430 Blink) | Med / High / V.High | `Q` Boomerang return True Dmg & `W` Chain (2 bounces) |
-| **Stack** (`stack`) | Tank | 650 / 2554 | 114.2 / 68.0 | Physical | High (`Q` Hook + `E` 0.6s + `R` PullIn 1.0s) | Med (`E` 420 Dash) | High / High / Med | `Q` 680 px Pull Hook & `R` 170 px Vortex PullIn |
-| **Ops** (`ops`) | Support | 540 / 2070 | 83.5 / 50.4 | Magic | None (`Q` 35% slow) | Low (`+30%` MS) | Med / High / V.High | `E` Team Spell Shield (`2.5s`) & `Q` per-champ healOnHit |
+| **Pixel** (`pixel`) | Mage | 520 / 1982 | 77.8 / 50.4 | Magic + True Q Return / R | None | High (`E` 430 Blink + free snap-back recast) | Med / High / V.High | `Q` Boomerang return True Dmg, `W` Chain (2 bounces) & `E` 3s recast window |
+| **Stack** (`stack`) | Tank | 650 / 2554 | 114.2 / 68.0 | Physical | High (`Q` Hook 0.6s + `R` PullIn 1.0s) | Low (none; `E` is a zone) | High / High / Med | `Q` 680 px Pull Hook, `E` 270 px Rate Limit zone (50% slow), `R` 170 px Vortex PullIn |
+| **Ops** (`ops`) | Support | 540 / 2070 | 83.5 / 50.4 | Magic | None (`Q` 35% slow) | Med (`E` Hot Swap teleports both) | Med / High / V.High | `E` Hot Swap (650 px, shield + 30% MS on both) & `Q` per-champ healOnHit |
 | **Tester** (`tester`) | Marksman | 560 / 2090 | 83.5 / 50.4 | Physical + True R | Med (`W` 1.2s Root Trap) | Med (`E` 400 Dash + Slow) | Low / High / V.High | `W` `Bug Trap` (`1.2s` root, max 3) & `Q` 1050 px pierce |
 | **Zero** (`zero`) | Assassin | 580 / 2195 | 96.0 / 59.2 | Physical + True E | None | High (`Q` behind + `W` Stealth + `R` Blink) | Med / V.High / High | `W` `1.8s` Invis, `Q/R` behindTarget, `R` Kill Reset |
-| **Model** (`model`) | Controller | 530 / 1992 | 77.8 / 50.4 | Magic | High (`E` PullIn + 1.0s Root + `R` 210 PullIn) | Low (`W` +15% MS) | Low / High / V.High | `E` / `R` AoE PullIn vortex & `850 ms` `Big Data` delay |
+| **Model** (`model`) | Controller | 530 / 1992 | 77.8 / 50.4 | Magic | High (`E` 1.0s Root + `R` 210 PullIn) | Low (none) | Low / High / V.High | `W` Hibernate 1.5s stasis (+30% AP, empower), `E` Root zone, `R` 850 ms `Big Data` PullIn |
 | **Brick** (`guard`) | Tank | 680 / 2635 | 119.6 / 68.0 | Physical | High (`E` 1.2s / `R` 1.0s Wall Stuns) | Med (`E` 420 toTarget Dash) | High / High / Med | `W` 2s Spell Shield & `E` 340 px Knockback Wall Pin |
-| **Mop** (`cleaner`) | Mage | 510 / 1938 | 76.1 / 50.4 | Magic + True Q Return | Low (`Q` 80 px + `R` 85 px PullIn) | Med (`E` 460 Splash Dash) | High / High / High | `Q` Boomerang True Return & `R` 4s `Deep Clean Vortex` |
-| **Rush** (`courier`) | Jungler | 600 / 2266 | 96.0 / 59.2 | Physical | Med (`E` 160 KB + 0.8s Stun) | High (`Q` CD-Refund Dash + `R` +60% MS) | High / High / Med | `Q` `-1.5s` CD refund per champ hit & `R` 5s throttle |
-| **Volt** (`embedded`) | Support | 540 / 2036 | 81.5 / 50.4 | Magic (Skills + Servo) | High (`Q` 0.7s + `E` 0.85s Trap + `R` 1.0s) | Low | Med / High / High | `Q` Stun Chain (2 bounces), `E` Watchdog Trap, `R` Servo PullIn |
-| **Patch** (`dev`) | Fighter | 600 / 2300 | 101.4 / 59.2 | Physical | High (`E` 0.9s Wall Stun) | Med (`E` 460 Dash) | Med / High / V.High | `Q` Heal-on-Hit, `W` 2s Spell Shield, `R` Execute Kill Reset |
-| **Swipe** (`appdev`) | Marksman | 550 / 2046 | 79.8 / 50.4 | Physical | None | High (`E` 7s Dash + Q Refund + `W` Stealth) | Med / High / V.High | `Q` `-1.5s E` refund per champ, `W` `1.2s` Stealth, `R` Execute |
-| **Sprint** (`sprint`) | Jungler | 610 / 2276 | 99.7 / 59.2 | Physical | High (`E` 0.7s Stun + `R` PullIn Vortex) | High (`E` Kill Reset + Passive MS) | High / High / Med | `E` Kill Reset dash & `R` 4s `Sprint Review` PullIn zone |
-| **Cache** (`cache`) | Marksman | 545 / 2024 | 79.8 / 50.4 | Physical | Low (`W` 45% Slow Trap) | Med (`E` 400 Blink + Q Global CD Refund) | Low / High / V.High | `Q` `-1.0s` ALL-skill refund per champ & `W` cryo mines |
-| **Hira** (`hr`) | Support | 545 / 2058 | 82.5 / 50.4 | Magic | High (`Q` 380 Pull + Root + `R` PullIn Stun) | Low (`W` +20% MS) | Med / High / High | `Q` Feedback Hook drag, `W` 2.5s Spell Shield, `R` PullIn |
-| **Lint** (`lint`) | Controller | 525 / 1970 | 78.8 / 50.4 | Magic | High (`W` 1.1s Root + `R` 1.0s Wall Stun) | Low (`E` +25% MS) | Med / High / High | `Q` Chain Audit (`30%` slow), `E` 2s Spell Shield, `R` 300 KB |
-| **Brew** (`barista`) | Support | 540 / 2036 | 79.8 / 50.4 | Magic | Med (`E` 1.05s Stun) | Low (`W` +15% MS) | Med / High / High | `Q` per-champ healOnHit & `R` 4s Break Room heal/burn |
-| **Pager** (`oncall`) | Jungler | 615 / 2264 | 98.0 / 59.2 | Physical | High (`R` 1.0s Stun) | High (`E` Blink+Stealth + `R` 920 behindTarget) | High / High / Med | `Q` Boomerang, `W` 2s Spell Shield, `E` `1.2s` Invis, `R` 920 px |
+| **Mop** (`cleaner`) | Mage | 510 / 1938 | 76.1 / 50.4 | Magic | Low (`Q` 150 px KB, 60-65% slows) | Med (`E` 460 Slide + trail) | High / High / High | `Q` 5-fan Sweep shove, `W` 60% slow bubble, `E` trail zone, `R` 420 px Flood |
+| **Rush** (`courier`) | Jungler | 600 / 2266 | 96.0 / 59.2 | Physical | Med (`E` 160 KB + 0.8s Stun, `R` 50% slow) | High (`Q` CD-Refund Dash) | High / High / Med | `Q` `-1.5s` CD refund per champ hit & `R` 360 px Surge Pricing nuke |
+| **Volt** (`embedded`) | Support | 540 / 2036 | 81.5 / 50.4 | Magic (Skills + Servo) | High (`Q` 0.7s + `E` 0.85s Trap + `R` 0.9s wall stun) | Low | Med / High / High | `Q` and `R` centered on Servo (pet positioning), `E` Watchdog Trap |
+| **Patch** (`dev`) | Fighter | 600 / 2300 | 101.4 / 59.2 | Physical | Med (`R` 1.5s single-target stun) | High (`E` 380 dash x2 via recast) | Med / High / V.High | `Q` Heal-on-Hit, `E` double dash, `R` lock + heal |
+| **Swipe** (`appdev`) | Marksman | 550 / 2046 | 79.8 / 50.4 | Physical | None (`Q` 20% slow) | High (`E` 390 Dash + `W` Stealth) | Med / High / V.High | `Q` 3-fan slow poke, `W` `1.2s` Stealth, `R` 7-fan Execute |
+| **Sprint** (`sprint`) | Jungler | 610 / 2276 | 99.7 / 59.2 | Physical | Med (`E` 0.7s Stun, `Q` 35% slow) | High (`E` Kill Reset leap + Passive MS) | High / High / Med | `E` Kill Reset leap, `W` Burndown 30% DR, `R` team +40% MS / +15% AD / +20% AS rally |
+| **Cache** (`cache`) | Marksman | 545 / 2024 | 79.8 / 50.4 | Physical + True R detonation | Low (`W` 45% Slow) | Med (`E` 400 Blink + Q Global CD Refund) | Low / High / V.High | `Q` `-1.0s` ALL-skill refund per champ, `W` Stale mark (x3), `R` +20% true dmg per stack |
+| **Hira** (`hr`) | Support | 545 / 2058 | 82.5 / 50.4 | Magic | High (`Q` 380 Pull + Root, `R` 2.5s Silence + 40% slow) | Low (`W` +20% MS) | Med / High / High | `Q` Feedback Hook drag, `W` 2.5s Spell Shield, `R` 360 px Silence |
+| **Lint** (`lint`) | Controller | 525 / 1970 | 78.8 / 50.4 | Magic + True R detonation | High (`W` 1.1s Root + `E` zone Silence) | Low (none) | Med / High / High | `Q` Nit stacks (x4), `E` Code Freeze silence zone, `R` +18% true per Nit |
+| **Brew** (`barista`) | Support | 540 / 2036 | 79.8 / 50.4 | Magic | Med (`E` 1.05s Stun) | Low (`W` +15% MS) | Med / High / High | `Q` 3-stream cone (no self-heal), `W` AS/MS heal, `R` 4s Break Room heal/burn |
+| **Pager** (`oncall`) | Jungler | 615 / 2264 | 98.0 / 59.2 | Physical + True R detonation | Med (`R` 1.0s Stun, `Q`/`E` slows) | High (`Q` toTarget dash + `R` 920 behindTarget) | High / High / Med | `W` 1400 px Paged mark, `Q` Ping dash, `E` Postmortem slow, `R` +35% true if Paged |
 
 ---
 
@@ -73,10 +73,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | CSS Boomerang | `projectile` | 45 | 5.5s | Dmg: 65 +14/lv +55% AP, Pierce, Boomerang (True Return 100%) | Fires a boomerang orb that pierces out and deals True Damage on return; marks targets (4s) for Framework Rewrite. |
-| **W** | Flexbox Orbs | `target` | 60 | 10s | Dmg: 70 +16/lv +55% AP, Chain 2 (`360 px`, `0.8x` decay) | Zaps an enemy and chains lightning to 2 nearby targets. |
-| **E** | Hot Reload | `blink` | 65 | 12s | Range: 430 | Instantly blinks nearby and empowers your next Q or R within 3.5s by +20% damage. |
-| **R** | Framework Rewrite | `circle` | 100 | 70s | Dmg: 250 +30/lv +90% AP, Radius 320, Delay 700ms | After a short delay, rewrites an area for massive damage; detonates Q marks for +25% bonus true damage. |
+| **Q** | CSS Boomerang | `projectile` | 45 | 5.5s | Dmg: 65 +14/lv +55% AP, Range 880, Pierce, Boomerang (True Return) | Fires a boomerang orb that pierces out and deals True Damage on return; marks targets (4s) for Framework Rewrite. |
+| **W** | Flexbox Orbs | `target` | 60 | 10s | Dmg: 70 +16/lv +55% AP, Range 620, Chain 2 | Zaps an enemy and chains lightning to 2 nearby targets. |
+| **E** | Hot Reload | `blink` | 65 | 12s | Range 430, Recast 3s (back) | Blinks nearby and empowers your next Q or R (+20%). Press E again within 3s to snap back to where you started. |
+| **R** | Framework Rewrite | `circle` | 100 | 70s | Dmg: 250 +30/lv +90% AP, Range 950, Radius 320, Delay 700ms | After a short delay, rewrites an area for massive damage; detonates Q marks for +25% bonus true damage. |
 
 ### Stack — the Backend Tank (`stack`)
 - **Role / Lane:** Tank / `top` · **Range:** Melee (`125`) · **Difficulty:** 2/3
@@ -86,10 +86,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | SQL Hook | `projectile` | 55 | 11s | Dmg: 75 +15/lv +70% AD, Pull 680 px, Stun 0.6s | Launches a query hook that yanks the first enemy hit right to you and stuns briefly. |
-| **W** | Load Balancer | `self` | 50 | 13s | Shield: 100 +18/lv +8% HP, +25 Armor | Gains a shield and +25 armor; if the shield breaks, releases an AoE shockwave (80 + 40% armor). |
-| **E** | Connection Pool | `dash` | 55 | 12s | Dmg: 60 +14/lv +60% AD, Range 420, Stun 0.6s | Charges forward and stuns the first enemy it connects to. |
-| **R** | Database Lock | `circle` | 100 | 75s | Dmg: 185 +20/lv +55% AD, PullIn 170 px, Stun 1.0s | Locks every table in range, pulling nearby enemies inward, damaging and stunning them. |
+| **Q** | SQL Hook | `projectile` | 55 | 11s | Dmg: 75 +15/lv +70% AD, Range 820, Pull 680 px, Stun 0.6s | Launches a query hook that yanks the first enemy hit right to you and stuns briefly. |
+| **W** | Load Balancer | `self` | 50 | 13s | Shield: 100 +18/lv +8% HP, Duration 4s, +25 Armor | Gains a shield and +25 armor; if the shield breaks, releases an AoE shockwave (80 + 40% armor). |
+| **E** | Rate Limit | `zone` | 55 | 12s | Dmg: 22 +4/lv +18% AD per tick, Radius 270, Duration 3s, Slow 50% | Throttles everything around you for 3s: enemies inside take damage every 0.5s and are heavily slowed. |
+| **R** | Database Lock | `circle` | 100 | 75s | Dmg: 185 +20/lv +55% AD, Radius 350, PullIn 170 px, Stun 1s | Locks every table in range, pulling nearby enemies inward, damaging and stunning them. |
 
 ### Ops — the DevOps Medic (`ops`)
 - **Role / Lane:** Support / `support` · **Range:** Ranged (`450`) · **Difficulty:** 1/3
@@ -99,10 +99,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Health Check | `circle` | 45 | 6s | Dmg: 65 +14/lv +55% AP, Slow 35%, HealOnHit: 35 +8/lv +25% AP | Scans an area: slows enemies inside and heals you for each champion hit. |
+| **Q** | Health Check | `circle` | 45 | 6s | Dmg: 65 +14/lv +55% AP, HealOnHit: 35 +8/lv +25% AP, Range 820, Radius 200, Delay 300ms, Slow 35% | Scans an area: slows enemies inside and heals you for each champion hit. |
 | **W** | Auto-Heal | `allies` | 65 | 10s | Heal: 75 +16/lv +42% AP, Radius 500 | Restarts unhealthy containers: heals you and nearby allies. |
-| **E** | Firewall Aegis | `allies` | 55 | 14s | +30% MS, Spell Shield 2.5s, Radius 480 | Ships an emergency shield: grants nearby allies +30% MS and a Spell Shield blocking the next enemy skill. |
-| **R** | Blue-Green Deploy | `allies` | 110 | 85s | Heal: 185 +25/lv +60% AP, Shield: 155 +15/lv +40% AP, 15% DR | Swaps the whole team to a fresh deployment: big heal, shield, and 15% damage reduction. |
+| **E** | Hot Swap | `swap` | 55 | 14s | Shield: 70 +14/lv +40% AP, Range 650, Duration 2.5s, +30% MS | Swaps places with the allied champion nearest your aim, rescuing them. Both gain a shield and +30% MS for 2.5s. |
+| **R** | Blue-Green Deploy | `allies` | 110 | 85s | Heal: 185 +25/lv +60% AP, Shield: 155 +15/lv +40% AP, Radius 800, Duration 3s, 15% DR | Swaps the whole team to a fresh deployment: big heal, shield, and 15% damage reduction. |
 
 ### Tester — the QA Sniper (`tester`)
 - **Role / Lane:** Marksman / `bot` · **Range:** Ranged (`500`) · **Difficulty:** 2/3
@@ -113,9 +113,9 @@
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
 | **Q** | Unit Test | `projectile` | 45 | 7s | Dmg: 75 +16/lv +100% AD, Range 1050, Pierce | Fires a piercing sniper bolt through every enemy in a line. |
-| **W** | Bug Trap | `circle` | 40 | 12s | Dmg: 60 +14/lv +70% AD, Trap (max 3, 25s, arm 0.5s), Root 1.2s | Deploys a hidden unit-test trap (max 3, 25s). Snaps shut to damage and root the first enemy stepping on it. |
+| **W** | Bug Trap | `circle` | 40 | 12s | Dmg: 60 +14/lv +70% AD, Range 720, Radius 95, Root 1.2s, Trap (max 3, 25s) | Deploys a hidden unit-test trap (max 3, 25s). Snaps shut to damage and root the first enemy stepping on it. |
 | **E** | Edge Case | `dash` | 45 | 11s | Dmg: 45 +10/lv +50% AD, Range 400, Slow 40% | Vaults away and throws an edge-case net that damages and slows foes passed. |
-| **R** | Regression Barrage | `projectile` | 100 | 58s | Dmg: 240 +30/lv +125% AD, Range 2400, ChampOnly | A map-wide sniper shot hitting the first champion; detonates Bug Detection stacks (0-4) for +12% true dmg/stack. |
+| **R** | Regression Barrage | `projectile` | 100 | 58s | Dmg: 240 +30/lv +125% AD, Range 2400 | A map-wide sniper shot hitting the first champion; detonates Bug Detection stacks (0-4) for +12% true dmg/stack. |
 
 ### Zero — the Security Ninja (`zero`)
 - **Role / Lane:** Assassin / `jungle` · **Range:** Melee (`125`) · **Difficulty:** 3/3
@@ -125,10 +125,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Pen Test | `dash` | 40 | 7s | Dmg: 70 +16/lv +90% AD, toTarget, behindTarget | Dashes directly behind a target and applies Vulnerability (4s). |
-| **W** | Encrypt | `self` | 50 | 14s | Invis 1.8s, +35% MS, 20% DR (3s) | Vanishes into stealth for 1.8s with +35% move speed and 20% damage reduction. |
+| **Q** | Pen Test | `dash` | 40 | 7s | Dmg: 70 +16/lv +90% AD, Range 520, toTarget, behindTarget | Dashes directly behind a target and applies Vulnerability (4s). |
+| **W** | Encrypt | `self` | 50 | 14s | Duration 3s, Invis 1.8s, +35% MS, 20% DR | Vanishes into stealth for 1.8s with +35% move speed and 20% damage reduction. |
 | **E** | Brute Force | `circle` | 35 | 5s | Dmg: 60 +15/lv +75% AD, Radius 240 | Slashes nearby enemies; consumes Q Vulnerability (+30% true dmg, -1.5s Q CD; basic attacks also consume it). |
-| **R** | Zero-Day | `target` | 90 | 68s | Dmg: 145 +24/lv +100% AD +38% missingHP, behindTarget, KillReset | Blinks behind an enemy champion to execute them (missing HP bonus). Killing the target resets R cooldown. |
+| **R** | Zero-Day | `target` | 90 | 68s | Dmg: 145 +24/lv +100% AD, Range 520, behindTarget, Execute 38% missingHP, KillReset | Blinks behind an enemy champion to execute them (missing HP bonus). Killing the target resets R cooldown. |
 
 ### Model — the Data Sorcerer (`model`)
 - **Role / Lane:** Controller / `mid` · **Range:** Ranged (`480`) · **Difficulty:** 2/3
@@ -138,10 +138,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Gradient Descent | `circle` | 45 | 5.5s | Dmg: 70 +16/lv +60% AP, Slow 40%, Radius 230 | Collapses a data sphere on an area: damages and slows everything inside. |
-| **W** | Overfit | `self` | 60 | 14s | +30% AP, +15% MS (4s), Empower Q/R +20% | Overfits: +30% AP, +15% move speed, and empowers your next Q or R within 4.5s by +20% damage. |
-| **E** | Random Forest | `circle` | 60 | 12s | Dmg: 55 +12/lv +45% AP, PullIn 110 px, Root 1.0s | Sprouts a snare zone pulling foes slightly inward and rooting all inside. |
-| **R** | Big Data | `circle` | 110 | 82s | Dmg: 290 +32/lv +95% AP, PullIn 210 px, Radius 400, Delay 850ms | Shockwave singularity: drags all enemies violently to the center for massive burst damage. |
+| **Q** | Gradient Descent | `circle` | 45 | 5.5s | Dmg: 70 +16/lv +60% AP, Range 850, Radius 230, Delay 350ms, Slow 40% | Collapses a data sphere on an area: damages and slows everything inside. |
+| **W** | Hibernate | `self` | 60 | 16s | Duration 4.5s, Stasis 1.5s, +30% AP | Freezes your own process for 1.5s: you cannot act or be damaged. Wake up with +30% AP and your next Q or R within 4.5s deals +20%. |
+| **E** | Random Forest | `circle` | 60 | 12s | Dmg: 55 +12/lv +45% AP, Range 880, Radius 220, Delay 450ms, Root 1s | Sprouts a snare zone that roots all enemies inside after a short delay. |
+| **R** | Big Data | `circle` | 110 | 82s | Dmg: 290 +32/lv +95% AP, Range 1050, Radius 400, Delay 850ms, PullIn 210 px | Shockwave singularity: drags all enemies violently to the center for massive burst damage. |
 
 ### Brick — the Security Guard (`guard`)
 - **Role / Lane:** Tank / `top` · **Range:** Melee (`125`) · **Difficulty:** 1/3
@@ -151,10 +151,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | HALT! | `projectile` | 40 | 6.5s | Dmg: 65 +15/lv +60% AD +3% HP, Pierce, Slow 40% | Sends a piercing security wave that damages and slows every enemy hit. |
-| **W** | Clipboard of Rules | `self` | 50 | 13s | Shield: 95 +18/lv +7% HP, +20 Armor, Spell Shield 2s | Hides behind the rules: max-HP shield, +20 armor, and a 2s Spell Shield blocking the next enemy skill. |
-| **E** | Escort Out | `dash` | 55 | 11s | Dmg: 55 +14/lv +80% AD, toTarget 420, KB 340, WallStun 1.2s | Charges an enemy and slams them far away. Pinning them into a WALL stuns for 1.2s. |
-| **R** | Building Lockdown | `circle` | 100 | 78s | Dmg: 165 +22/lv +6% HP, Slow 35%, KB 320, WallStun 1.0s | Locks down the floor: every enemy nearby is damaged, slowed and blasted outward. Walls stun. |
+| **Q** | HALT! | `projectile` | 40 | 6.5s | Dmg: 65 +15/lv +60% AD +3% HP, Range 780, Pierce, Slow 40% | Sends a piercing security wave that damages and slows every enemy hit. |
+| **W** | Clipboard of Rules | `self` | 50 | 13s | Shield: 95 +18/lv +7% HP, Duration 4s, Spell Shield 2s, +20 Armor | Hides behind the rules: max-HP shield, +20 armor, and a 2s Spell Shield blocking the next enemy skill. |
+| **E** | Escort Out | `dash` | 55 | 11s | Dmg: 55 +14/lv +80% AD, Range 420, KB 340, WallStun 1.2s, toTarget | Charges an enemy and slams them far away. Pinning them into a WALL stuns for 1.2s. |
+| **R** | Building Lockdown | `circle` | 100 | 78s | Dmg: 165 +22/lv +6% HP, Radius 390, Delay 250ms, KB 320, WallStun 1s, Slow 35% | Locks down the floor: every enemy nearby is damaged, slowed and blasted outward. Walls stun. |
 
 ### Mop — the Night-Shift Cleaner (`cleaner`)
 - **Role / Lane:** Mage / `mid` · **Range:** Ranged (`450`) · **Difficulty:** 2/3
@@ -164,10 +164,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Broom Boomerang | `projectile` | 45 | 6s | Dmg: 58 +14/lv +50% AP, Pierce, Boomerang (True Return), KB 80 | Hurls a sweeping broom that nudges enemies out and deals True Damage returning to you. |
-| **W** | Wet Floor | `zone` | 60 | 11s | Dmg: 14 +3/lv +9% AP (0.5s tick), Slow 45%, 3.5s | Mops an area for 3.5s. Enemies inside slip: heavily slowed and damaged every 0.5s. |
-| **E** | Mop Slide | `dash` | 45 | 12s | Dmg: 45 +10/lv +40% AP, Range 460, Slow 25% | Slides through the floor she mopped, splashing enemies along the path. |
-| **R** | Deep Clean Vortex | `zone` | 110 | 82s | Dmg: 45 +6/lv +14% AP (0.5s tick), PullIn 85 px, Slow 30%, 4s | Creates a soapy whirlpool for 4s that continuously pulls enemies inward, slows, and scalds every 0.5s. |
+| **Q** | Sweep | `projectile` | 45 | 6s | Dmg: 50 +12/lv +45% AP, Range 520, 5-Fan (80 deg), KB 150 | Sweeps a 5-broom fan in front of you that shoves every enemy hit back. |
+| **W** | Soap Bubble | `circle` | 60 | 11s | Dmg: 60 +14/lv +50% AP, Range 800, Radius 200, Delay 700ms, Slow 60% | Drops a giant soap bubble that pops after 0.7s, damaging enemies and slowing them by 60% for 2s. |
+| **E** | Mop Slide | `dash` | 45 | 12s | Dmg: 45 +10/lv +40% AP, Range 460, Slow 25%, Trail 3s | Slides forward splashing enemies and leaves a Wet Floor behind that slows and burns for 3s. |
+| **R** | Flood | `zone` | 110 | 82s | Dmg: 40 +6/lv +14% AP per tick, Range 900, Radius 420, Duration 4.5s, Slow 65% | Floods a huge area for 4.5s: everything inside crawls at 35% speed and is scalded every 0.5s. |
 
 ### Rush — the Delivery Rider (`courier`)
 - **Role / Lane:** Jungler / `jungle` · **Range:** Melee (`125`) · **Difficulty:** 2/3
@@ -178,9 +178,9 @@
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
 | **Q** | Express Delivery | `dash` | 45 | 8s | Dmg: 70 +16/lv +80% AD, Range 620, Refund 1.5s Q CD/champ | Revs through a line, damaging every enemy and refunding 1.5s Q cooldown per champion hit. |
-| **W** | Hot Meal | `self` | 45 | 12s | Heal: 65 +14/lv +35% AD, +35% AS, +20% MS | Eats a customer's order: heals and gains +35% attack speed and +20% move speed. |
-| **E** | Package Drop | `circle` | 55 | 11s | Dmg: 65 +15/lv +75% AD, KB 160, Stun 0.8s, Delay 500ms | Lobs a heavy parcel that explodes after 0.5s: AoE damage, knockback, and stun. |
-| **R** | Rush Hour | `self` | 90 | 72s | +60% MS, +30% AD (5s) | Full throttle for 5s: +60% move speed and +30% attack damage. |
+| **W** | Hot Meal | `self` | 45 | 12s | Heal: 65 +14/lv +35% AD, Duration 4s, +20% MS, +35% AS | Eats a customer's order: heals and gains +35% attack speed and +20% move speed. |
+| **E** | Package Drop | `circle` | 55 | 11s | Dmg: 65 +15/lv +75% AD, Range 650, Radius 220, Delay 500ms, KB 160, Stun 0.8s | Lobs a heavy parcel that explodes after 0.5s: AoE damage, knockback, and stun. |
+| **R** | Surge Pricing | `circle` | 90 | 72s | Dmg: 190 +26/lv +90% AD, Range 900, Radius 360, Delay 600ms, Slow 50% | Triples the price on a huge area: after 0.6s enemies take heavy damage and are slowed 50% for 2s. |
 
 ### Volt — the Embedded Engineer (`embedded`)
 - **Role / Lane:** Support / `support` · **Range:** Ranged (`470`) · **Difficulty:** 2/3
@@ -191,10 +191,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Interrupt Chain | `projectile` | 50 | 8s | Dmg: 65 +14/lv +55% AP, Stun 0.7s, Chain 2 (`360 px`) | Fires an interrupt bolt that stuns and chains lightning to 2 nearby enemies. |
-| **W** | Overclock | `self` | 60 | 12s | +35% AS, Servo double AS & double dmg (4s) | Overclocks you and Servo: +35% attack speed; Servo attacks twice as fast and deals double damage. |
-| **E** | Watchdog Trap | `circle` | 60 | 13s | Dmg: 55 +12/lv +45% AP, Trap (max 3, 25s), Stun 0.85s | Plants a Watchdog sensor trap (max 3, 25s). Shocks and stuns the first enemy to trigger it. |
-| **R** | Servo EMP | `circle` | 110 | 68s | Dmg: 205 +26/lv +85% AP, `at: 'pet'`, PullIn 160 px, Stun 1.0s | Servo overloads: pulls nearby enemies toward SERVO, blasting and stunning all around. |
+| **Q** | Servo Zap | `circle` | 50 | 8s | Dmg: 65 +14/lv +55% AP, Radius 210, Delay 350ms, Stun 0.7s, at: 'pet' | Servo discharges around itself: enemies near Servo are damaged and stunned. Position your pet, then zap. |
+| **W** | Overclock | `self` | 60 | 12s | Duration 4s, +35% AS, Pet +100% | Overclocks you and Servo: +35% attack speed; Servo attacks twice as fast and deals double damage. |
+| **E** | Watchdog Trap | `circle` | 60 | 13s | Dmg: 55 +12/lv +45% AP, Range 700, Radius 110, Stun 0.85s, Trap (max 3, 25s) | Plants a Watchdog sensor trap (max 3, 25s). Shocks and stuns the first enemy to trigger it. |
+| **R** | Servo EMP | `circle` | 110 | 68s | Dmg: 205 +26/lv +85% AP, Radius 390, Delay 650ms, KB 260, WallStun 0.9s, at: 'pet' | Servo overloads: blasts every enemy around SERVO outward. Pinning them into a wall stuns for 0.9s. |
 
 ### Patch — the Software Engineer (`dev`)
 - **Role / Lane:** Fighter / `top` · **Range:** Melee (`150`) · **Difficulty:** 2/3
@@ -204,10 +204,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Refactor | `circle` | 35 | 5.5s | Dmg: 70 +16/lv +85% AD, HealOnHit: 45 +10/lv +4% HP | Spins the keyboard in a wide arc, cleaving nearby enemies and healing you for each champion hit. |
-| **W** | Pair Programming | `self` | 50 | 13s | Shield: 70 +14/lv +35% AD, +20% AD, +30% AS, Spell Shield 2s | Gains a shield, +20% AD, +30% AS, and a 2s Spell Shield blocking the next enemy skill. |
-| **E** | git push --force | `dash` | 50 | 11s | Dmg: 60 +14/lv +70% AD, KB 280, WallStun 0.9s | Force-pushes into the first enemy and shoves them back. Into a wall = stunned. |
-| **R** | Merge Conflict | `target` | 100 | 72s | Dmg: 160 +24/lv +90% AD +32% missingHP, KillReset | Slams an enemy champion with missing-HP execute damage. Executing a champion resets R cooldown. |
+| **Q** | Refactor | `circle` | 35 | 5.5s | Dmg: 70 +16/lv +85% AD, HealOnHit: 45 +10/lv +4% HP, Radius 270 | Spins the keyboard in a wide arc, cleaving nearby enemies and healing you for each champion hit. |
+| **W** | Pair Programming | `self` | 50 | 13s | Shield: 70 +14/lv +35% AD, Duration 4s, +30% AS, +20% AD | Gains a shield, +20% AD and +30% AS for 4s. |
+| **E** | git checkout -b | `dash` | 50 | 11s | Dmg: 50 +12/lv +60% AD, Range 380, Recast 3s (again) | Branches off in a dash that damages enemies in your path. Press E again within 3s for a second dash. |
+| **R** | Merge Conflict | `target` | 100 | 72s | Dmg: 150 +22/lv +90% AD, HealOnHit: 120 +20/lv +40% AD, Range 420, Stun 1.5s | Locks an enemy champion in a merge conflict: heavy damage, a 1.5s stun, and you heal from the fight. |
 
 ### Swipe — the App Developer (`appdev`)
 - **Role / Lane:** Marksman / `bot` · **Range:** Ranged (`500`) · **Difficulty:** 2/3
@@ -217,10 +217,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Push Notification | `projectile` | 45 | 5.5s | Dmg: 62 +14/lv +75% AD, 3-Fan, Refund 1.5s E CD/champ | Throws 3 phones in a fan; hitting a champion refunds 1.5s on Swipe Left (E). |
-| **W** | Dark Mode | `self` | 45 | 12s | Invis 1.2s, +25% MS, +35% AS (4s) | Enters Dark Mode: 1.2s stealth plus +25% move speed and +35% attack speed. |
-| **E** | Swipe Left | `dash` | 35 | 7s | Range 390 | Quickly dashes away (CD reduced when Q hits champions). |
-| **R** | App Store Launch | `projectile` | 100 | 62s | Dmg: 175 +25/lv +100% AD +15% missingHP, 7-Fan | Launches a 7-phone barrage dealing bonus damage based on enemy missing HP. |
+| **Q** | Push Notification | `projectile` | 45 | 5.5s | Dmg: 62 +14/lv +75% AD, Range 840, 3-Fan (24 deg), Slow 20% | Throws 3 phones in a fan that slow enemies hit by 20%. Cheap, fast poke. |
+| **W** | Dark Mode | `self` | 45 | 12s | Duration 4s, Invis 1.2s, +25% MS, +35% AS | Enters Dark Mode: 1.2s stealth plus +25% move speed and +35% attack speed. |
+| **E** | Swipe Left | `dash` | 35 | 7s | Range 390 | Quickly dashes in the aimed direction. |
+| **R** | App Store Launch | `projectile` | 100 | 62s | Dmg: 175 +25/lv +100% AD, Range 1200, 7-Fan (50 deg), Execute 15% missingHP | Launches a 7-phone barrage dealing bonus damage based on enemy missing HP. |
 
 ### Sprint — the Scrum Master (`sprint`)
 - **Role / Lane:** Jungler / `jungle` · **Range:** Melee (`125`) · **Difficulty:** 2/3
@@ -230,10 +230,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Daily Stand-up | `circle` | 35 | 5.5s | Dmg: 65 +15/lv +85% AD, Slow 35%, Radius 260 | Calls a stand-up: slams nearby foes and slows them. |
-| **W** | Velocity | `self` | 45 | 12s | Heal: 55 +12/lv +28% AD, +35% AS, +25% MS | Supercharges sprint velocity: heals, +35% attack speed, and +25% move speed. |
-| **E** | Story Points | `dash` | 45 | 10s | Dmg: 65 +15/lv +80% AD, toTarget 520, Stun 0.7s, KillReset | Leaps onto a target to damage and stun (0.7s). Killing a champion resets E cooldown. |
-| **R** | Sprint Review | `zone` | 100 | 75s | Dmg: 38 +6/lv +22% AD (0.5s tick), PullIn 80 px, Slow 35%, 4s | Locks a 4s review arena around you that pulls enemies inward, slows, and damages every 0.5s. |
+| **Q** | Daily Stand-up | `circle` | 35 | 5.5s | Dmg: 65 +15/lv +85% AD, Radius 260, Slow 35% | Calls a stand-up: slams nearby foes and slows them. |
+| **W** | Burndown | `self` | 45 | 12s | Heal: 40 +9/lv +20% AD, Shield: 80 +16/lv +30% AD, Duration 3s, 30% DR | Burns down the backlog: heals, gains a shield and takes 30% less damage for 3s. |
+| **E** | Story Points | `dash` | 45 | 10s | Dmg: 65 +15/lv +80% AD, Range 520, Stun 0.7s, toTarget, KillReset | Leaps onto a target to damage and stun (0.7s). Killing a champion resets E cooldown. |
+| **R** | All Hands Sprint | `allies` | 100 | 75s | Radius 750, Duration 5s, +40% MS, +20% AS, +15% AD | Rallies the team for a 5s sprint: allies within range get +40% MS, +15% AD and +20% AS. |
 
 ### Cache — the Data Engineer (`cache`)
 - **Role / Lane:** Marksman / `bot` · **Range:** Ranged (`520`) · **Difficulty:** 2/3
@@ -243,10 +243,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Batch Job | `projectile` | 40 | 6s | Dmg: 68 +15/lv +90% AD, Pierce, Refund 1.0s ALL CDs/champ | Fires a piercing batch bolt; hitting a champion refunds 1s off ALL skill cooldowns. |
-| **W** | Data Trap | `circle` | 50 | 12s | Dmg: 60 +13/lv +65% AD, Trap (max 3, 25s), Slow 45% (2s) | Plants a cryo-cache mine (max 3, 25s) that bursts to damage and heavily slow triggers. |
+| **Q** | Batch Job | `projectile` | 40 | 6s | Dmg: 68 +15/lv +90% AD, Range 960, Pierce, Refund 1s ALL CDs/champ | Fires a piercing batch bolt; hitting a champion refunds 1s off ALL skill cooldowns. |
+| **W** | Stale Data | `projectile` | 50 | 12s | Dmg: 55 +12/lv +60% AD, Range 900, Slow 45%, Mark stale (max 3) | Poisons the first champion hit with stale data: slow 45% and a Stale stack (max 3, 6s) that Full Table Scan cashes in. |
 | **E** | Failover | `blink` | 50 | 13s | Range 400 | Instantly blinks to a standby position. |
-| **R** | Full Table Scan | `projectile` | 100 | 68s | Dmg: 210 +28/lv +115% AD, Range 2100, Pierce | Fires a high-velocity beam across the lane hitting every enemy in its path. |
+| **R** | Full Table Scan | `projectile` | 100 | 68s | Dmg: 210 +28/lv +115% AD, Range 2100, Pierce, Detonate stale +20%/stack true | Fires a lane-wide beam through every enemy; each Stale stack on a champion adds +20% of the hit as true damage. |
 
 ### Hira — the People Partner (`hr`)
 - **Role / Lane:** Support / `support` · **Range:** Ranged (`460`) · **Difficulty:** 2/3
@@ -256,10 +256,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Feedback Hook | `projectile` | 55 | 10s | Dmg: 60 +14/lv +50% AP, Pull 380 px, Root 1.0s | Lashes out a meeting invite that drags the first enemy toward you and roots them (1.0s). |
-| **W** | Team Building | `allies` | 65 | 12s | Heal: 65 +14/lv +35% AP, +20% MS, Spell Shield 2.5s | Heals nearby allies, grants +20% MS, and places a 2.5s Spell Shield blocking 1 enemy skill. |
-| **E** | Policy Update | `zone` | 55 | 10s | Dmg: 14 +3/lv +10% AP (0.5s tick), Slow 45%, 3s | Spreads a 3s policy puddle that slows and burns everyone standing inside. |
-| **R** | Mandatory Meeting | `circle` | 110 | 82s | Dmg: 160 +20/lv +65% AP, PullIn 170 px, Stun 1.0s, Delay 550ms | Calls an all-hands: pulls all enemies in the zone to the center and stuns them. |
+| **Q** | Feedback Hook | `projectile` | 55 | 10s | Dmg: 60 +14/lv +50% AP, Range 880, Pull 380 px, Root 1s | Lashes out a meeting invite that drags the first enemy toward you and roots them (1.0s). |
+| **W** | Team Building | `allies` | 65 | 12s | Heal: 65 +14/lv +35% AP, Radius 520, Duration 3s, Spell Shield 2.5s, +20% MS | Heals nearby allies, grants +20% MS, and places a 2.5s Spell Shield blocking 1 enemy skill. |
+| **E** | Policy Update | `zone` | 55 | 10s | Dmg: 14 +3/lv +10% AP per tick, Range 750, Radius 225, Duration 3s, Slow 45% | Spreads a 3s policy puddle that slows and burns everyone standing inside. |
+| **R** | Mandatory Meeting | `circle` | 110 | 82s | Dmg: 150 +20/lv +60% AP, Range 800, Radius 360, Delay 650ms, Silence 2.5s, Slow 40% | Calls an all-hands: after 0.65s enemies in the area are damaged, slowed 40% and SILENCED for 2.5s. |
 
 ### Lint — the Code Reviewer (`lint`)
 - **Role / Lane:** Controller / `mid` · **Range:** Ranged (`470`) · **Difficulty:** 3/3
@@ -269,10 +269,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Nitpick Chain | `target` | 40 | 5.5s | Dmg: 75 +16/lv +55% AP, Slow 30%, Chain 2 (`380 px`) | Flags an enemy and bounces picky comments to 2 nearby enemies: damage + slow. |
-| **W** | Request Changes | `circle` | 60 | 11s | Dmg: 65 +14/lv +55% AP, Root 1.1s, Delay 650ms | Blocks the merge: after a delay, enemies in the area are damaged and rooted. |
-| **E** | Approved | `self` | 55 | 13s | Shield: 85 +18/lv +45% AP, +25% MS, Spell Shield 2s | Approves your own PR: shield, +25% move speed, and a 2s Spell Shield. |
-| **R** | Hard Reset | `circle` | 110 | 78s | Dmg: 220 +28/lv +85% AP, KB 300, WallStun 1.0s | git reset --hard on an area: big damage and blasts enemies back. Into a wall = stunned. |
+| **Q** | Nitpick | `target` | 40 | 5.5s | Dmg: 75 +16/lv +55% AP, Range 650, Slow 30%, Mark nit (max 4) | Flags an enemy with a nitpick: damage, slow, and a Nit stack (max 4, 6s) that Hard Reset cashes in. |
+| **W** | Request Changes | `circle` | 60 | 11s | Dmg: 65 +14/lv +55% AP, Range 850, Radius 215, Delay 650ms, Root 1.1s | Blocks the merge: after a delay, enemies in the area are damaged and rooted. |
+| **E** | Code Freeze | `zone` | 55 | 13s | Dmg: 12 +3/lv +8% AP per tick, Range 700, Radius 210, Duration 3s, Silence 0.7s, Slow 25% | Freezes the codebase in an area for 3s: enemies inside are SILENCED, slightly slowed, and take damage over time. |
+| **R** | Hard Reset | `circle` | 110 | 78s | Dmg: 200 +26/lv +80% AP, Range 720, Radius 330, Delay 480ms, Detonate nit +18%/stack true | git reset --hard on an area for big damage; each Nit stack on a champion adds +18% of the hit as true damage. |
 
 ### Brew — the Office Barista (`barista`)
 - **Role / Lane:** Support / `support` · **Range:** Ranged (`480`) · **Difficulty:** 1/3
@@ -282,10 +282,10 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Hot Pour | `projectile` | 50 | 7.5s | Dmg: 55 +12/lv +45% AP, Pierce, Slow 35%, HealOnHit: 30 +7/lv +20% AP | Pours scalding coffee through enemies (slowing them) and heals you per champion hit. |
-| **W** | Espresso Shot | `allies` | 60 | 13s | Heal: 45 +10/lv +30% AP, +25% AS, +15% MS (4s) | Serves a double shot to nearby allies: heals + grants 25% attack speed and 15% move speed. |
-| **E** | Decaf | `circle` | 60 | 12s | Dmg: 45 +11/lv +40% AP, Stun 1.05s, Delay 600ms | Swaps an area's coffee for decaf. After 0.6s, enemies inside fall asleep (stun). |
-| **R** | Break Room | `zone` | 110 | 82s | Dmg: 12 +3/lv +6% AP, Heal: 16 +3/lv +8% AP (0.5s tick), Slow 35%, 4s | Opens the break room for 4s: allies inside heal every 0.5s while enemies are slowed and scalded. |
+| **Q** | Hot Pour | `projectile` | 50 | 7.5s | Dmg: 50 +11/lv +40% AP, Range 700, 3-Fan (28 deg), Slow 35% | Sprays three streams of scalding coffee in a cone that burn and slow whoever they hit. |
+| **W** | Espresso Shot | `allies` | 60 | 13s | Heal: 45 +10/lv +30% AP, Radius 520, Duration 4s, +15% MS, +25% AS | Serves a double shot to nearby allies: heals + grants 25% attack speed and 15% move speed. |
+| **E** | Decaf | `circle` | 60 | 12s | Dmg: 45 +11/lv +40% AP, Range 780, Radius 185, Delay 600ms, Stun 1.05s | Swaps an area's coffee for decaf. After 0.6s, enemies inside fall asleep (stun). |
+| **R** | Break Room | `zone` | 110 | 82s | Dmg: 12 +3/lv +6% AP per tick, Heal: 16 +3/lv +8% AP, Range 700, Radius 330, Duration 4s, Slow 35% | Opens the break room for 4s: allies inside heal every 0.5s while enemies are slowed and scalded. |
 
 ### Pager — the On-Call SRE (`oncall`)
 - **Role / Lane:** Jungler / `jungle` · **Range:** Melee (`140`) · **Difficulty:** 2/3
@@ -295,28 +295,63 @@
 
 | Slot | Skill Name | Type | Mana | Base CD | Scaling / Effects | Description |
 | :---: | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Q** | Ping Boomerang | `projectile` | 35 | 5.5s | Dmg: 70 +15/lv +80% AD, Pierce, Boomerang, Slow 35% | Fires an echoing alert wave that slows enemies out and boomerangs back. |
-| **W** | Incident Mode | `self` | 50 | 13s | Shield: 75 +15/lv +30% AD, +20% MS, +30% AS, Spell Shield 2s | Declares an incident: shield, +20% MS, +30% AS, and a 2s Spell Shield. |
-| **E** | Revert | `blink` | 55 | 16s | Range 360, Invis 1.2s | Blinks nearby and enters stealth for 1.2s. |
-| **R** | On My Way | `dash` | 100 | 75s | Dmg: 175 +25/lv +95% AD, Range 920, toTarget, behindTarget, Stun 1.0s | Launches across long range straight behind an enemy champion: big damage + 1.0s stun. |
+| **Q** | Ping | `dash` | 35 | 6s | Dmg: 60 +14/lv +70% AD, Range 560, Slow 40%, toTarget | Pings a target and rushes onto it, slowing them 40%. Works on monsters to hop between camps. |
+| **W** | Page Everyone | `projectile` | 50 | 12s | Dmg: 45 +10/lv +45% AD, Range 1400, Pierce, Slow 30%, Mark paged (max 1) | Sends a long-range alert through every champion in a line: damage, slow, and a Paged mark that On My Way cashes in. |
+| **E** | Postmortem | `circle` | 55 | 14s | Dmg: 55 +12/lv +50% AD, Radius 270, Slow 50% | Holds a blameless postmortem around you: enemies nearby take damage and are slowed 50% for 1.5s. |
+| **R** | On My Way | `dash` | 100 | 75s | Dmg: 175 +25/lv +95% AD, Range 920, Stun 1s, toTarget, behindTarget, Detonate paged +35%/stack true | Launches across long range straight behind an enemy champion: big damage + 1.0s stun, +35% true damage if Paged. |
+
+---
+
+## Mechanic Ownership Matrix (v5 Diversity Rework, 2026-11-27)
+Design rule: **no mechanic is shared by more than a handful of skills.** v5 removed copy-paste clusters (6 Spell Shields, 7 pull-in vortexes, 6 stat-buff self casts, 4 stun dashes, 3 boomerangs, 3 chains, 3 traps, 3 refunds) and added 6 engine primitives (`silence`, `recast`, `swap`, `trail`, `mark`/`detonate`, `stasis`). Generated from `shared/moba/champions.js`.
+
+| Mechanic | Skills | Owners |
+| :--- | :---: | :--- |
+| **Ally swap** (v5) | 1 | `Ops E` |
+| **Dash trail zone** (v5) | 1 | `Mop E` |
+| **Mark / detonate** (v5) | 6 | `Cache W`, `Cache R`, `Lint Q`, `Lint R`, `Pager W`, `Pager R` |
+| **Recast** (v5) | 2 | `Pixel E`, `Patch E` |
+| **Silence** (v5) | 2 | `Hira R`, `Lint E` |
+| **Stasis** (v5) | 1 | `Model W` |
+| Behind-target | 3 | `Zero Q`, `Zero R`, `Pager R` |
+| Boomerang | 1 | `Pixel Q` |
+| Chain lightning | 1 | `Pixel W` |
+| Cooldown refund on hit | 2 | `Rush Q`, `Cache Q` |
+| Ground trap | 2 | `Tester W`, `Volt E` |
+| Heal on hit | 3 | `Ops Q`, `Patch Q`, `Patch R` |
+| Hook (pull to caster) | 2 | `Stack Q`, `Hira Q` |
+| Kill reset | 2 | `Zero R`, `Sprint E` |
+| Knockback / wall stun | 5 | `Brick E`, `Brick R`, `Mop Q`, `Rush E`, `Volt R` |
+| Missing-HP execute | 2 | `Zero R`, `Swipe R` |
+| Pet-centered area | 2 | `Volt Q`, `Volt R` |
+| Projectile fan | 4 | `Mop Q`, `Swipe Q`, `Swipe R`, `Brew Q` |
+| Spell Shield | 2 | `Brick W`, `Hira W` |
+| Stealth | 2 | `Zero W`, `Swipe W` |
+| Vortex pull-in | 2 | `Stack R`, `Model R` |
 
 ---
 
 ## Edge-Case Mechanics, Skill Engine Rules & Damage Channels
 - **Damage Channels (`skillDamageType`):** Skills with pure AP scaling (`apRatio > 0 && !adRatio`) and `Servo` companion attacks deal **Magic Damage** (mitigated by `MR` and `MR Pen`). Auto-attacks and AD/HP-scaling skills deal **Physical Damage** (mitigated by `Armor` and `Armor Pen`). Boomerang return orbs (`Pixel Q`, `Mop Q` with `returnTrueDmg: true`) and combo mark detonations (`Pixel R`, `Zero E`, `Tester R` Bug Stacks) deal **True Damage**.
 - **Reworked LoL-Inspired Mechanics (`SkillEngine.js` & `OfflineSim.js`):**
-  - `boomerang` (+ `returnTrueDmg`): Projectile flies out to `range`, flips into a return leg homing back onto the caster (`MobaFx.js` renders live return path), resets hit immunity once on turnaround, and deals True Damage on the way back (`Pixel Q`, `Mop Q`, `Pager Q`).
-  - `chain`: Bounces from the primary hit target across up to `N` nearby enemies within `range` with per-bounce damage `decay` and lightning arc VFX (`zap`) (`Pixel W`, `Volt Q`, `Lint Q`).
-  - `pull` & `pullIn`: Hook projectiles drag the first victim toward the caster (`Stack Q` `680 px`, `Hira Q` `380 px`), while AoE vortex circles/zones pull affected enemies toward center (`Stack R`, `Model E/R`, `Mop R`, `Volt R`, `Sprint R`, `Hira R`).
+  - `boomerang` (+ `returnTrueDmg`): Projectile flies out to `range`, flips into a return leg homing back onto the caster (`MobaFx.js` renders live return path), resets hit immunity once on turnaround, and deals True Damage on the way back (`Pixel Q` only).
+  - `chain`: Bounces from the primary hit target across up to `N` nearby enemies within `range` with per-bounce damage `decay` and lightning arc VFX (`zap`) (`Pixel W` only).
+  - `pull` & `pullIn`: Hook projectiles drag the first victim toward the caster (`Stack Q` `680 px`, `Hira Q` `380 px`), while AoE vortex circles/zones pull affected enemies toward center (`Stack R`, `Model R`).
   - `trap`: `circle` deployables persist up to `25s` (`maxActive: 3` per owner), arming after `armMs`, and despawning immediately via `trapEnd` upon triggering, eviction, expiry, or owner death. Traps placed out of enemy vision are invisible to enemies immediately; traps placed in front of enemy sight remain visible to enemies for `3.0s` before fading into stealth.
   - `behindTarget`: Teleports or dashes directly to the far side (`~75 px` behind enemy facing vector) so follow-up skillshots or wall-pins angle reliably (`Zero Q/R`, `Pager R`).
-  - `invisMs`: Grants stealth that breaks immediately on outgoing attacks/skills (`Zero W` `1.8s`, `Swipe W` `1.2s`, `Pager E` `1.2s`).
-  - `spellShieldMs`: Absorbs the next incoming hostile skill (negating damage and CC) with a brief shield-pop indicator (`Ops E`, `Brick W`, `Patch W`, `Hira W`, `Lint E`, `Pager W`).
-  - `killReset`, `healOnHit`, `cdRefundOnHit`: `Zero R`, `Patch R`, and `Sprint E` refund their full cooldown on champion takedown; `Ops Q`, `Patch Q`, and `Brew Q` heal per champion struck; `Rush Q`, `Swipe Q`, and `Cache Q` reduce active skill cooldowns per champion hit.
+  - **v5 `silence { ms }`:** target cannot cast skills (basic attacks and movement still work). Applied by `_applyCC` (`TeamRoom`) / the `effects` hook (`OfflineSim`); checked in `_doCast` / `_cast` (`Hira R`, `Lint E` zone ticks).
+  - **v5 `recast { ms, mode }`:** the first cast starts the cooldown and opens a window; the same key pressed again inside it is free (no mana, no cooldown). `mode: 'back'` returns to the first-cast origin (`Pixel E`), `mode: 'again'` repeats the dash at the new aim (`Patch E`). The client skips its own cooldown/mana check while the window is open (`TeamModeScene._tryCast`); the server stays authoritative.
+  - **v5 `type: 'swap'`:** swaps places with the allied champion nearest the aim within `range`; shield and buff go to both (`Ops E`). Fails without cost when no ally is in range.
+  - **v5 `trail`:** a dash spawns a persistent zone at the midpoint of its path (`Mop E`).
+  - **v5 `mark { tag, ms, max }` / `detonate { tag, pctPerStack }`:** champion hits add stacks; a detonating hit consumes them for bonus true damage (`Lint Q -> R`, `Cache W -> R`, `Pager W -> R`).
+  - **v5 `stasis { ms }`:** self-cast invulnerable + unable to act, reusing the existing `_stasisUntil` immunity (`Model W`).
+  - `invisMs`: Grants stealth that breaks immediately on outgoing attacks/skills (`Zero W` `1.8s`, `Swipe W` `1.2s`).
+  - `spellShieldMs`: Absorbs the next incoming hostile skill (negating damage and CC) with a brief shield-pop indicator (`Brick W`, `Hira W`).
+  - `killReset`, `healOnHit`, `cdRefundOnHit`: `Zero R` and `Sprint E` refund their full cooldown on champion takedown; `Ops Q` and `Patch Q` / `Patch R` heal per champion struck; `Rush Q` and `Cache Q` reduce active skill cooldowns per champion hit.
 - **Auto-Aim Policy (`autoAimsAtEnemy`, `autoAimReach`):**
   - Point-and-click skills (`target`, `toTarget` dashes) search within `range + 30 px` (`TARGET_CAST_SLACK`).
   - Skillshots/circles search within `range + 150 px` (`AUTO_AIM_SLACK`), aiming at the nearest visible enemy champion first, then nearest visible unit.
-  - Directional dashes (`Tester E`, `Mop E`, `Swipe E`, `Rush Q`) and blinks (`Pixel E`, `Cache E`, `Pager E`) **never** auto-aim at enemies — they fire strictly along the player's movement stick or cursor facing direction (`MIN_AIM_DIST = 24 px`).
+  - Directional dashes (`Tester E`, `Mop E`, `Patch E`, `Swipe E`, `Rush Q`), blinks (`Pixel E`, `Cache E`) and `swap` (`Ops E`, which targets the nearest ally instead) **never** auto-aim at enemies — they fire strictly along the player's movement stick or cursor facing direction (`MIN_AIM_DIST = 24 px`).
 - **Volt (`Servo`) Rules:** Targets the owner's current basic-attack target, else the last enemy champion hit by Volt within `3.0s`. Follows `110 px` behind at `1.15x` owner MS, is untargetable/invulnerable, scales cadence with `Overclock` (`+100%`) and `Servo Overdrive` Epic Augment, ignores walls via `nearestFree`, and despawns immediately on Volt's death.
 - **Starting Ranks, Practice Mode & Mid-Match Swap:** Standard matches spawn at Level 3 with `Q/W/E = Rank 1`, `R = Rank 0` (`ULT_UNLOCK_LEVEL = 6`). Main Menu **TEST CHAMPS** (`TeamModeScene` offline sandbox) and `preview.bat` expose live practice toggles (`0s CD`, `NO MANA`, `NO DMG`, `+LV`, `+5000g`, `SWAP CHAMP`) on both the pinned HUD bar and `ESC` menu; `_switchChamp` clears active death/CC/stealth/spellShield flags so swapping works from any state.
 
@@ -349,24 +384,24 @@
 ## Optimal Skill Combos, Level-Up Order & Counterplay Cheat Sheet
 | Champion | Skill Max Priority | Standard Combo Rotation | Primary Threat / Counterplay Rule |
 | :--- | :---: | :--- | :--- |
-| **Pixel** | `R > Q > W > E` | `E (Empower) -> Q (Boomerang+Mark) -> W (Chain) -> R` | Sidestep return orbit of `CSS Boomerang` (`True Dmg`); `R` has `700 ms` delay |
-| **Stack** | `R > Q > W > E` | `Q (SQL Hook) -> E (Stun) -> W (Shield) -> R (PullIn)` | Dodge straight-line `SQL Hook` behind minions; break `W` at range |
-| **Ops** | `R > W > Q > E` | `E (Spell Shield) -> Q (Heal/Slow) -> W / R (Reset)` | Pop `Firewall Aegis` Spell Shield with poke before committing hard CC |
+| **Pixel** | `R > Q > W > E` | `E (Empower) -> Q (Boomerang+Mark) -> W (Chain) -> E (snap back) -> R` | Sidestep the return orbit of `CSS Boomerang`; punish the 3s window after `E`; `R` has `700 ms` delay |
+| **Stack** | `R > Q > W > E` | `Q (SQL Hook) -> E (Rate Limit zone) -> W (Shield) -> R (PullIn)` | Dodge straight-line `SQL Hook` behind minions; walk out of the `270 px` `Rate Limit` zone; break `W` at range |
+| **Ops** | `R > W > Q > E` | `Q (Heal/Slow) -> E (Hot Swap rescue) -> W / R (Reset)` | Burst the swapped ally before the shield matters; `Hot Swap` needs an ally within `650 px` |
 | **Tester** | `R > Q > W > E` | `W (Bug Trap) -> Q (Pierce) -> 3x AA -> E (Slow) -> R` | Watch bush chokepoints for `Bug Trap` roots; dodge `Unit Test` line |
 | **Zero** | `R > Q > E > W` | `W (Stealth) -> Q (Behind) -> E (Detonate) -> R (Execute)` | Ward flanks (`[4]`); deny reset kill with `Debugger Breakpoint` stasis |
-| **Model** | `R > W > Q > E` | `W (Empower) -> E (PullIn+Root) -> Q -> R (PullIn)` | Dash out during `850 ms` `Big Data` charge before the `210 px` PullIn snaps |
+| **Model** | `R > Q > E > W` | `Q (Slow) -> E (Root) -> W (Hibernate, empowers next Q/R) -> R (PullIn)` | Do not waste burst during `Hibernate` (1.5s invulnerable); dash out of the `850 ms` `Big Data` charge |
 | **Brick** | `R > W > E > Q` | `W (Spell Shield) -> Q (Pierce Slow) -> E (Wall Pin) -> R` | Bait `Clipboard` 2s Spell Shield and avoid fighting beside corridor walls |
-| **Mop** | `R > Q > W > E` | `W (Slow Zone) -> Q (Boomerang) -> R (Vortex) -> E` | Dodge return `Broom Boomerang` True Damage; dash out of `R` PullIn vortex |
-| **Rush** | `R > Q > E > W` | `R (Throttle) -> Q (Multi-Hit Refund) -> E (Stun) -> W` | Don't line up for `Express Delivery` (`-1.5s` refund per champ hit) |
-| **Volt** | `R > Q > W > E` | `E (Watchdog Trap) -> Q (Chain Stun) -> W -> R (Pet PullIn)` | Respect Servo's zone (`R` pulls `160 px` toward Servo) and spread out vs `Q` chain |
-| **Patch** | `R > Q > E > W` | `E (Wall Pin) -> W (Spell Shield) -> Q (Heal Cleave) -> R` | Apply `Strict Linter` to cut `Refactor` heal-on-hit + `<50%` HP fury; kite melee |
-| **Swipe** | `R > Q > W > E` | `W (Stealth) -> Q (Refund E) -> AA -> E -> R (Execute)` | Punish `Swipe` when `Q` misses (`E` stays on full `7s` CD) |
-| **Sprint** | `R > Q > E > W` | `E (Stun) -> Q -> W -> R (4s Review PullIn)` | Deny takedowns so `Story Points` (`E`) does not chain-reset |
-| **Cache** | `R > Q > W > E` | `W (Cryo Trap) -> Q (All-CD Refund) -> AA x4 -> R` | Sidestep `Batch Job` in skirmishes so `Cache` loses `-1.0s` all-CD refund |
-| **Hira** | `R > Q > W > E` | `Q (Feedback Hook) -> E (Policy Zone) -> W (Spell Shield) -> R` | Dodge `380 px` `Feedback Hook`; spread apart vs `Mandatory Meeting` PullIn |
-| **Lint** | `R > Q > W > E` | `Q (Chain Slow) -> W (Root) -> E (Spell Shield) -> R (Wall)` | Unclump to deny 3-target `Nitpick Chain`; sidestep `650 ms` `W` |
-| **Brew** | `R > Q > E > W` | `Q (Heal/Slow) -> E (Decaf Stun) -> W (AS/Heal) -> R` | Anti-heal shuts down `Hot Pour` healOnHit + `Break Room` zone sustain |
-| **Pager** | `R > Q > E > W` | `R (920 px Behind) -> W (Spell Shield) -> Q (Boomerang) -> E (Invis)` | Deny vision (`[4]` wards); `W` blocks first peel CC unless poked off first |
+| **Mop** | `R > Q > W > E` | `E (Slide + trail) -> Q (5-fan shove) -> W (Bubble) -> R (Flood)` | Leave the `Wet Floor` trail; bubble pops after `700 ms`; exit the `420 px` `Flood` (65% slow) early |
+| **Rush** | `R > Q > E > W` | `Q (Refund dash) -> E (Parcel stun) -> R (Surge Pricing) -> W` | `R` telegraphs `600 ms` over `360 px`; don't line up for `Express Delivery` refunds |
+| **Volt** | `R > Q > W > E` | `E (Watchdog Trap) -> reposition Servo -> Q (Servo Zap) -> R (Servo blast)` | `Q` and `R` are centered on Servo, not Volt: read Servo's position and spread away from it |
+| **Patch** | `R > Q > E > W` | `E (dash) -> E (recast dash) -> Q (Heal Cleave) -> W -> R (Lock + heal)` | After two dashes `E` is on `11s` CD; `R` is single-target (`420 px`) with a `1.5s` stun, so peel allies out of it; `Strict Linter` cuts heal |
+| **Swipe** | `R > Q > W > E` | `W (Stealth) -> Q (3-fan slow) -> AA -> E -> R (Execute)` | `Q` is cheap poke: punish after `E` is spent; reveal stealth with wards |
+| **Sprint** | `R > Q > E > W` | `R (team rally) -> E (Stun leap) -> Q -> W (Burndown)` | Deny takedowns so `Story Points` (`E`) does not chain-reset; split the team early vs `All Hands Sprint` |
+| **Cache** | `R > Q > W > E` | `W (Stale x1-3) -> Q (All-CD Refund) -> AA x4 -> R (detonate)` | `Stale Data` is a champion-only skillshot: dodge it to deny the `+20%` true damage per stack on `R` |
+| **Hira** | `R > Q > W > E` | `Q (Feedback Hook) -> E (Policy Zone) -> W (Spell Shield) -> R (Silence)` | Dodge `380 px` `Feedback Hook`; spread out of the `650 ms` `Mandatory Meeting` telegraph or you cannot cast for `2.5s` |
+| **Lint** | `R > Q > W > E` | `Q x2-4 (Nit stacks) -> W (Root) -> E (Code Freeze) -> R (detonate)` | Each `Nit` adds `+18%` true damage to `R`; stay out of the `Code Freeze` silence zone; sidestep `650 ms` `W` |
+| **Brew** | `R > Q > E > W` | `Q (Cone) -> E (Decaf Stun) -> W (AS/Heal) -> R` | `Hot Pour` no longer heals: sustain comes from `W`, `R` and the passive; anti-heal still halves `Break Room` |
+| **Pager** | `R > W > Q > E` | `W (Paged mark) -> Q (Ping dash) -> E (Postmortem slow) -> R (920 px Behind +35%)` | Dodge the `1400 px` `Page Everyone` line; deny vision (`[4]` wards); `R` deals bonus true damage to Paged targets |
 
 ---
 
@@ -387,30 +422,30 @@
 | Champion | Lv 1–4 Laning | Lv 5 Augment Spike | Lv 6 Ultimate Spike | 2-Item Core Spike | Lv 15 Late Game |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Pixel** | `Q` Boomerang poke + `W` chain | `CSS Split-Bolt` waveclear | High (`Q -> R` true-dmg mark) | `Headphones` + `Cold Cache` | Very High (True Boomerang + Stasis) |
-| **Stack** | `Q` SQL Hook catch threat | `Cluster Shield` | High (`Database Lock` PullIn + Stun) | `Standing Desk` + `Thornmail` | High (Pick hook + Frontline) |
-| **Ops** | `Q` heal poke + `W` sustain | `Auto-Scaler Field` | Very High (`Blue-Green Deploy`) | `Rubber Duck` + `Team Lunch` | Very High (Team Spell Shield + Reset) |
+| **Stack** | `Q` SQL Hook catch threat | `Cluster Shield` | High (`Database Lock` PullIn + Stun) | `Standing Desk` + `Thornmail` | High (Pick hook + Rate Limit zone) |
+| **Ops** | `Q` heal poke + `W` sustain | `Auto-Scaler Field` | Very High (`Blue-Green Deploy`) | `Rubber Duck` + `Team Lunch` | Very High (Hot Swap rescues + Reset) |
 | **Tester** | Bush `W` traps + `Q` pierce CS | `CI/CD Pipeline` | High (Map-wide `R` execute) | `Jetpack` + `JIT Compiler` | Hyper-Carry (Crit + Trap Zoning) |
 | **Zero** | Stealth flank + `Q` behind burst | `Exploit Chain` | Very High (`Zero-Day` Reset Execute) | `Gauntlet` + `Root Sudo` | High (Reset chain assassin) |
-| **Model** | `Q` poke + `E` PullIn root | `Overfit Nova` | Very High (`Big Data` 210 PullIn) | `Headphones` + `Stack Overflow` | Hyper-Mage (AoE singularity) |
+| **Model** | `Q` poke + `E` root zone | `Overfit Nova` | Very High (`Big Data` 210 PullIn) | `Headphones` + `Stack Overflow` | Hyper-Mage (Hibernate-empowered singularity) |
 | **Brick** | `Q` pierce slow + `W` Spell Shield | `Cluster Shield` | High (`Building Lockdown` wall-pin) | `Standing Desk` + `Kanban` | High (Pick engage + Peel) |
-| **Mop** | `Q` Boomerang waveclear | `Overfit Nova` | High (`Deep Clean Vortex` 4s pull) | `Headphones` + `Midnight Oil` | High (Zone pull + True return) |
-| **Rush** | Fast Lv 2–3 `Q` ganks | `Turbo Deploy` | High (`Rush Hour` +60% MS) | `Gauntlet` + `Kanban` | Medium-High (Multi-hit Q skirmisher) |
-| **Volt** | `Q` chain stun + `E` Watchdog Trap | `Servo Overdrive` | High (`Servo EMP` Pet PullIn) | `Headphones` + `Rubber Duck` | High (Double-speed Servo + Trap control) |
-| **Patch** | `Q` heal trades + `E` wall shove | `Merge Cleave` | High (`Merge Conflict` Reset Execute) | `Gauntlet` + `Kanban` | Very High (Reset bruiser carry) |
-| **Swipe** | `Q` -> `E` CD refund + `W` stealth | `CI/CD Pipeline` | High (`App Store Launch` execute fan) | `Jetpack` + `RGB Keyboard` | Very High (Stealth kiting ADC) |
-| **Sprint** | Early camp + `E` stun ganks | `Turbo Deploy` | High (`Sprint Review` PullIn vortex) | `Gauntlet` + `Second Monitor` | Medium-High (Reset skirmisher) |
-| **Cache** | `520` AA range + `W` cryo traps | `Branch Predictor` | High (`Full Table Scan` 2100 px) | `Jetpack` + `RGB Keyboard` | Hyper-Carry (Spam Q CD refunds) |
-| **Hira** | `Q` Feedback Hook + `W` Spell Shield | `Auto-Scaler Field` | Very High (`Mandatory Meeting` PullIn) | `Rubber Duck` + `Team Lunch` | High (Hook engage + AoE CC) |
-| **Lint** | `Q` chain slow + `W` root setup | `Overfit Nova` | High (`Hard Reset` knockback + stun) | `Smartwatch` + `Headphones` | High (Chain shred + Spell Shield) |
-| **Brew** | `Q` sustain wave + `W` AS/heal | `Auto-Scaler Field` | High (`Break Room` 4s heal/burn) | `Team Lunch` + `Headphones` | High (Sustained teamfight aura) |
-| **Pager** | Fast camp clear + `Q` boomerang | `Exploit Chain` | Very High (`On My Way` 920 px behind) | `Gauntlet` + `Kanban` | Medium-High (Global stealth pick) |
+| **Mop** | `Q` 5-fan shove waveclear | `Overfit Nova` | High (`Flood` 4.5s 65% slow) | `Headphones` + `Midnight Oil` | High (Trail + Flood zone control) |
+| **Rush** | Fast Lv 2-3 `Q` ganks | `Turbo Deploy` | High (`Surge Pricing` nuke + slow) | `Gauntlet` + `Kanban` | Medium-High (Multi-hit Q skirmisher) |
+| **Volt** | `Q` Servo Zap stun + `E` Watchdog Trap | `Servo Overdrive` | High (`Servo EMP` wall-stun blast) | `Headphones` + `Rubber Duck` | High (Double-speed Servo + Trap control) |
+| **Patch** | `Q` heal trades + `E` double dash | `Merge Cleave` | High (`Merge Conflict` 1.5s lock + heal) | `Gauntlet` + `Kanban` | Very High (Dash-chain bruiser carry) |
+| **Swipe** | `Q` fan poke + `W` stealth | `CI/CD Pipeline` | High (`App Store Launch` execute fan) | `Jetpack` + `RGB Keyboard` | Very High (Stealth kiting ADC) |
+| **Sprint** | Early camp + `E` stun ganks | `Turbo Deploy` | High (`All Hands Sprint` team rally) | `Gauntlet` + `Second Monitor` | Medium-High (Reset skirmisher + team buff) |
+| **Cache** | `520` AA range + `W` Stale poke | `Branch Predictor` | High (`Full Table Scan` 2100 px + stacks) | `Jetpack` + `RGB Keyboard` | Hyper-Carry (Spam Q CD refunds) |
+| **Hira** | `Q` Feedback Hook + `W` Spell Shield | `Auto-Scaler Field` | Very High (`Mandatory Meeting` Silence) | `Rubber Duck` + `Team Lunch` | High (Hook engage + AoE silence) |
+| **Lint** | `Q` Nit stacks + `W` root setup | `Overfit Nova` | High (`Hard Reset` detonation) | `Smartwatch` + `Headphones` | High (Mark shred + silence zone) |
+| **Brew** | `Q` cone poke + `W` AS/heal | `Auto-Scaler Field` | High (`Break Room` 4s heal/burn) | `Team Lunch` + `Headphones` | High (Sustained teamfight aura) |
+| **Pager** | Fast camp clear + `Q` Ping dash | `Exploit Chain` | Very High (`On My Way` 920 px behind, +35% if Paged) | `Gauntlet` + `Kanban` | Medium-High (Global pick) |
 
 ---
 
 ## Sample Recommended 5v5 Team Compositions
-- **1. Wombo PullIn Vortex ("All-Hands Wipe"):** `Stack` (Top) + `Pager` (Jungle) + `Model` (Mid) + `Swipe` (Bot) + `Hira` (Support). Chain `Stack Q` / `Hira Q` hooks into `Hira R` -> `Model R` (`210 px` PullIn singularity) -> `Stack R`.
-- **2. Spell-Shield Hypercarry ("Unstoppable Deploy"):** `Brick` (Top) + `Zero` (Jungle) + `Lint` (Mid) + `Tester` (Bot) + `Ops` (Support). Stack layered `Spell Shields` (`Ops E`, `Brick W`, `Lint E`) around `Tester`'s `Bug Trap` perimeter while `Zero` hunts reset executes.
-- **3. Pick & Boomerang Siege ("Zero-Downtime Push"):** `Patch` (Top) + `Rush` (Jungle) + `Pixel` (Mid) + `Cache` (Bot) + `Volt` (Support). `Volt E` traps and `Cache W` mines lock siege angles while `Pixel Q` Boomerang True Damage shreds frontline tanks.
+- **1. Wombo PullIn Vortex ("All-Hands Wipe"):** `Stack` (Top) + `Pager` (Jungle) + `Model` (Mid) + `Swipe` (Bot) + `Hira` (Support). Chain `Stack Q` / `Hira Q` hooks into `Hira R` (silence) -> `Model R` (`210 px` PullIn singularity) -> `Stack R`.
+- **2. Spell-Shield Hypercarry ("Unstoppable Deploy"):** `Brick` (Top) + `Zero` (Jungle) + `Lint` (Mid) + `Tester` (Bot) + `Ops` (Support). Use `Ops E` Hot Swap to pull `Tester` out of dives, layer `Brick W` Spell Shield, and let `Lint E` Code Freeze silence divers around `Tester`'s `Bug Trap` perimeter while `Zero` hunts reset executes.
+- **3. Pick & Boomerang Siege ("Zero-Downtime Push"):** `Patch` (Top) + `Rush` (Jungle) + `Pixel` (Mid) + `Cache` (Bot) + `Volt` (Support). `Volt E` traps and Servo-centered `Q` / `R` lock siege angles while `Cache W` Stale stacks set up `Cache R` and `Pixel Q` Boomerang True Damage shreds frontline tanks.
 
 ---
 
@@ -418,26 +453,26 @@
 
 ### Top Lane (`Stack`, `Brick`, `Patch`)
 - **Role Identity:** Durable frontline duelists, hooks, and wall-brawlers (`1v1` island from `0:20` to `10:00`).
-- **Lv 1–3 Priority:** `Brick` pressures with `HALT!` pierce slow and `W` Spell Shield blocks; `Stack` punishes extended positioning with `SQL Hook` tower pulls; `Patch` out-sustains melee trades with `Refactor` heal-on-hit and `< 50%` HP fury.
+- **Lv 1–3 Priority:** `Brick` pressures with `HALT!` pierce slow and `W` Spell Shield blocks; `Stack` punishes extended positioning with `SQL Hook` tower pulls; `Patch` out-sustains melee trades with `Refactor` heal-on-hit and `< 50%` HP fury, and closes gaps with a double `E` dash.
 - **Macro Transition:** Join `Golden Bug` (`3:00`) / `Deadline` (`6:00`) river fights once Tier-1 falls or after `10:00`.
 
 ### Jungle (`Zero`, `Rush`, `Sprint`, `Pager`)
 - **First Clear & Gank Timing:** Start `small -> medium -> big` quadrant camp at `0:15` (`kill -9` Smite speeds `big` Legacy Mainframe and heals `8% max HP`). First gank window opens at `0:40–1:00` (`Lv 2–3`).
 - **Style Split:**
-  - `Rush` & `Sprint`: High-tempo gankers; `Rush Q` refunds cooldown across clustered bot lanes, while `Sprint E` resets in river skirmishes.
+  - `Rush` & `Sprint`: High-tempo gankers; `Rush Q` refunds cooldown across clustered bot lanes, `Sprint E` resets in river skirmishes, and `Sprint R` rallies the whole team.
   - `Zero`: Stealth-gank assassin (`W` `1.8s` invis -> `Q` behind target) with `Zero-Day` reset sweeps.
-  - `Pager`: Stealth blink (`E`) + `920 px` `On My Way` behind-target engage from fog + `W` Spell Shield diving.
+  - `Pager`: `Page Everyone` (`W`, `1400 px` mark) into `Ping` (`Q`) and `920 px` `On My Way` behind-target engage from fog.
 
 ### Mid Lane (`Pixel`, `Model`, `Mop`, `Lint`)
 - **Role Identity:** Shortest lane (`320 px` corridor) granting immediate access to both river Epic Pits.
-- **Wave Control:** `Mop` (`Q` Boomerang + `W`) and `Pixel` (`CSS Boomerang`) clear waves rapidly while threatening True Damage return hits; `Model` and `Lint` control choke points with `PullIn` roots and `Nitpick Chain` slows.
+- **Wave Control:** `Mop` (`Q` 5-fan sweep + `W` bubble) and `Pixel` (`CSS Boomerang`) clear waves rapidly; `Model` and `Lint` control choke points with `Random Forest` roots and `Nitpick` / `Code Freeze` marks and silences.
 
 ### Bot Lane (`Tester`, `Swipe`, `Cache` + `Ops`, `Volt`, `Hira`, `Brew`)
 - **2v2 Synergy:** Carries set up lane traps (`Tester W`, `Cache W`) or stealth/dash repositions (`Swipe W/Q/E`), paired with hook/trap/shield supports.
 - **Key Bot Pairings:**
   - `Tester + Hira`: `Feedback Hook` drags victims straight into `Bug Trap` + `Regression Barrage`.
-  - `Swipe + Brew`: `Espresso Shot` heal/AS fuels `Swipe Q -> E` weave trades.
-  - `Cache + Volt`: `Watchdog Trap` + `Data Trap` create double-mine bush zones with `520` AA range poke.
+  - `Swipe + Brew`: `Espresso Shot` heal/AS fuels `Swipe Q -> AA` weave trades.
+  - `Cache + Volt`: `Watchdog Trap` + Servo-centered `Q` stun create lane lockdown while `Stale Data` stacks charge `Full Table Scan`.
 
 ---
 
@@ -451,8 +486,9 @@
 | `dash` | Displaces caster over dash | Stops cleanly at walls (`nav.clipMove`) | `toTarget` homes onto visible target (`behindTarget` places behind); `cdRefundOnHit` / `killReset` / `wallStun` supported |
 | `blink` | Instant teleport | Crosses walls, landing on `nav.nearestFree(x, y, 30)` | Blocked while `rooted`, `stunned`, or knocked back; optional `invisMs` on arrival (`Pager E`) |
 | `self` | None | N/A | Applies instant heal, shield, `invisMs`, `spellShieldMs`, and/or `_addBuff` tags |
+| `swap` | Teleports caster and ally | Positions are exchanged (no wall check needed, both spots were valid) | Allied champion nearest the aim within `range + 40 px`; fails (no cost) if none; shield + buff on both (`Ops E`) |
 | `allies` | None | Ignored by walls | Heals/shields/buffs/Spell-Shields all living allied champions within `radius + 30 px` |
-| `zone` | None | Ignored by walls | Persistent area ticking every `tickMs`; supports `pullIn` vortex per tick (`Mop R`, `Sprint R`) and allied healing (`Brew R`) |
+| `zone` | None | Ignored by walls | Persistent area ticking every `tickMs`; supports slows, `silence` per tick (`Lint E`), `trail` zones spawned by dashes (`Mop E`) and allied healing (`Brew R`) |
 
 ---
 
@@ -462,22 +498,22 @@ Every champion has `4` active skills (`18 * 4 = 72` skills total). Below is the 
 
 | Skill Type | Count | Champions & Slots Using This Type |
 | :--- | :---: | :--- |
-| **`circle`** | **19** | `Pixel R`, `Stack R`, `Ops Q`, `Tester W` (Trap), `Zero E`, `Model Q/E/R`, `Brick R`, `Rush E`, `Volt E` (Trap) / `R` (`at: 'pet'`), `Patch Q`, `Sprint Q`, `Cache W` (Trap), `Hira R`, `Lint W/R`, `Brew E` |
-| **`projectile`** | **14** | `Pixel Q` (Boomerang), `Stack Q` (Pull Hook), `Tester Q/R`, `Brick Q`, `Mop Q` (Boomerang), `Volt Q` (Chain), `Swipe Q/R` (Fan), `Cache Q/R`, `Hira Q` (Pull Hook), `Brew Q`, `Pager Q` (Boomerang) |
-| **`self`** | **12** | `Stack W`, `Zero W` (Stealth), `Model W`, `Brick W` (Spell Shield), `Rush W/R`, `Volt W`, `Patch W` (Spell Shield), `Swipe W` (Stealth), `Sprint W`, `Lint E` (Spell Shield), `Pager W` (Spell Shield) |
-| **`dash`** | **10** | `Stack E`, `Tester E`, `Zero Q` (Behind), `Brick E` (ToTarget KB), `Mop E`, `Rush Q` (CD Refund), `Patch E` (WallStun), `Swipe E`, `Sprint E` (KillReset), `Pager R` (920 Behind) |
-| **`allies`** | **5** | `Ops W/E/R` (`E` Spell Shield), `Hira W` (Spell Shield), `Brew W` |
-| **`zone`** | **5** | `Mop W/R` (`R` PullIn), `Sprint R` (PullIn), `Hira E`, `Brew R` |
-| **`target`** | **4** | `Pixel W` (Chain), `Zero R` (Behind+KillReset), `Patch R` (Execute+KillReset), `Lint Q` (Chain) |
-| **`blink`** | **3** | `Pixel E`, `Cache E`, `Pager E` (Stealth) |
+| **`circle`** | **22** | `Pixel R`, `Stack R`, `Ops Q`, `Tester W`, `Zero E`, `Model Q`, `Model E`, `Model R`, `Brick R`, `Mop W`, `Rush E`, `Rush R`, `Volt Q`, `Volt E`, `Volt R`, `Patch Q`, `Sprint Q`, `Hira R`, `Lint W`, `Lint R`, `Brew E`, `Pager E` |
+| **`projectile`** | **14** | `Pixel Q`, `Stack Q`, `Tester Q`, `Tester R`, `Brick Q`, `Mop Q`, `Swipe Q`, `Swipe R`, `Cache Q`, `Cache W`, `Cache R`, `Hira Q`, `Brew Q`, `Pager W` |
+| **`dash`** | **10** | `Tester E`, `Zero Q`, `Brick E`, `Mop E`, `Rush Q`, `Patch E`, `Swipe E`, `Sprint E`, `Pager Q`, `Pager R` |
+| **`self`** | **9** | `Stack W`, `Zero W`, `Model W`, `Brick W`, `Rush W`, `Volt W`, `Patch W`, `Swipe W`, `Sprint W` |
+| **`allies`** | **5** | `Ops W`, `Ops R`, `Sprint R`, `Hira W`, `Brew W` |
+| **`zone`** | **5** | `Stack E`, `Mop R`, `Hira E`, `Lint E`, `Brew R` |
+| **`target`** | **4** | `Pixel W`, `Zero R`, `Patch R`, `Lint Q` |
+| **`blink`** | **2** | `Pixel E`, `Cache E` |
+| **`swap`** | **1** | `Ops E` |
 
-*Sum Check:* `19 + 14 + 12 + 10 + 5 + 5 + 4 + 3 = 72` skills (`18 * 4`).
+*Sum Check:* `22 + 14 + 10 + 9 + 5 + 5 + 4 + 2 + 1 = 72` skills (`18 * 4`).
 
 ### Key Roster Mechanics Highlights
-- **Boomerangs (3) & Chain Lightning (3):** `Pixel Q`, `Mop Q`, `Pager Q` fire returning boomerangs (`Pixel Q` / `Mop Q` deal True Damage on return); `Pixel W`, `Volt Q`, `Lint Q` chain across up to `2` secondary targets.
-- **Hooks & Pull-In Vortexes (8):** `Stack Q` (`680 px`) and `Hira Q` (`380 px`) yank hooked targets; `Stack R`, `Model E`, `Model R`, `Mop R`, `Volt R`, `Sprint R`, `Hira R` drag groups inward.
-- **Spell Shields (6) & Active Stealth (3):** `Ops E`, `Brick W`, `Patch W`, `Hira W`, `Lint E`, `Pager W` block the next hostile skill; `Zero W` (`1.8s`), `Swipe W` (`1.2s`), `Pager E` (`1.2s`) grant combat stealth.
-- **Traps (3), Behind-Target (3), Kill Resets (3):** `Tester W`, `Volt E`, `Cache W` place persistent ground mines; `Zero Q/R`, `Pager R` land behind targets; `Zero R`, `Patch R`, `Sprint E` reset on takedown.
+- **One signature mechanic per champion:** `Pixel E` recast snap-back, `Stack Q` hook, `Ops E` ally swap, `Model W` stasis, `Mop E` trail, `Volt` Servo-centered casts, `Patch E` double dash, `Sprint R` team rally, `Cache W/R` and `Lint Q/R` and `Pager W/R` mark detonations, `Hira R` / `Lint E` silence.
+- **Reduced overlap:** pull-in vortexes 7 -> 2 (`Stack R`, `Model R`), Spell Shields 6 -> 2 (`Brick W`, `Hira W`), boomerang 3 -> 1, chain 3 -> 1, ground traps 3 -> 2 (`Tester W`, `Volt E`), CD refunds 3 -> 2, heal-on-hit 3 -> 2.
+- **Traps (2), Behind-Target (3), Kill Resets (2):** `Tester W`, `Volt E` place persistent ground mines; `Zero Q/R`, `Pager R` land behind targets; `Zero R`, `Sprint E` reset on takedown.
 
 ---
 
@@ -502,21 +538,21 @@ The table below summarizes exact min–max stat bands across each champion role 
 
 | Champion | Engage Reach | Burst Speed | Hard CC Budget | Escape Tools | Self Defense | Primary Vulnerability / Counterplay Window |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Pixel** | `880 px` (`Q`) | High (`Q` return + `R`) | None | `E` blink (`430 px`) | None | Dodge `CSS Boomerang` return lane; `R` has `700 ms` delay |
-| **Stack** | `820 px` (`Q` Hook) | Low–Med | `1.6s+` (`Q` pull + `E` `0.6s` + `R` `1.0s`) | `E` dash | `W` shield + Armor | Immobile once `Q/E` miss; break `W` at range |
-| **Ops** | `820 px` (`Q`) | Low | None (`Q` 35% slow) | `E` `+30%` MS | `Q` heal + `E` Spell Shield + `R` | Focus with anti-heal after `Firewall Aegis` Spell Shield is baited |
+| **Pixel** | `880 px` (`Q`) | High (`Q` return + `R`) | None | `E` blink (`430 px`) + free snap-back within `3s` | None | Dodge `CSS Boomerang` return lane; punish after `E` snap-back; `R` has `700 ms` delay |
+| **Stack** | `820 px` (`Q` Hook) | Low-Med | `1.6s` (`Q` stun + `R` `1.0s`) | None | `W` shield + Armor, `E` zone slow | Immobile once `Q` misses; leave `Rate Limit`; break `W` at range |
+| **Ops** | `820 px` (`Q`) | Low | None (`Q` 35% slow) | `E` Hot Swap (swap with ally, `650 px`) | `Q` heal + `R` + `E` shield on both | Focus with anti-heal; kill the rescued ally, since `Hot Swap` only repositions |
 | **Tester** | `1050 px` (`Q`) / `2400 R` | High (`3rd AA` + `R`) | `1.2s` Root (`W` Trap) | `E` `400 px` dash+slow | Trap zone peel | Fragile (`560 HP`); sweep chokepoints and punish `11s` `E` CD |
 | **Zero** | `520 px` (`Q`/`R` behind) | V.High (Mark + `R` Reset) | None | `W` `1.8s` stealth (`+35% MS`) | `W` `20%` DR | True vision / stasis denies `Zero-Day` reset chain |
-| **Model** | `880–1050 px` | V.High (`R` PullIn burst) | `1.0s` Root (`E`) + PullIn | None | `W` `+15%` MS | Completely immobile; flash/dash out of `850 ms` `Big Data` load |
+| **Model** | `880-1050 px` | V.High (`R` PullIn burst) | `1.0s` Root (`E`) + PullIn | `W` Hibernate (1.5s invulnerable, cannot act) | `W` stasis + `+30% AP` | Completely immobile outside `W`; flash/dash out of `850 ms` `Big Data` load; outlast Hibernate |
 | **Brick** | `420 px` (`E` dash) | Low–Med | `1.2s` / `1.0s` wall stun | `E` dash | `W` HP shield + 2s Spell Shield | Fight away from walls and poke off `2s` Spell Shield first |
-| **Mop** | `900 px` (`R`) | Sustained + True Q return | `80 px` KB + PullIn | `E` `460 px` dash | `Clean Sweep` sustain | Sidestep return broom and exit `Deep Clean Vortex` pull |
-| **Rush** | `620 px` (`Q` dash) | Med–High | `0.8s` (`E` `500 ms` delay) | `Q` CD-refund dash + `R` MS | `W` heal | Squishy if locked down during `Rush Hour`; don't clump for `Q` refunds |
-| **Volt** | `860 px` (`Q` Chain) | Sustained (`Servo`) | `2.55s` (`Q` `0.7s` + `E` `0.85s` + `R` `1.0s`) | None (`0` dash/blink) | `E` trap peel | No self-peel dash; dodge `Watchdog Trap` and spread away from Servo |
-| **Patch** | `460 px` (`E` dash) | High (`R` Execute Reset) | `0.9s` wall stun | `E` dash | `Q` heal + `W` Shield/SpellShield | Kite outside `150 px` AA reach and cut heal-on-hit with `Strict Linter` |
-| **Swipe** | `500 px` AA (`840 Q`) | High (`W` stealth + `R` exec) | None | `E` `390 px` dash + `W` `1.2s` invis | Stealth reposition | Dodge `Q` so `E` doesn't refund `1.5s`; lock down when stealth breaks |
-| **Sprint** | `520 px` (`E` homing) | Sustained (`R` PullIn zone) | `0.7s` (`E` stun) + PullIn | `E` Kill Reset | `W` heal | Deny kill resets and kite out of `4s` `Sprint Review` vortex |
-| **Cache** | `520 px` AA (`2100 R`) | Ramping (`Q` refund + AA) | None (`W` 45% slow trap) | `E` `400 px` blink | Cryo trap slow | Ambush between `Batch Job` casts; dodge `Q` to prevent `1s` all-CD refund |
-| **Hira** | `880 px` (`Q` Hook) | Low–Med | `2.0s+` (`Q` Pull+Root + `R` PullIn Stun) | None | `W` heal + 2.5s Spell Shield | Bait `Feedback Hook` and spread apart to avoid `Mandatory Meeting` |
-| **Lint** | `650–850 px` | Med (`Q` Chain / `R`) | `1.1s` root + `1.0s` wall stun | None | `E` shield + 2s Spell Shield | Pop `Approved` Spell Shield with light poke before hard engage |
-| **Brew** | `820 px` (`Q`) | Low (`R` zone) | `1.05s` (`E` `600 ms` delay) | None | `Q` healOnHit + `W`/`R`/Passive | Anti-heal halves `Hot Pour` + `Break Room` sustain |
-| **Pager** | `920 px` (`R` behind) | Med–High | `1.0s` (`R` Stun) | `E` `360 px` blink + `1.2s` stealth | `W` shield + 2s Spell Shield | Requires vision for `R` (`920 px`); poke off `W` Spell Shield before peeling |
+| **Mop** | `900 px` (`R`) | Sustained | `150 px` KB + slows (60-65%) | `E` `460 px` dash + trail | `Clean Sweep` sustain | Exit `Flood` and the `Wet Floor` trail; bubble has `700 ms` delay |
+| **Rush** | `620 px` (`Q` dash) | Med-High (`R` nuke) | `0.8s` (`E` `500 ms` delay) + `R` 50% slow | `Q` CD-refund dash | `W` heal + MS/AS | Squishy if locked down; `R` has `600 ms` telegraph; don't clump for `Q` refunds |
+| **Volt** | `860 px` (`Q`/`R` via Servo) | Sustained (`Servo`) | `2.45s` (`Q` `0.7s` + `E` `0.85s` + `R` `0.9s` wall stun) | None (`0` dash/blink) | `E` trap peel | No self-peel dash; zaps are centered on Servo, so kill or avoid Servo-adjacent spots |
+| **Patch** | `380 px` (`E` x2) / `420 px` (`R`) | High (`R` lock + heal) | `1.5s` (`R` single target) | `E` double dash (recast) | `Q` heal + `W` shield | Kite outside `150 px` AA reach; cut heal-on-hit with `Strict Linter`; no wall-pin anymore |
+| **Swipe** | `500 px` AA (`840 Q`) | High (`W` stealth + `R` exec) | None (`Q` 20% slow) | `E` `390 px` dash + `W` `1.2s` invis | Stealth reposition | Lock down when stealth breaks; `E` no longer refunds from `Q` |
+| **Sprint** | `520 px` (`E` homing) | Med (`Q`/`E`) + team rally | `0.7s` (`E` stun) | `E` Kill Reset | `W` shield + `30%` DR | Deny kill resets; split vs `All Hands Sprint` (`750 px`, `5s`) |
+| **Cache** | `520 px` AA (`2100 R`) | Ramping (`Q` refund + AA + Stale) | None (`W` 45% slow) | `E` `400 px` blink | Slow on `W` | Dodge `Stale Data` (champ-only line) to deny `R` bonus; dodge `Batch Job` to prevent `1s` all-CD refund |
+| **Hira** | `880 px` (`Q` Hook) | Low-Med | `1.0s` Root (`Q`) + `2.5s` Silence (`R`) | None | `W` heal + 2.5s Spell Shield | Bait `Feedback Hook`; leave `Mandatory Meeting` area before `650 ms` ends |
+| **Lint** | `650-850 px` | Med (`Q` stacks / `R` detonation) | `1.1s` root (`W`) + silence zone (`E`) | None | None | No defensive tool: dive `Lint` and stay out of `Code Freeze` |
+| **Brew** | `700 px` (`Q` cone) | Low (`R` zone) | `1.05s` (`E` `600 ms` delay) | None | `W`/`R`/Passive heal | Anti-heal halves `Break Room` sustain; `Q` no longer heals Brew |
+| **Pager** | `1400 px` (`W`) / `920 px` (`R` behind) | Med-High | `1.0s` (`R` Stun) + `Q`/`E` slows | `Q` toTarget dash + `R` behind | None | Requires vision for `R`; dodge `W` to avoid Paged bonus damage |

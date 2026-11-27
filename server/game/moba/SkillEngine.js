@@ -77,6 +77,13 @@ export function classifySkill(spec) {
     spellShield: !!(spec.spellShieldMs > 0),
     stealth: !!(spec.invisMs > 0),
     killReset: !!spec.killReset,
+    // v5
+    silence: !!spec.silence,
+    swap: spec.type === 'swap',
+    stasis: !!spec.stasis,
+    recast: !!spec.recast,
+    mark: !!spec.mark,
+    detonate: !!spec.detonate,
   };
 }
 
@@ -115,6 +122,7 @@ export class SkillEngine {
       case 'self': ok = this._self(ch, slot, spec, now); break;
       case 'allies': ok = this._allies(ch, slot, spec, now); break;
       case 'zone': ok = this._zone(ch, slot, spec, aim, now); break;
+      case 'swap': ok = this._swap(ch, slot, spec, aim, now); break;
       default: ok = false;
     }
     if (!ok) {
@@ -136,6 +144,49 @@ export class SkillEngine {
     }
     if (ch._gradMul && ch._gradMul > 1) mul *= ch._gradMul;
     return scaledAmount(amountSpec, ch.level, ch.ad, ch.ap, ch.maxHp) * mul;
+  }
+
+  /**
+   * v5 second press of a `recast` skill (free: no mana, no cooldown).
+   * rc = { until, x0, y0 } recorded by the room at the first cast.
+   */
+  recast(ch, slot, spec, aim, now, rc) {
+    const mode = spec.recast && spec.recast.mode;
+    if (mode === 'back') {
+      if (now < ch.rootedUntil) return false;
+      const x0 = ch.x, y0 = ch.y;
+      const end = nearestFree(rc.x0, rc.y0, CHAMP_RADIUS);
+      this.room._teleport(ch, end.x, end.y);
+      this.room._fx({ k: 'blink', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
+      return true;
+    }
+    if (mode === 'again') return this.cast(ch, slot, { ...spec, recast: null }, aim, now);
+    return false;
+  }
+
+  /** v5 `swap`: trade places with the allied champion nearest the aim within `range`. */
+  _swap(ch, slot, spec, aim, now) {
+    let ally = null, best = 220; // the ally must be within 220 px of the aim point
+    for (const a of this.room.champs.values()) {
+      if (a === ch || a.dead || a.team !== ch.team) continue;
+      if (Math.hypot(a.x - ch.x, a.y - ch.y) > (spec.range || 600) + 40) continue;
+      const d = Math.hypot(a.x - aim.x, a.y - aim.y);
+      if (d <= best) { best = d; ally = a; }
+    }
+    if (!ally) return false;
+    const until = now + (spec.duration || 0);
+    const ax = ally.x, ay = ally.y, cx = ch.x, cy = ch.y;
+    this.room._teleport(ch, ax, ay);
+    this.room._teleport(ally, cx, cy);
+    this.room._fx({ k: 'blink', sid: ch.id, x0: round(cx), y0: round(cy), x1: round(ch.x), y1: round(ch.y) });
+    this.room._fx({ k: 'blink', sid: ally.id, x0: round(ax), y0: round(ay), x1: round(ally.x), y1: round(ally.y) });
+    const sh = spec.shield ? this.amount(ch, spec.shield) : 0;
+    for (const who of [ch, ally]) {
+      if (sh) this.room._addShield(who, sh, until);
+      if (spec.buff) this.room._addBuff(who, slot, spec.buff, until);
+    }
+    this.room._fx({ k: 'buff', sid: ch.id, slot, color: spec.color });
+    return true;
   }
 
   // ───────────────────────── types ─────────────────────────
@@ -217,6 +268,10 @@ export class SkillEngine {
   /** v2 persistent zone: ticks every `tickMs` for `duration` (first tick right away). */
   _zone(ch, slot, spec, aim, now) {
     const { x, y } = this._areaCenter(ch, spec, aim);
+    return this._spawnArea(ch, slot, spec, x, y, now);
+  }
+
+  _spawnArea(ch, slot, spec, x, y, now) {
     const ms = Math.max(0, spec.duration || 0);
     const tickMs = Math.max(MIN_ZONE_TICK_MS, spec.tickMs || 500);
     const r = spec.radius || 0;
@@ -284,6 +339,10 @@ export class SkillEngine {
     ch.faceX = dx; ch.faceY = dy;
     if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
     this.room._fx({ k: 'dash', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y), color: spec.color });
+    if (spec.trail) {
+      const tz = { ...spec.trail, type: 'zone', color: spec.trail.color || spec.color, _slot: slot };
+      this._spawnArea(ch, slot, tz, (x0 + ch.x) / 2, (y0 + ch.y) / 2, now);
+    }
     if (hits.length) {
       const amt = spec.dmg ? this.amount(ch, spec.dmg) : 0;
       for (const h of hits) this._applyHit(ch, h, spec, amt, now, ch.x, ch.y, dx, dy);
@@ -312,6 +371,11 @@ export class SkillEngine {
     if (spec.buff) this.room._addBuff(ch, slot, spec.buff, until);
     if (spec.spellShieldMs > 0) ch._spellShieldUntil = Math.max(ch._spellShieldUntil || 0, now + spec.spellShieldMs);
     if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;
+    if (spec.stasis && spec.stasis.ms > 0) {
+      ch._stasisUntil = now + spec.stasis.ms;
+      ch.stunnedUntil = Math.max(ch.stunnedUntil || 0, now + spec.stasis.ms);
+      ch.rootedUntil = Math.max(ch.rootedUntil || 0, now + spec.stasis.ms);
+    }
     this.room._fx({ k: 'buff', sid: ch.id, slot, color: spec.color });
     return true;
   }
@@ -369,6 +433,19 @@ export class SkillEngine {
       for (const s of targetSlots) if (caster.cd[s] > now) caster.cd[s] = Math.max(now, caster.cd[s] - refMs);
     }
     if (t.etype === 'champ' && this.room._isAlive(t)) {
+      if (spec.detonate && t._marks && t._marks[spec.detonate.tag]) {
+        const mk = t._marks[spec.detonate.tag];
+        delete t._marks[spec.detonate.tag];
+        if (mk.until > now && mk.n > 0) {
+          this.room._dealDamage(caster, t, dmg * (spec.detonate.pctPerStack || 0.2) * mk.n, { kind: 'skill', trueDmg: true });
+        }
+      }
+      if (spec.mark && this.room._isAlive(t)) {
+        t._marks = t._marks || {};
+        const cur = t._marks[spec.mark.tag];
+        const n = cur && cur.until > now ? cur.n : 0;
+        t._marks[spec.mark.tag] = { n: Math.min(spec.mark.max || 1, n + 1), until: now + (spec.mark.ms || 5000) };
+      }
       if (caster.champ === 'pixel' && slot === 'q') {
         t._pixelMarkUntil = now + 4000;
         if (augs.includes('evo_pixel_split')) {

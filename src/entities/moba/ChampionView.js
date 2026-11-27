@@ -97,7 +97,9 @@ export class ChampionView {
     this.emoji = scene.add.text(BAR_W / 2 + 15, BAR_Y - 1, this.def.emoji, { fontSize: 17, padding: { y: 3 } }).setOrigin(0.5);
     this.shieldFx = scene.add.image(0, -42, 'moba-ring').setDisplaySize(116, 116).setTint(0xbfe6ff)
       .setAlpha(0.8).setVisible(false);
+    this.spellBubble = scene.add.circle(0, -46, 46, 0x7b61ff, 0.14).setStrokeStyle(2.5, 0xa78bfa, 0.92).setVisible(false);
     this.stunFx = scene.add.text(0, -150, '💫', { fontSize: 24 }).setOrigin(0.5).setVisible(false);
+    this.silenceFx = scene.add.text(0, -178, '🔇', { fontSize: 22 }).setOrigin(0.5).setVisible(false);
     this.status = scene.add.text(BAR_W / 2 + 6, BAR_Y + 20, '', { fontSize: 15 }).setOrigin(0, 0.5);
     // Bars
     this.hpBg = scene.add.rectangle(0, BAR_Y, BAR_W + 4, 11, 0x000000, 0.82);
@@ -106,7 +108,7 @@ export class ChampionView {
     this.ticks = scene.add.graphics();
     const parts = [shadow, this.aura, this.rootFx, this.ring, this.recallG, this.light, ...this._cBack, ...this.outlines,
       ...this._cMid, this.sprite, ...this._cFront,
-      this.shieldFx];
+      this.shieldFx, this.spellBubble, this.silenceFx];
     const over = [this.emoji, this.hpBg, this.hpFill, this.shieldFill, this.ticks];
     if (isMe) {
       this.mpBg = scene.add.rectangle(0, BAR_Y + 8, BAR_W + 4, 6, 0x000000, 0.82);
@@ -198,7 +200,7 @@ export class ChampionView {
     this.slowed = (ch.slowUntil || 0) > srvNow && (ch.slowPct || 0) > 0;
     this.recallUntil = (ch.recallUntil || 0) > srvNow ? ch.recallUntil : 0;
     if (ch.buffs !== this._buffs) this._applyBuffs(ch.buffs || '');
-    const icons = (this.slowed ? '🐌' : '') + (this._coffee ? '☕' : '');
+    const icons = (this.slowed ? '🐌' : '') + (this._coffee ? '☕' : '') + (this._silenced ? '🔇' : '');
     if (icons !== this.status.text) this.status.setText(icons);
     this.targetId = ch.targetId || '';
   }
@@ -421,6 +423,14 @@ export class ChampionView {
     this._buffs = str;
     const tags = str ? str.split(',').map((t) => t.trim()).filter(Boolean) : [];
     this._coffee = tags.includes('coffee');
+    this._silenced = tags.includes('silenced');
+    this.spellBubble?.setVisible(tags.includes('spellshield'));
+    this.silenceFx?.setVisible(tags.includes('silenced'));
+    const stealthed = tags.includes('stealth');
+    const visAlpha = stealthed ? 0.42 : 1;
+    this.sprite?.setAlpha(visAlpha);
+    for (const o of this.outlines || []) o.setAlpha(stealthed ? 0.42 : 0.95);
+    this._costume?.forEach?.((img) => img.setAlpha(visAlpha));
     let color = null;
     for (const t of BUFF_PRIORITY) {
       if (!tags.includes(t)) continue;

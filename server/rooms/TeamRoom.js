@@ -664,7 +664,7 @@ export class TeamRoom extends Room {
       dead: false, respawnAt: 0, kills: 0, deaths: 0, assists: 0, cs: 0, streak: 0,
       items: new Array(INVENTORY_SLOTS).fill(''), boughtAt: new Array(INVENTORY_SLOTS).fill(0),
       cd: { q: 0, w: 0, e: 0, r: 0 },
-      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0,
+      stunnedUntil: 0, rootedUntil: 0, slowUntil: 0, slowPct: 0, silencedUntil: 0, _recast: {}, _marks: {},
       _ccChainCount: 0, _ccChainUntil: 0, _ccImmuneUntil: 0,
       _atkCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _lastCombatAt: 0,
       _grievousUntil: 0, _auditUntil: 0, _tankStacks: 0, _tankUntil: 0, _lifelineCd: 0,
@@ -814,7 +814,7 @@ export class TeamRoom extends Room {
     ch.spellRechargeAt = { d: 0, f: 0 };
     ch.burns = [];
     ch.dead = false; ch.respawnAt = 0;
-    ch.stunnedUntil = 0; ch.rootedUntil = 0; ch.slowUntil = 0; ch.slowPct = 0;
+    ch.stunnedUntil = 0; ch.rootedUntil = 0; ch.slowUntil = 0; ch.slowPct = 0; ch.silencedUntil = 0; ch._recast = {}; ch._marks = {};
     ch._ccChainCount = 0; ch._ccChainUntil = 0; ch._ccImmuneUntil = 0;
     ch._atkCount = 0; ch._lastTargetId = ''; ch._cacheStacks = 0; ch._swipeReady = false; ch._lastCombatAt = 0;
     ch._grievousUntil = 0; ch._auditUntil = 0; ch._tankStacks = 0; ch._tankUntil = 0; ch._lifelineCd = 0;
@@ -1116,8 +1116,21 @@ export class TeamRoom extends Room {
     if (slot === 'r' && ch.level < ULT_UNLOCK_LEVEL) return false;
     const rank = ch.ranks?.[slot] || 0;
     if (rank <= 0) return false;
-    if (now < ch.cd[slot]) return false;
+    if (now < (ch.silencedUntil || 0)) return false; // silenced: no skills
     const spec = ch.def.skills[slot];
+    // v5 recast: the second press of a recast skill is free and ignores cooldown/mana.
+    const rc = spec && spec.recast ? ch._recast?.[slot] : null;
+    if (rc && rc.until > now) {
+      const raim = clampToMap(Number.isFinite(msg.x) ? msg.x : ch.x, Number.isFinite(msg.y) ? msg.y : ch.y, 0);
+      const rid = (typeof msg.id === 'string' && msg.id.length <= 64 && this.units.get(msg.id)?.utype !== 'pet') ? msg.id : '';
+      ch._recast[slot] = null; // consumed first: a recast 'again' goes through cast(), which must not re-arm it
+      if (!this.skills.recast(ch, slot, spec, { x: raim.x, y: raim.y, id: rid }, now, rc)) { ch._recast[slot] = rc; return false; }
+      ch.lastCastAt = now;
+      ch.action = slot;
+      ch.actionSeq++;
+      return true;
+    }
+    if (now < ch.cd[slot]) return false;
     if (!spec || !(ch.mana >= spec.mana)) return false;
     let aim = clampToMap(Number.isFinite(msg.x) ? msg.x : ch.x, Number.isFinite(msg.y) ? msg.y : ch.y, 0);
     let id = (typeof msg.id === 'string' && msg.id.length <= 64) ? msg.id : '';
@@ -1135,13 +1148,20 @@ export class TeamRoom extends Room {
     const nextCastCount = (ch._castCount || 0) + 1;
     ch._overloadCast = augs.includes('overload') && nextCastCount % 4 === 0;
     const prevReveal = ch.revealUntil || 0;
+    const prevStealth = ch._stealthUntil || 0;
+    const prevCd = ch.cd[slot];
     ch.revealUntil = now + BUSH_REVEAL_MS;
-    if (!this.skills.cast(ch, slot, spec, { x: aim.x, y: aim.y, id }, now)) { ch.revealUntil = prevReveal; ch._overloadCast = false; return false; }
     ch._stealthUntil = 0;
+    ch.cd[slot] = now + skillCooldownMs(spec.cd, ch.haste + ((ch._blueBuffUntil || 0) > now ? 0.15 : 0), rank);
+    const ox = ch.x, oy = ch.y;
+    if (!this.skills.cast(ch, slot, spec, { x: aim.x, y: aim.y, id }, now)) {
+      ch.revealUntil = prevReveal; ch._stealthUntil = prevStealth; ch.cd[slot] = prevCd;
+      ch._overloadCast = false; return false;
+    }
+    if (spec.recast) ch._recast[slot] = { until: now + (spec.recast.ms || 3000), x0: ox, y0: oy };
     ch._castCount = nextCastCount;
     ch.lastCastAt = now;
     ch.mana = Math.max(0, ch.mana - spec.mana);
-    ch.cd[slot] = now + skillCooldownMs(spec.cd, ch.haste + ((ch._blueBuffUntil || 0) > now ? 0.15 : 0), rank);
     ch.action = slot;
     ch.actionSeq++;
     this._cancelRecall(ch);
@@ -2976,6 +2996,7 @@ export class TeamRoom extends Room {
         if (t.etype === 'champ') this._cancelRecall(t);
       }
     }
+    if (spec.silence && t.etype === 'champ') t.silencedUntil = Math.max(t.silencedUntil || 0, now + (spec.silence.ms || 0));
   }
 
   _cancelRecall(ch) {
@@ -3134,6 +3155,23 @@ export class TeamRoom extends Room {
     this.units.set(id, rec);
     this._syncUnit(rec);
     this.state.units.set(id, s);
+    // Sweeper pulse on [4] Ward: reveal stealthed champions and armed enemy traps within sightRadius
+    const scanR = WARD.sightRadius || 750;
+    for (const foe of this.champs.values()) {
+      if (foe.team !== ch.team && !foe.dead && Math.hypot(foe.x - pos.x, foe.y - pos.y) <= scanR) {
+        foe._stealthUntil = 0;
+        foe.revealUntil = Math.max(foe.revealUntil || 0, now + 5000);
+      }
+    }
+    for (const tr of this.skills?.traps || []) {
+      if (tr.team !== ch.team && Math.hypot(tr.x - pos.x, tr.y - pos.y) <= scanR) {
+        this._sendTeam(ch.team, 'fx', {
+          k: 'zone', sid: tr.ownerId, team: tr.team, slot: tr.slot, tid: tr.tid, trap: true, fadingStealth: true,
+          x: Math.round(tr.x), y: Math.round(tr.y), r: tr.r, ms: 5000, tickMs: 1200, color: tr.color,
+        });
+      }
+    }
+    this._fx({ k: 'circle', x: Math.round(pos.x), y: Math.round(pos.y), r: 220, delay: 0, color: 0x39ff14 });
     return true;
   }
 
@@ -3563,6 +3601,9 @@ export class TeamRoom extends Room {
     if (ch.regens.length) add('coffee');
     if ((ch._blueBuffUntil || 0) > now) add('blueBuff');
     if ((ch._redBuffUntil || 0) > now) add('redBuff');
+    if ((ch._spellShieldUntil || 0) > now) add('spellshield');
+    if ((ch._stealthUntil || 0) > now) add('stealth');
+    if ((ch.silencedUntil || 0) > now) add('silenced');
     return out;
   }
 
@@ -3655,12 +3696,12 @@ export class TeamRoom extends Room {
     if (entry.k === 'proj') { x2 = entry.x + entry.dx * entry.range; y2 = entry.y + entry.dy * entry.range; }
     else if (Number.isFinite(entry.x1)) { x2 = entry.x1; y2 = entry.y1; }
     for (const team of VIEW_TEAMS) {
-      if (!this.canSee(team, a, now) || !this.canSee(team, b, now) || !this.canSee(team, c, now)) continue;
       if (entry.trap && entry.team && team !== entry.team) {
         if (!this._teamHasTrapSight(team, x, y)) continue;
         this._sendTeam(team, 'fx', { ...entry, ms: entry.enemyRevealMs || 3000, fadingStealth: true, stealthAfterMs: 0 });
         continue;
       }
+      if (!this.canSee(team, a, now) || !this.canSee(team, b, now) || !this.canSee(team, c, now)) continue;
       const own = (a && a.team === team) || (b && b.team === team) || (c && c.team === team);
       if (!own && Number.isFinite(x) && !this._nearTeam(team, x, y) && !(Number.isFinite(x2) && this._nearTeam(team, x2, y2))) continue;
       this._sendTeam(team, 'fx', entry);

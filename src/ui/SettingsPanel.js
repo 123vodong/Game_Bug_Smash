@@ -63,6 +63,17 @@ export const SettingsPanel = {
     const m = new Modal(scene, { w: 960, h: 620, title: t('set.title'), accent: NEON.teal, onClose });
     const content = scene.add.container(0, 0);
     m.body.add(content);
+    const renderTab = (id) => {
+      activeTab = id;
+      content.removeAll(true);
+      if (id === 'settings') buildSettings(scene, content, m, () => {
+        m.titleTxt?.setText(t('set.title'));
+        buildTabs(activeTab); // tabs() re-renders the active tab itself
+      });
+      else if (id === 'controls') buildControls(scene, content, m);
+      else buildAbout(scene, content, m);
+      m.pin();
+    };
     const buildTabs = (cur) => {
       activeTab = cur;
       const prev = m.body.list.filter((o) => o !== content);
@@ -71,17 +82,7 @@ export const SettingsPanel = {
         { id: 'settings', text: t('set.tab.settings') },
         { id: 'controls', text: t('set.tab.controls') },
         { id: 'about', text: t('set.tab.about') },
-      ], cur, (id) => {
-        activeTab = id;
-        content.removeAll(true);
-        if (id === 'settings') buildSettings(scene, content, m, () => {
-          m.titleTxt?.setText(t('set.title'));
-          buildTabs(activeTab);
-        });
-        else if (id === 'controls') buildControls(scene, content, m);
-        else buildAbout(scene, content, m);
-        m.pin();
-      }, NEON.teal);
+      ], cur, renderTab, NEON.teal);
     };
     buildTabs(activeTab);
     return m;
