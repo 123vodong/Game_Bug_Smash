@@ -2694,6 +2694,31 @@ export default class TeamModeScene extends Phaser.Scene {
         return end;
       }
 
+      /** Drag-cast preview (Pixel Q, Model E ...): the start point A is fixed, the line follows the pointer up to `obj.len`. */
+      _drawDragPreview(g, now) {
+        const h = this._held, sk = h.spec, p = this._pred, col = sk.color ?? 0x39c2ff;
+        const A = { x: h.ax, y: h.ay }, m = this._mouseWorld || A;
+        const maxLen = (sk.obj && sk.obj.len) || 400, th = (sk.obj && sk.obj.thick) || 36;
+        const dx = m.x - A.x, dy = m.y - A.y, d = Math.hypot(dx, dy);
+        const ux = d > 8 ? dx / d : 1, uy = d > 8 ? dy / d : 0, reach = Math.min(d, maxLen);
+        const B = { x: A.x + ux * reach, y: A.y + uy * reach }, F = { x: A.x + ux * maxLen, y: A.y + uy * maxLen };
+        const pulse = 0.65 + 0.35 * Math.sin(now / 90), nx = -uy, ny = ux, hw = th / 2;
+        if (sk.range) { g.lineStyle(3, col, 0.4); g.strokeCircle(p.x, p.y, sk.range); }
+        // faint full-length ghost so the maximum reach is obvious
+        g.lineStyle(2, col, 0.3);
+        for (let s = 0; s < maxLen; s += 28) g.lineBetween(A.x + ux * s, A.y + uy * s, A.x + ux * Math.min(s + 14, maxLen), A.y + uy * Math.min(s + 14, maxLen));
+        g.strokeCircle(F.x, F.y, hw * 0.5);
+        // the band that will be placed
+        g.fillStyle(col, 0.16 + 0.12 * pulse);
+        g.beginPath(); g.moveTo(A.x + nx * hw, A.y + ny * hw); g.lineTo(B.x + nx * hw, B.y + ny * hw); g.lineTo(B.x - nx * hw, B.y - ny * hw); g.lineTo(A.x - nx * hw, A.y - ny * hw); g.closePath(); g.fillPath();
+        g.lineStyle(3, col, 0.95);
+        g.lineBetween(A.x + nx * hw, A.y + ny * hw, B.x + nx * hw, B.y + ny * hw); g.lineBetween(A.x - nx * hw, A.y - ny * hw, B.x - nx * hw, B.y - ny * hw);
+        g.lineStyle(5, 0xffffff, 0.9 * pulse); g.lineBetween(A.x, A.y, B.x, B.y);
+        g.fillStyle(col, 0.95); g.fillCircle(A.x, A.y, hw * 0.55); g.fillCircle(B.x, B.y, hw * 0.55);
+        g.lineStyle(3, 0xffffff, 0.9); g.strokeCircle(A.x, A.y, hw * 0.55 + 6); g.strokeCircle(B.x, B.y, hw * 0.55 + 6);
+        this._aimTxt.setText(`${this._kt('kit.dragRelease', 'Release to place')}  ${Math.round(reach)}/${maxLen}`).setPosition(B.x, B.y - 60).setVisible(true);
+      }
+
       _drawAim(me, now) {
         const g = this._aimG;
         g.clear();
@@ -2701,6 +2726,7 @@ export default class TeamModeScene extends Phaser.Scene {
         if (this._aimTxt.visible) this._aimTxt.setVisible(false);
         if (!me || me.dead || !this._pred) return;
         this._drawPathPreview(g, now);
+        if (this._held && this._held.mode === 'drag') { this._drawDragPreview(g, now); return; }
         const flash = this._aimFlash && now < this._aimFlash.until ? this._aimFlash : null;
         const slot = this._hoverSlot || flash?.slot;
         if (slot === 'd' || slot === 'f') {
@@ -2725,6 +2751,9 @@ export default class TeamModeScene extends Phaser.Scene {
           else if (!this._aimTxt.visible) this._aimTxt.setText(`🤖 ${CHAMPIONS[me.champ]?.pet?.name || 'pet'} is offline`).setPosition(p.x, p.y - 140).setVisible(true);
           if (kb) this._knockArrowsInCircle(g, c.x, c.y, sk.radius, sk, col, pa);
           return;
+        }
+        if (sk.input === 'drag' && !this._aimTxt.visible && !this._isTouch) { // Viktor-style two-step aim: tell the player how it works
+          this._aimTxt.setText(this._kt('kit.dragHint', 'Press Q at the start point, drag, release to place')).setPosition(p.x, p.y - 150).setVisible(true);
         }
         if (sk.range && !sk.global) { g.lineStyle(3, col, 0.55 * a); g.strokeCircle(p.x, p.y, sk.range); } // a map-wide range ring would fill the screen
         const selfArea = sk.type === 'self' || sk.type === 'allies' || ((sk.type === 'circle' || sk.type === 'zone') && !sk.range);
