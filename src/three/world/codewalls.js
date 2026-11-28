@@ -71,18 +71,60 @@ export function makeCodeWalls(world) {
     const p = [P(-1, -1, 0, 0), P(1, -1, n, 0), P(1, 1, n, 1), P(-1, 1, 0, 1)];
     for (const i of [0, 1, 2, 0, 2, 3]) { pos.push(p[i][0], p[i][1], p[i][2]); uv.push(p[i][3], p[i][4]); cell.push(cu0, cv0, 1 / COLS, 1 / ROWS); }
   };
+  const is5v5 = !world || world.id === '5v5';
   const HT = { partition: 1.25, cubicles: 0.95, shelf: 0.8 };
   let id = 0;
   for (const w of (world && world.walls) || []) {
     const h = HT[w.look] || (w.look === 'glass' ? 0 : 0);
     if (!h || w.look === 'shelf') continue;
+    if (w.kind === 'poly') {
+      if (w.baseWall) continue;
+      const pts = w.pts;
+      if (!pts || pts.length < 3) continue;
+      let area = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        area += a[0] * b[1] - b[0] * a[1];
+      }
+      const ccw = area >= 0 ? 1 : -1;
+      for (let i = 0; i < pts.length; i++) {
+        if (i % 3 !== 1) continue; // crisp embedded dev plaques spaced along curved cliff flanks
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const dx = (b[0] - a[0]) * S, dz = (b[1] - a[1]) * S;
+        const L = Math.hypot(dx, dz);
+        if (L < 0.75) continue;
+        const ux = dx / L, uz = dz / L;
+        // screen-space outward edge normal depending on winding
+        const nx = (uz * ccw), nz = (-ux * ccw);
+        const mx = (a[0] + b[0]) * 0.5 * S, mz = (a[1] + b[1]) * 0.5 * S;
+        const len = Math.min(2.2, Math.max(0.95, L * 0.92));
+        const off = 0.20;
+        const k = hash(Math.round(mx * 100) + id, Math.round(mz * 100));
+        const ci = k % SNIPS.length, cu0 = (ci % COLS) / COLS, cv0 = 1 - (Math.floor(ci / COLS) + 1) / ROWS;
+        const qh = 0.28, y0 = 0.14;
+        const n = Math.max(1, Math.round(len / (qh * (CW / CH))));
+        const hl = len * 0.5 - 0.04;
+        const ox = mx + nx * off, oz = mz + nz * off;
+        const ax = ox - ux * hl, az = oz - uz * hl, bx = ox + ux * hl, bz = oz + uz * hl;
+        const p = [[ax, y0, az, 0, 0], [bx, y0, bz, n, 0], [bx, y0 + qh, bz, n, 1], [ax, y0 + qh, az, 0, 1]];
+        for (const idx of [0, 1, 2, 0, 2, 3]) {
+          pos.push(p[idx][0], p[idx][1], p[idx][2]); uv.push(p[idx][3], p[idx][4]); cell.push(cu0, cv0, 1 / COLS, 1 / ROWS);
+        }
+        id++;
+      }
+      continue;
+    }
     if (w.kind === 'seg') {
       const dx = (w.x2 - w.x1) * S, dz = (w.y2 - w.y1) * S, L = Math.hypot(dx, dz), len = L + w.w * S * 0.5, th = w.w * S * 0.5;
       if (len < 0.9 || L < 1e-4) continue;
-      const qh = Math.min(0.5, h * 0.42);
-      if (th > 0.12) top((w.x1 + w.x2) / 2 * S, (w.y1 + w.y2) / 2 * S, dx / L, dz / L, len, Math.min(th * 0.42, 0.2), h + 0.034, id);
+      const qh = is5v5 ? Math.min(0.54, h * 0.46) : Math.min(0.5, h * 0.42);
+      const cliffHalf = Math.max(0.32, w.w * S * 0.65) * 0.68 + 0.1;
+      const off = is5v5 ? cliffHalf : th / 2 + 0.008;
+      const topY = is5v5 ? h + 0.62 : h + 0.034;
+      const sideY = is5v5 ? h * 0.48 : h * 0.4;
+      if (th > 0.12) top((w.x1 + w.x2) / 2 * S, (w.y1 + w.y2) / 2 * S, dx / L, dz / L, len, Math.min(th * 0.42, 0.2), topY, id);
       // dir (cos,-sin of rotateY(-atan2)) maps to the plain (dx,dz)/L direction; normal is its perpendicular
-      quad((w.x1 + w.x2) / 2 * S, (w.y1 + w.y2) / 2 * S, dx / L, dz / L, -dz / L, dx / L, len, th / 2 + 0.008, h * 0.4, qh, id++);
+      quad((w.x1 + w.x2) / 2 * S, (w.y1 + w.y2) / 2 * S, dx / L, dz / L, -dz / L, dx / L, len, off, sideY, qh, id++);
     } else if (w.kind === 'rect') {
       const cx = (w.x + w.w / 2) * S, cz = (w.y + w.h / 2) * S, ww = w.w * S, hh = w.h * S;
       const qh = Math.min(0.5, h * 0.42);

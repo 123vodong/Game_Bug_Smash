@@ -13,7 +13,7 @@ import { SPELLS, spellCooldownMs } from '../../../shared/moba/spells.js';
 import { AudioManager } from '../../core/AudioManager.js';
 import { SaveManager } from '../../core/SaveManager.js';
 import { clearMatch } from '../../core/Identity.js';
-import { getLang, toggleLang } from '../../core/I18n.js';
+import { getLang, toggleLang, t, tText, onLangChange } from '../../core/I18n.js';
 
 const el = (parent, tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
 const setText = (e, v) => { if (e._v !== v) { e._v = v; e.textContent = v; } };
@@ -62,53 +62,89 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
   }
 
   // ---------- sandbox toolbar ----------
-  let sbx = null; const sbxBtns = {};
+  let sbx = null, sbxTitle = null; const sbxBtns = {};
+  function syncSandboxUi() {
+    if (!sbx) return;
+    setText(sbxTitle, t('prac.status'));
+    setText(sbxBtns.swap, t('prac.swap'));
+    setText(sbxBtns.lv, t('prac.lvUp'));
+    setText(sbxBtns.gold, t('prac.gold'));
+    setText(sbxBtns.dummy, t('prac.dummy'));
+    setText(sbxBtns.clear, t('prac.clearDummy'));
+    if (sim) {
+      setText(sbxBtns.cd, `${t('prac.noCd')}: ${sim.noCd ? 'ON' : 'OFF'}`);
+      setText(sbxBtns.mana, `${t('prac.noMana')}: ${sim.noMana ? 'ON' : 'OFF'}`);
+      setText(sbxBtns.god, `${t('prac.noDmg')}: ${sim.godMode ? 'ON' : 'OFF'}`);
+    }
+  }
   if (sandbox) {
     root.classList.add('bsx-sandbox');
     sbx = el(root, 'div', 'bsx-sbx bsh-pop');
-    el(sbx, 'div', 'bsx-sbx-t', 'PRACTICE MODE · sandbox');
+    sbxTitle = el(sbx, 'div', 'bsx-sbx-t', t('prac.status'));
     const row = el(sbx, 'div', 'bsx-sbx-row');
     const mk = (k, label, color, fn) => { const b = el(row, 'button', 'bsh-btn bsx-sb', label); b.style.setProperty('--c', color); b.onclick = () => { fn(); }; sbxBtns[k] = b; return b; };
-    mk('swap', 'SWAP CHAMP', '#ffb347', () => { AudioManager.uiClick?.(); openSwap(); });
-    mk('cd', '0s CD: ON', '#39c2ff', () => { send('setNoCd', { enabled: !sim.noCd }); });
-    mk('mana', 'NO MANA: ON', '#7ec8ff', () => { send('setNoMana', { enabled: !sim.noMana }); });
-    mk('god', 'NO DMG: ON', '#7ed957', () => { send('setGodMode', { enabled: !sim.godMode }); });
-    mk('lv', '+LV', '#ffd23f', () => { const m = meRef; if (m && source.debug) { source.debug('level', (m.level || 1) + 1); try { if (sim && sim._checkAugmentOffer) sim._checkAugmentOffer(m); } catch (_) { /* sandbox only: debug level skips the natural augment trigger */ } } });
-    mk('gold', '+5000g', '#ffd23f', () => { if (source.debug) source.debug('gold', 5000); });
+    mk('swap', t('prac.swap'), '#ffb347', () => { AudioManager.uiClick?.(); openSwap(); });
+    mk('cd', `${t('prac.noCd')}: ON`, '#39c2ff', () => { send('setNoCd', { enabled: !sim.noCd }); });
+    mk('mana', `${t('prac.noMana')}: ON`, '#7ec8ff', () => { send('setNoMana', { enabled: !sim.noMana }); });
+    mk('god', `${t('prac.noDmg')}: ON`, '#7ed957', () => { send('setGodMode', { enabled: !sim.godMode }); });
+    mk('lv', t('prac.lvUp'), '#ffd23f', () => { const m = meRef; if (m && source.debug) { source.debug('level', (m.level || 1) + 1); try { if (sim && sim._checkAugmentOffer) sim._checkAugmentOffer(m); } catch (_) { /* sandbox only: debug level skips the natural augment trigger */ } } });
+    mk('gold', t('prac.gold'), '#ffd23f', () => { if (source.debug) source.debug('gold', 5000); });
     mk('wave', '+30s', '#b084ff', () => { for (let i = 0; i < 300; i++) sim.update(100); }); // fast-forward the sim 30 s (same as the Phaser sandbox)
-    mk('dummy', '+DUMMY', '#ff8a8a', () => send('spawnDummy', {}));
-    mk('clear', 'CLEAR', '#ff5e5e', () => send('clearDummies', {}));
+    mk('dummy', t('prac.dummy'), '#ff8a8a', () => send('spawnDummy', {}));
+    mk('clear', t('prac.clearDummy'), '#ff5e5e', () => send('clearDummies', {}));
+    syncSandboxUi();
   }
 
   // ---------- in-match Pause / Settings modal ----------
   const pauseEl = el(root, 'div', 'bsx-pause bsh-pop'); pauseEl.hidden = true;
   let curQuality = (opts.getQuality && opts.getQuality()) || (SaveManager.getSettings && SaveManager.getSettings().quality) || 'high';
   pauseEl.innerHTML = `<div class="bsx-pause-box">`
-    + `<div class="bsx-pause-t">⏸ PAUSED · OFFICE SETTINGS</div>`
-    + `<div class="bsx-pause-row"><span>FX Quality</span><div class="bsx-qgrp">`
+    + `<div class="bsx-pause-t"></div>`
+    + `<div class="bsx-pause-row"><span data-pl="fx"></span><div class="bsx-qgrp">`
     + `<button class="bsh-btn" data-q="low">LOW</button><button class="bsh-btn" data-q="med">MED</button><button class="bsh-btn" data-q="high">HIGH</button>`
     + `</div></div>`
     + `<div class="bsx-pause-tools">`
-    + `<button class="bsh-btn" data-pa="shop">SHOP (P)</button><button class="bsh-btn" data-pa="info">INFO (C)</button>`
-    + `<button class="bsh-btn" data-pa="score">SCOREBOARD (TAB)</button><button class="bsh-btn" data-pa="recall">RECALL (B)</button>`
+    + `<button class="bsh-btn" data-pa="shop"></button><button class="bsh-btn" data-pa="info"></button>`
+    + `<button class="bsh-btn" data-pa="score"></button><button class="bsh-btn" data-pa="recall"></button>`
     + `</div>`
     + `<div class="bsx-pause-row"><span>Camera</span><button class="bsh-btn" data-pa="cam"></button></div>`
-    + `<div class="bsx-pause-row"><span>Audio</span><button class="bsh-btn" data-pa="mute"></button></div>`
-    + `<div class="bsx-pause-row"><span>Language</span><button class="bsh-btn" data-pa="lang"></button></div>`
-    + `<div class="bsx-pause-acts"><button class="bsh-btn yes" data-pa="resume">▶ RESUME</button><button class="bsh-btn no" data-pa="leave">🚪 LEAVE MATCH</button></div>`
+    + `<div class="bsx-pause-row"><span data-pl="sound"></span><button class="bsh-btn" data-pa="mute"></button></div>`
+    + `<div class="bsx-pause-row"><span data-pl="lang"></span><button class="bsh-btn" data-pa="lang"></button></div>`
+    + `<div class="bsx-pause-acts"><button class="bsh-btn yes" data-pa="resume"></button><button class="bsh-btn no" data-pa="leave"></button></div>`
     + `</div>`;
+  const pTitleEl = pauseEl.querySelector('.bsx-pause-t');
+  const pFxLbl = pauseEl.querySelector('[data-pl="fx"]');
+  const pSoundLbl = pauseEl.querySelector('[data-pl="sound"]');
+  const pLangLbl = pauseEl.querySelector('[data-pl="lang"]');
+  const pShopBtn = pauseEl.querySelector('[data-pa="shop"]');
+  const pInfoBtn = pauseEl.querySelector('[data-pa="info"]');
+  const pScoreBtn = pauseEl.querySelector('[data-pa="score"]');
+  const pRecallBtn = pauseEl.querySelector('[data-pa="recall"]');
   const pCamBtn = pauseEl.querySelector('[data-pa="cam"]');
   const pMuteBtn = pauseEl.querySelector('[data-pa="mute"]');
   const pLangBtn = pauseEl.querySelector('[data-pa="lang"]');
+  const pResumeBtn = pauseEl.querySelector('[data-pa="resume"]');
+  const pLeaveBtn = pauseEl.querySelector('[data-pa="leave"]');
   const pQBtns = Array.from(pauseEl.querySelectorAll('[data-q]'));
   function syncPauseUi() {
     const locked = getCamLocked();
-    setText(pCamBtn, locked ? '🔒 LOCKED (Y)' : '🔓 FREE (Y)');
-    setText(pMuteBtn, AudioManager.isMuted() ? '🔇 MUTED' : '🔊 SOUND ON');
-    setText(pLangBtn, getLang().toUpperCase());
+    setText(pTitleEl, `⏸ ${t('menu.title')}`);
+    setText(pFxLbl, t('menu.fx'));
+    setText(pSoundLbl, t('set.sound'));
+    setText(pLangLbl, t('menu.lang'));
+    setText(pShopBtn, `${t('hud.shop')} (P)`);
+    setText(pInfoBtn, `${t('hud.info')} (C)`);
+    setText(pScoreBtn, 'TAB');
+    setText(pRecallBtn, `${t('hud.base')} (B)`);
+    setText(pCamBtn, locked ? `🔒 ${t('menu.cam.locked')} (Y)` : `🔓 ${t('menu.cam.free')} (Y)`);
+    setText(pMuteBtn, AudioManager.isMuted() ? '🔇 OFF' : '🔊 ON');
+    setText(pLangBtn, getLang() === 'vi' ? 'VI · TIẾNG VIỆT' : 'EN · ENGLISH');
+    setText(pResumeBtn, `▶ ${t('menu.resume')}`);
+    setText(pLeaveBtn, `🚪 ${t('menu.leave')}`);
     for (const b of pQBtns) b.classList.toggle('on', b.dataset.q === curQuality);
   }
   syncPauseUi();
+  cleanup.push(onLangChange(() => { syncPauseUi(); syncSandboxUi(); infoSig = ''; shopSig = ''; if (kind) render(); }));
   on(pauseEl, 'click', (e) => {
     if (e.target === pauseEl) { togglePause(false); return; }
     const qb = e.target.closest('[data-q]');
@@ -177,16 +213,16 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
   function render() {
     const me = meRef;
     if (kind === 'swap') {
-      setText(pTitle, 'SWAP CHAMPION (PRACTICE)');
-      const sig = 'swap' + (me && me.champ); if (sig === infoSig) return; infoSig = sig;
+      setText(pTitle, t('prac.swapTitle'));
+      const sig = 'swap' + (me && me.champ) + '|' + getLang(); if (sig === infoSig) return; infoSig = sig;
       pBody.innerHTML = '<div class="bsx-grid">' + CHAMPION_IDS.map((id) => { const d = CHAMPIONS[id]; return `<button class="bsh-btn bsx-ch${me && me.champ === id ? ' on' : ''}" data-act="swap" data-v="${id}">${d.emoji} ${esc(d.name)}<small>${esc(d.role)}</small></button>`; }).join('') + '</div>';
     } else if (kind === 'info') {
-      const def = me && CHAMPIONS[me.champ]; setText(pTitle, def ? `${def.emoji} ${def.name} ${def.title}` : 'INFO');
+      const def = me && CHAMPIONS[me.champ]; setText(pTitle, def ? `${def.emoji} ${def.name} ${def.title}` : t('hud.info'));
       if (!def) { pBody.textContent = 'No champion.'; return; }
       const sr = srvNowMs || nowMs;
       const kt = parseKitTags(me.buffs || ''), stance = kt && kt.stance;
       const cdSnap = ['Q', 'W', 'E', 'R', 'D', 'F'].map((K) => Math.ceil(Math.max(0, (me['cd' + K] || 0) - sr) / 500)).join(',');
-      const sig = ['info', me.champ, me.level | 0, me.ad | 0, me.ap | 0, me.armor | 0, Math.round((me.as || 0) * 100), Math.round((me.haste || 0) * 100), Math.round((me.lifesteal || 0) * 100), me.ms | 0, me.maxHp | 0, me.spellD, me.spellF, stance || '', cdSnap].join('|');
+      const sig = ['info', getLang(), me.champ, me.level | 0, me.ad | 0, me.ap | 0, me.armor | 0, Math.round((me.as || 0) * 100), Math.round((me.haste || 0) * 100), Math.round((me.lifesteal || 0) * 100), me.ms | 0, me.maxHp | 0, me.spellD, me.spellF, stance || '', cdSnap].join('|');
       if (sig === infoSig) return; infoSig = sig;
 
       const ar = Math.max(0, me.armor || 0);
@@ -222,7 +258,7 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
         if (s.shield) nums.push(`🛡 ${evalAmt(s.shield, me)} shield`);
         return `<div class="bsx-sk"><div class="bsx-sk-h"><b>${k.toUpperCase()}</b> ${esc(s.icon || '')} <b>${esc(s.name)}</b> <i>${s.mana || 0} mana · ${s.cd || 0}s</i> ${cdBadge}</div>`
           + (nums.length ? `<div class="bsx-sk-num">${nums.join(' · ')}</div>` : '')
-          + `<div>${esc(s.desc || '')}</div></div>`;
+          + `<div>${esc(tText(`skill.${me.champ}.${k}`, s.desc || ''))}</div></div>`;
       }).join('');
 
       const spellsHtml = ['d', 'f'].map((k) => {
@@ -232,7 +268,7 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
         const hasCh = sp.maxCharges > 1, chg = hasCh ? (me['charges' + K] == null ? sp.maxCharges : me['charges' + K]) : 0;
         const cdSec = +(spellCooldownMs(sp, me.level || 1) / 1000).toFixed(1);
         const cdBadge = left > 0 ? `<span class="sk-cd wait">${(left / 1000).toFixed(1)}s</span>` : '<span class="sk-cd ok">READY</span>';
-        return `<div class="bsx-sk"><div class="bsx-sk-h"><b>${K}</b> ${esc(sp.icon || '')} <b>${esc(sp.name)}</b> <i>${cdSec}s CD${hasCh ? ` · ${chg}/${sp.maxCharges} charges` : ''}</i> ${cdBadge}</div><div>${esc(sp.desc || '')}</div></div>`;
+        return `<div class="bsx-sk"><div class="bsx-sk-h"><b>${K}</b> ${esc(sp.icon || '')} <b>${esc(sp.name)}</b> <i>${cdSec}s CD${hasCh ? ` · ${chg}/${sp.maxCharges} charges` : ''}</i> ${cdBadge}</div><div>${esc(tText(`spell.${id}`, sp.desc || ''))}</div></div>`;
       }).join('');
 
       pBody.innerHTML = `<div class="bsx-blurb">${esc(def.role)} · ${esc(def.blurb || '')}</div>`
@@ -323,7 +359,9 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
     meRef = me || null; nowMs = ctx.now || Date.now(); srvNowMs = ctx.srvNow || nowMs; canShopNow = !!ctx.canShop;
     if (touchTick) touchTick(nowMs);
     if (sbx && sim) {
-      setText(sbxBtns.cd, `0s CD: ${sim.noCd ? 'ON' : 'OFF'}`); setText(sbxBtns.mana, `NO MANA: ${sim.noMana ? 'ON' : 'OFF'}`); setText(sbxBtns.god, `NO DMG: ${sim.godMode ? 'ON' : 'OFF'}`);
+      setText(sbxBtns.cd, `${t('prac.noCd')}: ${sim.noCd ? 'ON' : 'OFF'}`);
+      setText(sbxBtns.mana, `${t('prac.noMana')}: ${sim.noMana ? 'ON' : 'OFF'}`);
+      setText(sbxBtns.god, `${t('prac.noDmg')}: ${sim.godMode ? 'ON' : 'OFF'}`);
     }
     if (me && touchBtns.q) {
       const sr = srvNowMs;

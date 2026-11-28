@@ -11,6 +11,7 @@ import { makeLights } from './lights.js';
 import { makeCamps } from './camps.js';
 import { makeRelics } from './relics.js';
 import { makeEpics } from './epics.js';
+import { makeOutskirts } from './outskirts.js';
 
 export function createWorld({ scene, source, renderer, quality, mode } = {}) {
   const world = source.world || { id: '5v5', w: 6000, h: 6000, walls: [], bushes: [], fountain: {} };
@@ -19,17 +20,18 @@ export function createWorld({ scene, source, renderer, quality, mode } = {}) {
   const aniso = lite ? 1 : Math.min(8, (renderer && renderer.capabilities && renderer.capabilities.getMaxAnisotropy()) || 1);
   const root = new THREE.Group(); root.name = 'world'; scene.add(root);
   const ground = makeGround(world, aniso, lite);
+  const outskirts = makeOutskirts(world, lite);
   const pads = makePads(world);
   const walls = makeWalls(world, aniso, lite);
   const bushes = makeBushes(world, lite);
-  root.add(ground, pads, walls.group); if (bushes) root.add(bushes);
+  root.add(ground, outskirts, pads, walls.group); if (bushes) root.add(bushes);
   const codeWalls = makeCodeWalls(world); if (codeWalls) root.add(codeWalls); // theme: code-snippet panels on walls (1 draw call)
   const props = makeProps(world, lite); if (props) root.add(props);          // theme: monitors/mugs/racks/ducks/bugs (1 draw call)
   const camps = makeCamps(world), epics = makeEpics(world), relics = source.world && source.world.id === '5v5' || !source.world ? makeRelics() : null; // C10: 5v5 map extras
   for (const x of [camps, epics, relics]) if (x) root.add(x.group);
   const lights = makeLights(scene);
   lights.follow(W / 2, H / 2);
-  const setQuality = (s) => { lights.setQuality(s); if (props) props.userData.setLite(!!s.lite); if (ground.userData.uniforms.uLow) ground.userData.uniforms.uLow.value = s.lite ? 1 : 0; ground.receiveShadow = s.shadow !== 'off'; };
+  const setQuality = (s) => { lights.setQuality(s); if (props) props.userData.setLite(!!s.lite); outskirts.userData.setLite(!!s.lite); if (ground.userData.uniforms.uLow) ground.userData.uniforms.uLow.value = s.lite ? 1 : 0; ground.receiveShadow = s.shadow !== 'off'; };
   if (quality) setQuality(quality);
   let lastT = 0;
   return {
@@ -37,6 +39,7 @@ export function createWorld({ scene, source, renderer, quality, mode } = {}) {
     update(ctx = {}) {
       const t = ctx.t || 0, dt = ctx.dtSec != null ? ctx.dtSec : Math.max(0, t - lastT); lastT = t;
       ground.userData.uniforms.uTime.value = t;
+      if (ground.userData.water) ground.userData.water.material.uniforms.uTime.value = t;
       if (bushes) bushes.userData.uni.uTime.value = t;
       walls.update(dt, t);
       if (bushes) bushes.userData.fx.update(ctx, dt);

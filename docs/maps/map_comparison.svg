@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760" font-family="Segoe UI, Consolas, sans-serif">
+  <rect width="1280" height="760" fill="#070d10"/>
+  <text x="640" y="34" fill="#f0d58a" font-size="20" font-weight="700" text-anchor="middle" letter-spacing="2">SUMMONER'S RIFT vs BUG SMASH 5v5 — 2D VECTOR &amp; CROSS-SECTION BLUEPRINT</text>
+  <text x="640" y="54" fill="#95aaa5" font-size="12" text-anchor="middle">Author: Duke Nguyen · Scale: 6000x6000 sim px (60x60 Three.js units) · L0..L4 elevation strata</text>
+
+  <!-- LEFT PLAN: LOL SUMMONER'S RIFT VECTOR REFERENCE -->
+  <g transform="translate(80,76)">
+    <rect x="0" y="0" width="460" height="460" rx="18" fill="#0e1c16" stroke="#c89b3c" stroke-width="2.5"/>
+    <text x="230" y="-10" fill="#7ec8ff" font-size="13" font-weight="700" text-anchor="middle">LOL SUMMONER'S RIFT (VECTOR REFERENCE)</text>
+    <!-- Corner Alcoves -->
+    <circle cx="28" cy="28" r="26" fill="#182a24" stroke="#6b5935" stroke-width="2"/>
+    <circle cx="432" cy="432" r="26" fill="#182a24" stroke="#6b5935" stroke-width="2"/>
+    <!-- River -->
+    <path d="M44,44 C110,120 140,150 230,230 C320,310 350,340 416,416" fill="none" stroke="#16607e" stroke-width="34" stroke-linecap="round" opacity="0.88"/>
+    <!-- Lanes -->
+    <path d="M62,360 L48,300 L48,72 Q48,48 72,48 L300,48 L360,62" fill="none" stroke="#8f8c66" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M96,364 L364,96" fill="none" stroke="#8f8c66" stroke-width="24" stroke-linecap="round"/>
+    <path d="M100,398 L160,412 L388,412 Q412,412 412,388 L412,160 L398,100" fill="none" stroke="#8f8c66" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Epic Pit Horseshoes -->
+    <path d="M132,146 A24,24 0 1,1 168,182" fill="none" stroke="#365947" stroke-width="10" stroke-linecap="round"/>
+    <path d="M292,278 A24,24 0 1,0 328,314" fill="none" stroke="#365947" stroke-width="10" stroke-linecap="round"/>
+    <!-- Organic Jungle Cliffs -->
+    <path d="M84,116 Q112,92 146,120 Q120,162 84,158 Z" fill="#1d3528" stroke="#5c7e62" stroke-width="2"/>
+    <path d="M84,210 Q142,196 172,248 Q128,284 86,266 Z" fill="#1d3528" stroke="#5c7e62" stroke-width="2"/>
+    <path d="M196,86 Q254,84 268,124 Q226,154 190,126 Z" fill="#1d3528" stroke="#5c7e62" stroke-width="2"/>
+    <path d="M198,328 Q248,310 278,346 Q254,386 196,374 Z" fill="#1d3528" stroke="#5c7e62" stroke-width="2"/>
+    <path d="M296,192 Q344,174 374,214 Q356,264 310,248 Z" fill="#1d3528" stroke="#5c7e62" stroke-width="2"/>
+    <path d="M320,302 Q364,292 378,334 Q346,368 312,340 Z" fill="#1d3528" stroke="#5c7e62" stroke-width="2"/>
+    <!-- 3-Gate Bases -->
+    <path d="M10,336 A126,126 0 0,1 124,450 L10,450 Z" fill="#23485c" opacity="0.72" stroke="#39a8ff" stroke-width="2"/>
+    <path d="M336,10 A126,126 0 0,0 450,124 L450,10 Z" fill="#5c2832" opacity="0.72" stroke="#ff4d5e" stroke-width="2"/>
+    <circle cx="32" cy="428" r="14" fill="#39a8ff" opacity="0.85"/>
+    <circle cx="428" cy="32" r="14" fill="#ff4d5e" opacity="0.85"/>
+  </g>
+
+  <!-- RIGHT PLAN: BUG SMASH 5v5 REBUILT VECTOR BLUEPRINT -->
+  <g transform="translate(740,76)">
+    <rect x="0" y="0" width="460" height="460" rx="18" fill="#0d1b15" stroke="#c89b3c" stroke-width="2.5"/>
+    <text x="230" y="-10" fill="#7ed957" font-size="13" font-weight="700" text-anchor="middle">BUG SMASH 5v5 REBUILT (MATCHED VECTOR)</text>
+    <!-- Corner Alcoves -->
+    <circle cx="24" cy="24" r="24" fill="#162925" stroke="#c89b3c" stroke-width="1.8"/>
+    <circle cx="436" cy="436" r="24" fill="#162925" stroke="#c89b3c" stroke-width="1.8"/>
+    <!-- River (Sunken Basin + Translucent Water) -->
+    <line x1="54" y1="54" x2="406" y2="406" stroke="#135d7a" stroke-width="32" stroke-linecap="round"/>
+    <line x1="54" y1="54" x2="406" y2="406" stroke="#39c2ff" stroke-width="8" stroke-dasharray="10 12" opacity="0.45"/>
+    <!-- Lanes -->
+    <polyline points="65,356 50,307 50,77 77,50 307,50 356,65" fill="none" stroke="#475447" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="92" y1="368" x2="368" y2="92" stroke="#475447" stroke-width="25" stroke-linecap="round"/>
+    <polyline points="104,395 153,410 383,410 410,383 410,153 395,104" fill="none" stroke="#475447" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Epic Pit Flanking Horseshoes -->
+    <circle cx="157" cy="157" r="18" fill="none" stroke="#ff5ad8" stroke-width="2" stroke-dasharray="5 3"/>
+    <path d="M133,166 Q128,150 142,138" fill="none" stroke="#6c7b72" stroke-width="7" stroke-linecap="round"/>
+    <path d="M166,133 Q182,128 190,142" fill="none" stroke="#6c7b72" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="303" cy="303" r="18" fill="none" stroke="#ff5ad8" stroke-width="2" stroke-dasharray="5 3"/>
+    <path d="M272,294 Q282,274 298,278" fill="none" stroke="#6c7b72" stroke-width="7" stroke-linecap="round"/>
+    <path d="M322,298 Q332,314 316,328" fill="none" stroke="#6c7b72" stroke-width="7" stroke-linecap="round"/>
+    <!-- Organic Sculpted Jungle Walls (mirrored 4 quadrants) -->
+    <g stroke="#527e62" stroke-width="6" stroke-linecap="round" fill="none">
+      <line x1="70" y1="124" x2="70" y2="176"/><line x1="70" y1="199" x2="70" y2="253"/><line x1="70" y1="276" x2="70" y2="303"/>
+      <line x1="112" y1="81" x2="138" y2="107"/><line x1="157" y1="126" x2="184" y2="153"/><line x1="203" y1="172" x2="233" y2="202"/>
+      <line x1="187" y1="244" x2="162" y2="269"/><line x1="150" y1="281" x2="112" y2="319"/>
+      <line x1="88" y1="230" x2="123" y2="230"/><line x1="142" y1="196" x2="142" y2="226"/>
+      <!-- Bot reflection -->
+      <line x1="157" y1="390" x2="184" y2="390"/><line x1="207" y1="390" x2="261" y2="390"/><line x1="284" y1="390" x2="336" y2="390"/>
+      <line x1="258" y1="227" x2="288" y2="257"/><line x1="307" y1="276" x2="334" y2="303"/><line x1="353" y1="322" x2="379" y2="348"/>
+      <line x1="216" y1="273" x2="191" y2="298"/><line x1="179" y1="310" x2="141" y2="348"/>
+      <line x1="230" y1="337" x2="230" y2="372"/><line x1="234" y1="318" x2="264" y2="318"/>
+      <!-- Red mirror -->
+      <line x1="124" y1="70" x2="176" y2="70"/><line x1="199" y1="70" x2="253" y2="70"/><line x1="276" y1="70" x2="303" y2="70"/>
+      <line x1="390" y1="157" x2="390" y2="184"/><line x1="390" y1="207" x2="390" y2="261"/><line x1="390" y1="284" x2="390" y2="336"/>
+    </g>
+    <!-- 3-Gate Base Ramparts + Fountain Amphitheater -->
+    <path d="M12,334 A126,126 0 0,1 126,448 L12,448 Z" fill="#174d65" opacity="0.6" stroke="#39a8ff" stroke-width="2"/>
+    <path d="M10,334 Q18,334 32,338" stroke="#c89b3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <path d="M122,428 Q126,442 126,450" stroke="#c89b3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <path d="M334,12 A126,126 0 0,0 448,126 L448,12 Z" fill="#6b2830" opacity="0.6" stroke="#ff4d5e" stroke-width="2"/>
+    <circle cx="29" cy="431" r="13" fill="#39a8ff" opacity="0.9"/>
+    <circle cx="431" cy="29" r="13" fill="#ff4d5e" opacity="0.9"/>
+  </g>
+
+  <!-- CROSS-SECTION SLICE COMPARISON (BOTTOM PANEL) -->
+  <g transform="translate(80,575)">
+    <rect x="0" y="0" width="1120" height="156" rx="8" fill="#091518" stroke="#80672f" stroke-width="1.5"/>
+    <text x="16" y="22" fill="#f0d58a" font-size="13" font-weight="700">VERTICAL CROSS-SECTION SLICE: OUTER ABYSS -> PLATEAU PARAPET -> JUNGLE CLIFF -> SUNKEN RIVER BASIN -> FOUNTAIN</text>
+    <!-- Reference baseline y=0 -->
+    <line x1="30" y1="102" x2="1090" y2="102" stroke="#3f5652" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="1095" y="106" fill="#95aaa5" font-size="11">y = 0.0 (walkable)</text>
+    <!-- Abyss + Plateau Slope + Walkable + Sunken River + Cliff -->
+    <polygon points="30,142 140,142 185,102 310,102 335,102 355,102 490,102 520,122 600,122 630,102 760,102 1030,102 1065,142 1090,142 1090,150 30,150" fill="#17231e" stroke="#59645e" stroke-width="2"/>
+    <!-- Translucent river water plane -->
+    <line x1="504" y1="104" x2="616" y2="104" stroke="#39c2ff" stroke-width="3" opacity="0.85"/>
+    <text x="560" y="138" fill="#7ec8ff" font-size="11" text-anchor="middle">L1 River Basin (-0.32) + Water (-0.025)</text>
+    <!-- Perimeter Parapet -->
+    <rect x="180" y="84" width="14" height="18" fill="#69716b" stroke="#c89b3c" stroke-width="1"/>
+    <text x="187" y="76" fill="#eee9da" font-size="10" text-anchor="middle">Parapet (+0.44)</text>
+    <!-- 3-tier Sculpted Jungle Cliff -->
+    <polygon points="348,102 360,88 430,88 442,102" fill="#3b4742"/>
+    <polygon points="362,88 370,56 420,56 428,88" fill="#59645e"/>
+    <polygon points="365,56 425,56 422,46 368,46" fill="#315f3b" stroke="#7ed957" stroke-width="1"/>
+    <polygon points="384,46 392,28 400,46" fill="#244735"/>
+    <text x="395" y="138" fill="#7ed957" font-size="11" text-anchor="middle">L4 Cliff (+1.35 + Pines)</text>
+    <!-- Base Rampart + Fountain Dais -->
+    <polygon points="900,102 914,66 932,66 942,102" fill="#4f5f68" stroke="#39a8ff" stroke-width="1"/>
+    <polygon points="975,102 985,84 1025,84 1030,102" fill="#23485c" stroke="#39a8ff" stroke-width="1"/>
+    <text x="965" y="138" fill="#9fdcff" font-size="11" text-anchor="middle">L3 Base Rampart &amp; Fountain</text>
+    <text x="85" y="134" fill="#95aaa5" font-size="11" text-anchor="middle">L0 Abyss (-2.75)</text>
+  </g>
+</svg>

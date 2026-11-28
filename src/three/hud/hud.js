@@ -14,6 +14,7 @@ import { createExtras } from './extras.js';
 import { createTooltip, skillCardHtml, spellCardHtml, champCardHtml, itemCardHtml, esc } from './tooltip.js';
 import { AudioManager } from '../../core/AudioManager.js';
 import { clearMatch } from '../../core/Identity.js';
+import { t, onLangChange } from '../../core/I18n.js';
 import { createShop } from './shop.js';
 import { createScoreboard } from './scoreboard.js';
 import { createAugments } from './augments.js';
@@ -36,7 +37,12 @@ const setHidden = (e, h) => { if (e.hidden !== h) e.hidden = h; };
 export function createHud({ source, project, mode, opts = {} }) {
   if (!document.getElementById('bsh-css')) { const l = document.createElement('link'); l.id = 'bsh-css'; l.rel = 'stylesheet'; l.href = CSS_URL; document.head.appendChild(l); const l2 = document.createElement('link'); l2.id = 'bsh-css2'; l2.rel = 'stylesheet'; l2.href = CSS2_URL; document.head.appendChild(l2); }
   const old = document.getElementById('bsh-root'); if (old) old.remove();
-  const root = document.createElement('div'); root.id = 'bsh-root'; document.body.appendChild(root);
+  const root = document.createElement('div'); root.id = 'bsh-root';
+  root.addEventListener('contextmenu', (e) => e.preventDefault());
+  root.addEventListener('wheel', (e) => {
+    if (!e.target.closest('.bsx-shop-l, .bsx-shop-r, .bsx-pb, .lob-list')) e.preventDefault();
+  }, { passive: false });
+  document.body.appendChild(root);
   let disposed = false;
 
   // ---- top bar ----
@@ -74,7 +80,11 @@ export function createHud({ source, project, mode, opts = {} }) {
     const s = el(slotsRow, 'div', `bsh-slot${sp ? ' sp' : ''}`);
     const box = el(s, 'div', 'bsh-sbox', '<span class="ic bsh-stroke"></span><div class="dim"></div><div class="nm"></div><div class="lock"></div><div class="cd"></div><div class="hold"></div><span class="key"></span><span class="mana"></span><span class="chg"></span>');
     box.style.pointerEvents = 'auto'; box.style.cursor = 'pointer';
-    box.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); const inp = opts.input; if (!inp) return; if (sp) inp.spell(k, true); else inp.cast(k, true); });
+    box.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.button === 2) return;
+      const inp = opts.input; if (!inp) return; if (sp) inp.spell(k, true); else inp.cast(k, true);
+    });
     if (!sp) {
       const rel = (e) => { const inp = opts.input; if (inp && typeof inp.release === 'function') { e.stopPropagation(); inp.release(k); } };
       box.addEventListener('pointerup', rel);
@@ -163,7 +173,7 @@ export function createHud({ source, project, mode, opts = {} }) {
     lobbyEl.innerHTML = `<div class="lob-box"><div class="lob-t">${title}</div>`
       + (sec > 0 ? `<div class="lob-cd">Starting in ${sec}s</div>` : '')
       + `<div class="lob-list">${listHtml}</div>`
-      + `<div class="lob-acts">${phase === 'lobby' ? '<button class="bsh-btn yes" data-la="start">▶ START NOW</button>' : ''}<button class="bsh-btn no" data-la="leave">🚪 LEAVE</button></div></div>`;
+      + `<div class="lob-acts">${phase === 'lobby' ? `<button class="bsh-btn yes" data-la="start">${esc(t('ui.startNow'))}</button>` : ''}<button class="bsh-btn no" data-la="leave">${esc(t('ui.leave'))}</button></div></div>`;
   }
 
   // ---- First-session coach tips ----
@@ -239,7 +249,7 @@ export function createHud({ source, project, mode, opts = {} }) {
   // gold pop pool (world-anchored at spawn)
   const goldPool = []; let goldI = 0;
   for (let i = 0; i < 8; i++) goldPool.push(el(root, 'div', 'bsh-gold bsh-stroke'));
-  const offs = [];
+  const offs = [onLangChange(() => { lobbySig = ''; tooltip.hide(); })];
   const sub = (type, fn) => { const o = source.on(type, (m) => { if (disposed) return; fn(m); }); if (typeof o === 'function') offs.push(o); };
   sub('gold', (m) => {
     if (!m || !Number.isFinite(m.n) || !Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
@@ -425,7 +435,7 @@ export function createHud({ source, project, mode, opts = {} }) {
   }
 
   return {
-    setScoreboard(on) { sbd.set(on); }, scoreboardOpen: () => sbd.isOpen() || modalOpen(), // scoreboardOpen doubles as the input-block flag (Renderer.input.isBlocked reads it)
+    setScoreboard(on) { sbd.set(on); }, scoreboardOpen: () => modalOpen(), // holding TAB is non-blocking like 2D Scoreboard
     blocked: modalOpen, onPlayAgain: (f) => { hooksOut.onPlayAgain = f; }, onExit: (f) => { hooksOut.onExit = f; },
     toggleShop: extras.toggleShop, openShop: shop.open, toggleInfo: extras.toggleInfo, togglePause: extras.togglePause,
     pauseOpen: extras.pauseOpen, isPauseOpen: extras.pauseOpen,

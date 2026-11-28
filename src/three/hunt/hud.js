@@ -27,7 +27,7 @@ const CSS = `
 .hx-toast{position:absolute;top:150px;left:50%;transform:translateX(-50%);font-size:18px;color:#ffd23f;opacity:0;transition:opacity .25s;white-space:nowrap}
 .hx-fl{position:absolute;left:0;top:0;white-space:nowrap;font-weight:900;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000;will-change:transform}
 .hx-flash{position:absolute;inset:0;opacity:0}
-.hx-modal{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;pointer-events:auto;padding:16px;overflow:auto}
+.hx-modal{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;pointer-events:auto;padding:16px;overflow:hidden;overscroll-behavior:none}
 .hx-modal h1{font-size:clamp(36px,8vw,64px);margin:0;line-height:1}
 .hx-stars{font-size:44px;letter-spacing:6px;color:#3a4050}.hx-stars b{color:#ffd23f;font-weight:900}
 .hx-btns{display:flex;gap:14px;margin-top:14px;flex-wrap:wrap;justify-content:center}

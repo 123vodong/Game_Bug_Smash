@@ -614,12 +614,13 @@ export default class TeamModeScene extends Phaser.Scene {
 
   _buildPracticeBar() {
     if (!this._sim || this._pracBar) return;
-    const right = (this.scale?.width || 1280) - 10, gap = 6;
+    // Top-left stacked rows (synchronized with 3D Practice bar so top-right kill feed stays clear)
+    const left = 12, gap = 6;
     const mkRow = (y, specs) => {
-      let rx = right;
+      let lx = left;
       return specs.map(([key, w, label, color, fn]) => {
-        const cx = rx - w / 2;
-        rx -= w + gap;
+        const cx = lx + w / 2;
+        lx += w + gap;
         return [key, this.hud._button(cx, y, w, 24, label, color, fn, 52, 10)];
       });
     };

@@ -784,6 +784,30 @@ export default class MenuScene extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0, 0.5).setDepth(46).setAlpha(0.85).setInteractive({ useHandCursor: true });
     this._careerText.on('pointerup', () => this._openCareer());
+
+    // Top-right renderer switch: classic 2D -> 3D (beta)
+    const rBox = this.add.rectangle(W - 78, 28, 128, 34, 0x081020, 0.88)
+      .setStrokeStyle(2, 0x00d9ff, 0.72)
+      .setDepth(46)
+      .setInteractive({ useHandCursor: true });
+    const rTxt = this.add.text(W - 78, 28, '🧊 3D (beta)', {
+      fontFamily: 'Arial Black, sans-serif', fontSize: 12, color: '#7ec8ff',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(47);
+    rBox.on('pointerover', () => { rBox.setFillStyle(0x12223a, 0.95); rBox.setStrokeStyle(2, 0x00d9ff, 1); rTxt.setColor('#ffffff'); });
+    rBox.on('pointerout', () => { rBox.setFillStyle(0x081020, 0.88); rBox.setStrokeStyle(2, 0x00d9ff, 0.72); rTxt.setColor('#7ec8ff'); });
+    rBox.on('pointerup', () => {
+      if (this._modalOpen() || this._starting) return;
+      AudioManager.uiClick?.();
+      try { localStorage.setItem('bs.renderer', '3d'); } catch (_) { /* private mode */ }
+      const cur = new URLSearchParams(location.search);
+      const next = new URLSearchParams();
+      next.set('scene', 'menu');
+      const srv = cur.get('server');
+      if (srv) next.set('server', srv);
+      next.set('renderer', '3d');
+      location.href = `${location.pathname}?${next.toString()}`;
+    });
   }
 
   /** One short line — it shares the bottom-left with the SETTINGS button's glow (x ≥ 390). */

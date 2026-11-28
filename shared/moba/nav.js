@@ -29,14 +29,53 @@ function rectDist(px, py, w) {
   const dy = Math.max(w.y - py, 0, py - (w.y + w.h));
   return Math.hypot(dx, dy);
 }
-/** Distance from a point to a wall's surface (≤ 0 inside a circle / seg; 0 inside a rect). */
+/** Ray-casting even-odd point-in-polygon test for [[x, y], ...]. */
+export function pointInPoly(px, py, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+    if (((yi > py) !== (yj > py)) && (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function polyEdgeDist(px, py, pts) {
+  if (!pts || pts.length < 3) return { d: 1e9, cx: px, cy: py, nx: 0, ny: 1 };
+  let bestD = Infinity, cx = pts[0][0], cy = pts[0][1], nx = 0, ny = 1;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const ax = pts[j][0], ay = pts[j][1], bx = pts[i][0], by = pts[i][1];
+    const vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / len2)) : 0;
+    const qx = ax + vx * t, qy = ay + vy * t;
+    const d = Math.hypot(px - qx, py - qy);
+    if (d < bestD) {
+      bestD = d; cx = qx; cy = qy;
+      const len = Math.sqrt(len2) || 1;
+      nx = -vy / len; ny = vx / len;
+    }
+  }
+  return { d: bestD, cx, cy, nx, ny };
+}
+function polyDist(px, py, pts) {
+  const { d } = polyEdgeDist(px, py, pts);
+  return pointInPoly(px, py, pts) ? -d : d;
+}
+/** Distance from a point to a wall's surface (≤ 0 inside a circle / seg / poly; 0 inside a rect). */
 export function wallDist(px, py, w) {
+  if (w.kind === 'poly') return polyDist(px, py, w.pts);
   if (w.kind === 'circle') return Math.hypot(px - w.x, py - w.y) - w.r;
   if (w.kind === 'seg') return distToSeg(px, py, w.x1, w.y1, w.x2, w.y2) - w.w / 2;
   return rectDist(px, py, w);
 }
 /** Axis-aligned bounds of a wall: [x0, y0, x1, y1]. */
 export function wallBounds(w) {
+  if (w.kind === 'poly') {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of w.pts) {
+      if (p[0] < x0) x0 = p[0]; if (p[1] < y0) y0 = p[1];
+      if (p[0] > x1) x1 = p[0]; if (p[1] > y1) y1 = p[1];
+    }
+    return [x0, y0, x1, y1];
+  }
   if (w.kind === 'circle') return [w.x - w.r, w.y - w.r, w.x + w.r, w.y + w.r];
   if (w.kind === 'seg') {
     const h = w.w / 2;
@@ -73,6 +112,18 @@ function segHitsRect(x0, y0, x1, y1, w) {
 }
 /** Exact distance between a segment and a wall (0 if they touch/overlap; < 0 never for rects). */
 function segWallDist(x0, y0, x1, y1, w) {
+  if (w.kind === 'poly') {
+    const pts = w.pts;
+    if (!pts || pts.length < 3) return Infinity;
+    if (pointInPoly(x0, y0, pts) || pointInPoly(x1, y1, pts)) return 0;
+    let best = Infinity;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const d = segSegDist(x0, y0, x1, y1, pts[j][0], pts[j][1], pts[i][0], pts[i][1]);
+      if (d === 0) return 0;
+      if (d < best) best = d;
+    }
+    return best;
+  }
   if (w.kind === 'circle') return distToSeg(w.x, w.y, x0, y0, x1, y1) - w.r;
   if (w.kind === 'seg') return segSegDist(x0, y0, x1, y1, w.x1, w.y1, w.x2, w.y2) - w.w / 2;
   if (segHitsRect(x0, y0, x1, y1, w)) return 0;
@@ -139,6 +190,28 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
           if (d > 0.01) { x = cx + (dx / d) * (need + EPS); y = cy + (dy / d) * (need + EPS); }
           else { const l = Math.sqrt(l2); x = cx - (vy / l) * (need + EPS); y = cy + (vx / l) * (need + EPS); }
           moved = true;
+        } else if (w.kind === 'poly') {
+          const { d, cx, cy, nx, ny } = polyEdgeDist(x, y, w.pts);
+          const inside = pointInPoly(x, y, w.pts);
+          if (inside) {
+            const dx = cx - x, dy = cy - y, l = Math.hypot(dx, dy);
+            if (l > 0.01) {
+              x = cx + (dx / l) * (r + EPS); y = cy + (dy / l) * (r + EPS);
+            } else {
+              const sign = pointInPoly(cx + nx, cy + ny, w.pts) ? -1 : 1;
+              x = cx + nx * sign * (r + EPS); y = cy + ny * sign * (r + EPS);
+            }
+            moved = true;
+          } else if (d < r) {
+            if (d > 0.01) {
+              const dx = x - cx, dy = y - cy;
+              x = cx + (dx / d) * (r + EPS); y = cy + (dy / d) * (r + EPS);
+            } else {
+              const sign = pointInPoly(cx + nx, cy + ny, w.pts) ? -1 : 1;
+              x = cx + nx * sign * (r + EPS); y = cy + ny * sign * (r + EPS);
+            }
+            moved = true;
+          }
         } else {
           const cx = Math.max(w.x, Math.min(x, w.x + w.w));
           const cy = Math.max(w.y, Math.min(y, w.y + w.h));

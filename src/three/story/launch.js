@@ -45,7 +45,7 @@ function openStoryChampPicker(currentChamp, onPick) {
   wrap.id = 'bs3d-story-pick';
   wrap.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(4,7,14,.84);padding:16px;font:14px Consolas,"Courier New",monospace;color:#eef3ff';
   const box = document.createElement('div');
-  box.style.cssText = 'width:min(760px,96vw);max-height:90vh;overflow:auto;background:#090f1d;border:3px solid #ffd23f;border-radius:10px;padding:18px 16px;text-align:center;box-sizing:border-box';
+  box.style.cssText = 'width:min(760px,96vw);max-height:90vh;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;overscroll-behavior:contain;background:#090f1d;border:3px solid #ffd23f;border-radius:10px;padding:18px 16px;text-align:center;box-sizing:border-box';
   const h = document.createElement('h2');
   h.textContent = '📖 CHOOSE STORY CHAMPION';
   h.style.cssText = 'margin:0 0 4px;font:900 22px Arial,sans-serif;color:#ffd23f';

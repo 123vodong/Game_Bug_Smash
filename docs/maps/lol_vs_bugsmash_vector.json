@@ -1,0 +1,95 @@
+{
+  "author": "Duke Nguyen <duc.nguyen@onethesis.com>",
+  "coordinateSpace": {
+    "simPx": [6000, 6000],
+    "sceneUnits": [60, 60],
+    "scale": 0.01,
+    "blueOrigin": [0, 6000],
+    "redOrigin": [6000, 0]
+  },
+  "layers": [
+    { "id": "L0_abyss", "yRange": [-2.8, -0.4], "role": "Outer plateau retaining drop and misty valley shelf" },
+    { "id": "L1_river_basin", "yRange": [-0.32, -0.02], "role": "Sunken riverbed basin beneath translucent flowing water" },
+    { "id": "L2_walkable_plateau", "yRange": [0.0, 0.0], "role": "Walkable lanes, bases, jungle corridors, mid river bridge" },
+    { "id": "L3_ramparts_and_pits", "yRange": [0.0, 0.85], "role": "3-gate base ramparts, fountain amphitheater, epic pit horseshoes, perimeter parapet" },
+    { "id": "L4_organic_cliffs", "yRange": [0.10, 1.05], "role": "Grounded LoL-proportioned rock cliffs + moss cap + compact pines/server props (lower than Champions & Towers)" }
+  ],
+  "lolReference": {
+    "source": "Summoner's Rift 3D overview and minimap vector abstraction",
+    "perimeter": {
+      "retainingCliff": true,
+      "archedParapet": true,
+      "cornerAlcoves": [
+        { "id": "top_left_alcove", "center": [350, 350], "radius": 380 },
+        { "id": "bot_right_alcove", "center": [5650, 5650], "radius": 380 }
+      ]
+    },
+    "bases": {
+      "blue": { "fountain": [380, 5620], "plazaRadius": 1450, "gates": ["top", "mid", "bot"] },
+      "red": { "fountain": [5620, 380], "plazaRadius": 1450, "gates": ["top", "mid", "bot"] }
+    },
+    "river": {
+      "from": [700, 700],
+      "to": [5300, 5300],
+      "sunkenBasinDepth": -0.32,
+      "translucentWater": true,
+      "midCrossingRaised": true
+    },
+    "epicPits": [
+      { "id": "baron_style_nw", "center": [2050, 2050], "shape": "horseshoe_flanks", "openTowardRiver": true },
+      { "id": "dragon_style_se", "center": [3950, 3950], "shape": "horseshoe_flanks", "openTowardRiver": true }
+    ],
+    "jungleCliffs": {
+      "organicSegmentedProfile": true,
+      "tieredRockAndMossCap": true,
+      "cliffTopFoliage": true
+    }
+  },
+  "bugSmash3dTarget": {
+    "collisionSource": "shared/moba/map.js",
+    "perimeter": {
+      "retainingCliffDepth": -2.75,
+      "parapetHeight": 0.44,
+      "cornerAlcoves": [
+        { "id": "nw_alcove", "center": [260, 260], "radius": 320 },
+        { "id": "se_alcove", "center": [5740, 5740], "radius": 320 }
+      ]
+    },
+    "bases": {
+      "blue": {
+        "fountain": [380, 5620],
+        "rampartRadius": 1650,
+        "wingAnglesDeg": [[-88, -78], [-12, -2]],
+        "pylonRadius": 1980,
+        "gatePylonAnglesDeg": [-51.4, -38.6],
+        "gates": ["top", "mid", "bot"]
+      },
+      "red": {
+        "fountain": [5620, 380],
+        "rampartRadius": 1650,
+        "wingAnglesDeg": [[92, 102], [168, 178]],
+        "pylonRadius": 1980,
+        "gatePylonAnglesDeg": [128.6, 141.4],
+        "gates": ["top", "mid", "bot"]
+      }
+    },
+    "river": {
+      "from": [700, 700],
+      "to": [5300, 5300],
+      "width": 420,
+      "sunkenBasinDepth": -0.32,
+      "waterY": -0.025,
+      "midCrossingRaised": true
+    },
+    "epicPits": [
+      { "id": "deadline", "center": [2050, 2050], "flankOffset": 295, "rimRadius": 235 },
+      { "id": "golden", "center": [3950, 3950], "flankOffset": 295, "rimRadius": 235 }
+    ],
+    "jungleCliffs": {
+      "sourceWallCount": 50,
+      "geometryKind": "organic_poly_rot180",
+      "organicSubdivisionsPerUnit": 0.95,
+      "layers": ["talus_footing", "extruded_undulating_rock", "moss_turf_cap", "pines_and_server_props"]
+    }
+  }
+}

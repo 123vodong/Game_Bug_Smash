@@ -8,11 +8,13 @@
   <style>
     html, body {
       margin: 0; padding: 0; background: #1a1a1a;
-      overflow: hidden; height: 100%; width: 100%;
+      overflow: hidden; overscroll-behavior: none; scrollbar-width: none;
+      height: 100%; width: 100%;
       touch-action: none;
       -webkit-user-select: none; user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
+    html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
     #game {
       display: flex; justify-content: center; align-items: center;
       height: 100vh; width: 100vw; box-sizing: border-box;
@@ -76,6 +78,26 @@
         } catch (e) { /* unsupported — the rotate overlay still prompts a manual rotate */ }
       };
       window.addEventListener('touchend', enterFullscreenAndLock, { capture: true, passive: true });
+    })();
+
+    // Prevent browser page-scroll, middle-click autoscroll, and scroll-key jumping in full-screen game mode.
+    (function () {
+      const SCROLL_ALLOW = '.bsx-shop-l, .bsx-shop-r, .bsx-pb, .bsm-mb, .lob-list, #bs3d-select, #bs3d-custom, #bs3d-story-pick';
+      const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown']);
+      window.addEventListener('mousedown', (e) => {
+        if (e.button === 1) e.preventDefault();
+      }, { capture: true });
+      window.addEventListener('wheel', (e) => {
+        const t = e.target;
+        if (t && t.tagName === 'CANVAS') return;
+        if (t && t.closest && t.closest(SCROLL_ALLOW)) return;
+        e.preventDefault();
+      }, { capture: true, passive: false });
+      window.addEventListener('keydown', (e) => {
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (SCROLL_KEYS.has(e.code)) e.preventDefault();
+      }, { capture: true });
     })();
   </script>
 

@@ -28,7 +28,7 @@
 // the footprint's south edge, semi-transparent so units inside read as "in the bush".
 // The bush you stand in thins out (setBushFocus) so you can still see yourself.
 import {
-  MAP_W, MAP_H, LANES, LANE_WIDTH, RIVER, FOUNTAIN, BASE_RADIUS, STRUCTURES, CAMPS,
+  MAP_W, MAP_H, LANES, LANE_WIDTH, RIVER, RIVER_PATH, FOUNTAIN, BASE_RADIUS, STRUCTURES, CAMPS,
   EPIC_SPOTS, WALLS, BUSHES, distToSeg, mirror,
 } from '../../../shared/moba/map.js';
 import { wallDist } from '../../../shared/moba/nav.js';
@@ -37,7 +37,7 @@ import { D, FONT, MONO, NEUTRAL, teamColor, teamCss, fmtTime, css, shade, depthA
 
 // Visual height (px the top face is lifted) and extra stuff sticking up above it.
 const WALL_H = {
-  partition: 58, cubicles: 50, glass: 62, shelf: 72,                         // v3 seg walls
+  partition: 40, cubicles: 36, glass: 42, shelf: 44,                         // v5 organic cliffs (lower than champs/towers)
   cubicle: 46, desk: 26, rack: 74, copier: 40, plant: 26, cooler: 30, sofa: 30, // v2 furniture
 };
 const WALL_UP = { plant: 64, cooler: 70 };
@@ -174,30 +174,23 @@ export class MobaMap {
     }
 
     _drawRiver(g) {
-      const { from, to, width } = RIVER, rv = this._river;
-      const band = (w, color, a) => {
-        g.lineStyle(w, color, a); g.lineBetween(from.x, from.y, to.x, to.y);
-        g.fillStyle(color, a); g.fillCircle(from.x, from.y, w / 2); g.fillCircle(to.x, to.y, w / 2);
+      const { from, to, width } = RIVER;
+      const pts = RIVER_PATH && RIVER_PATH.length >= 2 ? RIVER_PATH : [from, to];
+      const trace = (w, color, a) => {
+        g.lineStyle(w, color, a);
+        g.beginPath();
+        pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+        g.strokePath();
+        g.fillStyle(color, a); g.fillCircle(pts[0].x, pts[0].y, w / 2); g.fillCircle(pts[pts.length - 1].x, pts[pts.length - 1].y, w / 2);
       };
-      // 2.5D Recessed River Channel: outer embankment rim + deep inner cliff shadow
-      band(width + 160, RIVER_GLOW, 0.05);
-      band(width + 58, 0x050a14, 0.72);
-      band(width + 24, 0x192b44, 0.9);
-      band(width, RIVER_DEEP, 1);
-      band(width * 0.78, 0x072642, 0.85);
-      band(width * 0.52, RIVER_MID, 0.78);
-      band(width * 0.14, 0x2278b5, 0.65);
-      const hw = width / 2;
-      // Steep north-east inner bank drop shadow (gives recessed depth)
-      g.lineStyle(22, 0x030812, 0.55);
-      g.lineBetween(from.x - rv.nx * (hw - 10), from.y - rv.ny * (hw - 10), to.x - rv.nx * (hw - 10), to.y - rv.ny * (hw - 10));
-      g.lineStyle(5, RIVER_GLOW, 0.65);
-      for (const sg of [-1, 1]) {
-        g.lineBetween(from.x + rv.nx * hw * sg, from.y + rv.ny * hw * sg, to.x + rv.nx * hw * sg, to.y + rv.ny * hw * sg);
-      }
-      const ang = Math.atan2(rv.uy, rv.ux);
-      g.beginPath(); g.arc(from.x, from.y, hw, ang + Math.PI / 2, ang + Math.PI * 1.5); g.strokePath();
-      g.beginPath(); g.arc(to.x, to.y, hw, ang - Math.PI / 2, ang + Math.PI / 2); g.strokePath();
+      // 2.5D Recessed Curved River Channel + epic coves
+      trace(width + 160, RIVER_GLOW, 0.05);
+      trace(width + 58, 0x050a14, 0.72);
+      trace(width + 24, 0x192b44, 0.9);
+      trace(width, RIVER_DEEP, 1);
+      trace(width * 0.78, 0x072642, 0.85);
+      trace(width * 0.52, RIVER_MID, 0.78);
+      trace(width * 0.14, 0x2278b5, 0.65);
     }
 
     _drawBasesAndLanes(g) {
@@ -266,7 +259,12 @@ export class MobaMap {
     _drawWallShadows(g) {
       for (const w of WALLS) {
         const H = WALL_H[w.look] ?? 30;
-        if (w.kind === 'circle') {
+        if (w.kind === 'poly') {
+          g.fillStyle(0x000000, 0.22);
+          g.fillPoints(w.pts.map(([x, y]) => ({ x: x + H * 0.35 + 8, y: y + 12 })), true);
+          g.fillStyle(0x000000, 0.28);
+          g.fillPoints(w.pts.map(([x, y]) => ({ x: x + 4, y: y + 5 })), true);
+        } else if (w.kind === 'circle') {
           g.fillStyle(0x000000, 0.16); g.fillCircle(w.x + H * 0.45 + 6, w.y + 8, w.r + 10);
           g.fillStyle(0x000000, 0.26); g.fillCircle(w.x + 4, w.y + 3, w.r + 2);
         } else if (w.kind === 'seg') {
@@ -569,40 +567,54 @@ export class MobaMap {
     drawMinimap(g, x0, y0, size) {
       const k = size / MAP_W;
       const P = (x, y) => [x0 + x * k, y0 + y * k];
-      g.fillStyle(0x0b0f17, 0.94); g.fillRect(x0, y0, size, size);
-      g.fillStyle(0x000000, 0.35);
-      for (const t of JUNGLES) {
-        const [a, b, c] = t.map(([x, y]) => P(x, y));
-        g.fillTriangle(a[0], a[1], b[0], b[1], c[0], c[1]);
-      }
-      for (const team of ['blue', 'red']) {
-        const core = STRUCTURES.find((st) => st.team === team && st.kind === 'core');
-        const [cx, cy] = P(core.x, core.y);
-        g.fillStyle(teamColor(team), 0.2); g.fillCircle(cx, cy, BASE_RADIUS * k);
+      g.fillStyle(0x6d7a55, 0.96); g.fillRect(x0, y0, size, size);
+      for (const [team, ox, oy] of [['blue', 570, 5430], ['red', 5430, 570]]) {
+        const [cx, cy] = P(ox, oy);
+        g.fillStyle(team === 'blue' ? 0x6e94a2 : 0x85747c, 0.94); g.fillCircle(cx, cy, BASE_RADIUS * k * 1.15);
         const [fx, fy] = P(FOUNTAIN[team].x, FOUNTAIN[team].y);
-        g.fillStyle(teamColor(team), 0.35); g.fillCircle(fx, fy, FOUNTAIN_RADIUS * k);
+        g.fillStyle(teamColor(team), 0.42); g.fillCircle(fx, fy, FOUNTAIN_RADIUS * k);
       }
-      const [rx0, ry0] = P(RIVER.from.x, RIVER.from.y), [rx1, ry1] = P(RIVER.to.x, RIVER.to.y);
-      g.lineStyle(Math.max(4, RIVER.width * k), 0x15598a, 0.95); g.lineBetween(rx0, ry0, rx1, ry1);
-      g.lineStyle(Math.max(4, LANE_WIDTH * k), 0x46557a, 1);
+      g.lineStyle(Math.max(4, LANE_WIDTH * k * 1.15), 0x929b70, 1);
       for (const pts of Object.values(LANES)) {
         g.beginPath();
         pts.forEach((p, i) => { const [x, y] = P(p.x, p.y); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
         g.strokePath();
       }
+      const rPts = RIVER_PATH && RIVER_PATH.length >= 2 ? RIVER_PATH : [RIVER.from, RIVER.to];
+      g.lineStyle(Math.max(4, RIVER.width * k * 1.1), 0x167da8, 0.9);
+      g.beginPath();
+      rPts.forEach((p, i) => { const [x, y] = P(p.x, p.y); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+      g.strokePath();
+      g.lineStyle(Math.max(1.5, RIVER.width * k * 0.36), 0x3fbbe0, 0.72);
+      g.beginPath();
+      rPts.forEach((p, i) => { const [x, y] = P(p.x, p.y); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+      g.strokePath();
+      for (const e of Object.values(EPIC_SPOTS)) {
+        const [ex, ey] = P(e.x, e.y);
+        g.fillStyle(0x1686b4, 0.88); g.fillCircle(ex, ey, 250 * k);
+      }
+      // Mid river ford crossing
+      const [bx0, by0] = P(2650, 3350), [bx1, by1] = P(3350, 2650);
+      g.lineStyle(Math.max(4, LANE_WIDTH * k * 1.02), 0x929b70, 0.86); g.lineBetween(bx0, by0, bx1, by1);
       // v4 bushes — green blobs (drawn under the walls).
       for (const b of BUSHES) {
         if (b.kind === 'circle') {
           const [cx, cy] = P(b.x, b.y);
-          g.fillStyle(BUSH_MAP, 0.95); g.fillCircle(cx, cy, Math.max(2.5, b.r * k));
+          g.fillStyle(BUSH_MAP, 0.92); g.fillCircle(cx, cy, Math.max(2.5, b.r * k));
           continue;
         }
         const [ax, ay] = P(b.x1, b.y1), [bx, by] = P(b.x2, b.y2), lw = Math.max(3, b.w * k);
-        g.lineStyle(lw, BUSH_MAP, 0.95); g.lineBetween(ax, ay, bx, by);
-        g.fillStyle(BUSH_MAP, 0.95); g.fillCircle(ax, ay, lw / 2); g.fillCircle(bx, by, lw / 2);
+        g.lineStyle(lw, BUSH_MAP, 0.92); g.lineBetween(ax, ay, bx, by);
+        g.fillStyle(BUSH_MAP, 0.92); g.fillCircle(ax, ay, lw / 2); g.fillCircle(bx, by, lw / 2);
       }
-      // Walls (solid obstacles) — light so they read against the dark jungle.
+      // Solid cliff islands & curved base ramparts (matching LoL minimap contrast).
       for (const w of WALLS) {
+        if (w.kind === 'poly') {
+          const pts = w.pts.map(([x, y]) => { const [px, py] = P(x, y); return { x: px, y: py }; });
+          g.fillStyle(w.baseWall ? 0x2c3e48 : 0x0a141b, 1); g.fillPoints(pts, true);
+          g.lineStyle(1.4, w.baseWall ? 0x6898b0 : 0x283e46, 0.95); g.strokePoints(pts, true);
+          continue;
+        }
         const col = shade(wallMapColor(w.look), 0.3);
         if (w.kind === 'seg') {
           const [ax, ay] = P(w.x1, w.y1), [bx, by] = P(w.x2, w.y2), lw = Math.max(2, w.w * k);
@@ -662,6 +674,14 @@ const SEG_PIECE_LEN = 240, SEG_PIECE_DY = 70;
 /** Drawing pieces of one wall: [{ name, b:{x0,y0,x1,y1,H}, depthY, clip? }]. */
 function wallPieces(w) {
   const H = WALL_H[w.look] ?? 30, up2 = WALL_UP[w.look] || 0;
+  if (w.kind === 'poly') {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of w.pts) {
+      if (p[0] < x0) x0 = p[0]; if (p[1] < y0) y0 = p[1];
+      if (p[0] > x1) x1 = p[0]; if (p[1] > y1) y1 = p[1];
+    }
+    return [{ name: w.id, depthY: y1, b: { x0: x0 - WALL_PAD, y0: y0 - H - WALL_PAD, x1: x1 + WALL_PAD, y1: y1 + WALL_PAD, H } }];
+  }
   if (w.kind === 'circle') {
     const rx = w.r * 1.18 + WALL_PAD;
     return [{ name: w.id, depthY: w.y + w.r * 0.35, b: { x0: w.x - rx, y0: w.y - w.r - H - up2 - WALL_PAD, x1: w.x + rx, y1: w.y + w.r + WALL_PAD, H } }];
@@ -807,10 +827,47 @@ function label(ctx, text, x, y, maxW) {
   ctx.fillText(text, x, y);
 }
 
+function drawPolyWall(ctx, w, H, st, rand) {
+  const pts = w.pts;
+  if (!pts || pts.length < 3) return;
+  // Side cliff faces from y down to y - H (dark slate rock facets)
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const lit = (b[0] - a[0]) >= 0 ? 0.08 : -0.14;
+    ctx.fillStyle = css(shade(0x36464d, lit));
+    ctx.strokeStyle = '#182226';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
+    ctx.lineTo(b[0], b[1] - H);
+    ctx.lineTo(a[0], a[1] - H);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Top cliff plateau lifted by H (mossy olive rock cap or carved base rampart stone)
+  ctx.fillStyle = w.baseWall ? '#3f5662' : w.look === 'glass' ? '#36585c' : w.look === 'shelf' ? '#524b3d' : '#4a723d';
+  ctx.strokeStyle = w.baseWall ? '#8cb8cc' : w.look === 'glass' ? '#36e0d8' : '#7aa158';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1] - H) : ctx.moveTo(p[0], p[1] - H)));
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Subtle Bug Smash dev rock-chip motif at polygon centroid
+  let cx = 0, cy = 0;
+  for (const p of pts) { cx += p[0]; cy += p[1]; }
+  cx /= pts.length; cy = cy / pts.length - H;
+  ctx.fillStyle = 'rgba(18, 28, 34, 0.42)';
+  ctx.beginPath(); ctx.arc(cx + (rand() - 0.5) * 14, cy + (rand() - 0.5) * 10, 14, 0, Math.PI * 2); ctx.fill();
+}
+
 function drawWall(ctx, w, H) {
   // looks.js WALL_STYLE.label is a display NAME (tooltips) — don't paint it onto the furniture.
   const st = { ...wallStyle(w.look), label: '' };
   const rand = wallRng(w.id);
+  if (w.kind === 'poly') { drawPolyWall(ctx, w, H, st, rand); return; }
   if (w.kind === 'seg') { drawSegWall(ctx, w, H, st, rand); return; }
   const round = w.look === 'plant' || w.look === 'cooler';
   if (w.kind === 'circle' && !round) {

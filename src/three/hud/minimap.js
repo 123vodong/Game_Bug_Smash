@@ -1,6 +1,7 @@
 // Minimap (C6): static layer (walls, bushes, fountains) baked once per world, dynamic dots redrawn ~8 Hz.
 // Click / drag = move order via source.send('order', {type:'move', x, y}) (throttled).
 import { TEAM_INFO } from '../../../shared/moba/rules.js';
+import { LANES, LANE_WIDTH, RIVER, RIVER_PATH, CAMPS, EPIC_SPOTS, BASE_RADIUS } from '../../../shared/moba/map.js';
 
 const hex = (n) => '#' + ((n >>> 0) & 0xffffff).toString(16).padStart(6, '0');
 const teamCol = (t) => (TEAM_INFO[t] ? hex(TEAM_INFO[t].color) : '#e0b84a');
@@ -31,21 +32,92 @@ export function createMinimap({ source, project, parent, hooks = null }) {
   }
   function bake() {
     const g = bg.getContext('2d'); g.clearRect(0, 0, size, size);
-    g.fillStyle = '#16202e'; g.fillRect(0, 0, WW * k, WH * k);
-    const shape = (o, w) => {
+    const is5v5 = !world.id || world.id === '5v5';
+    g.fillStyle = is5v5 ? '#6d7a55' : '#0c1716'; g.fillRect(0, 0, WW * k, WH * k);
+    const shape = (o, w, strokeCol = null) => {
+      if (o.kind === 'poly') {
+        if (!o.pts || o.pts.length < 3) return;
+        g.beginPath();
+        o.pts.forEach((p, i) => (i ? g.lineTo(p[0] * k, p[1] * k) : g.moveTo(p[0] * k, p[1] * k)));
+        g.closePath();
+        g.fill();
+        if (strokeCol) { g.strokeStyle = strokeCol; g.lineWidth = 1.2; g.stroke(); }
+        return;
+      }
       if (o.kind === 'circle') { g.beginPath(); g.arc(o.x * k, o.y * k, Math.max(1, o.r * k), 0, 6.3); g.fill(); return; }
       if (o.kind === 'rect') { g.fillRect(o.x * k, o.y * k, Math.max(1, o.w * k), Math.max(1, o.h * k)); return; }
       g.lineWidth = Math.max(1, (o.w || w) * k); g.lineCap = 'round';
       g.beginPath(); g.moveTo(o.x1 * k, o.y1 * k); g.lineTo(o.x2 * k, o.y2 * k); g.stroke();
     };
-    g.fillStyle = g.strokeStyle = 'rgba(70,140,70,.55)';
+    if (is5v5) {
+      g.lineCap = 'round'; g.lineJoin = 'round';
+      // Team base courtyards in muted Summoner's Rift slate/terracotta (centered toward corner gates)
+      const f = world.fountain || {};
+      for (const [t, ox, oy] of [['blue', 570, 5430], ['red', 5430, 570]]) {
+        g.fillStyle = t === 'blue' ? '#6e94a2' : '#85747c';
+        g.beginPath(); g.arc(ox * k, oy * k, BASE_RADIUS * k * 1.15, 0, 6.3); g.fill();
+        g.strokeStyle = t === 'blue' ? 'rgba(92, 180, 224, 0.55)' : 'rgba(224, 108, 108, 0.55)';
+        g.lineWidth = 1.4; g.stroke();
+      }
+      // Three lanes in warm sunlit sage-olive
+      for (const pts of Object.values(LANES)) {
+        g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p.x * k, p.y * k) : g.moveTo(p.x * k, p.y * k)));
+        g.strokeStyle = '#929b70';
+        g.lineWidth = Math.max(4, LANE_WIDTH * k * 1.15);
+        g.stroke();
+      }
+      // Continuous curved river with smooth gradient feathering into NW/SE lane corners & Mid ford
+      const rPts = RIVER_PATH && RIVER_PATH.length >= 2 ? RIVER_PATH : [RIVER.from, RIVER.to];
+      const rGrad = g.createLinearGradient(rPts[0].x * k, rPts[0].y * k, rPts[rPts.length - 1].x * k, rPts[rPts.length - 1].y * k);
+      rGrad.addColorStop(0.0, 'rgba(22, 125, 168, 0)');
+      rGrad.addColorStop(0.14, 'rgba(22, 125, 168, 0.96)');
+      rGrad.addColorStop(0.45, 'rgba(22, 125, 168, 0.92)');
+      rGrad.addColorStop(0.50, 'rgba(22, 125, 168, 0.25)');
+      rGrad.addColorStop(0.55, 'rgba(22, 125, 168, 0.92)');
+      rGrad.addColorStop(0.86, 'rgba(22, 125, 168, 0.96)');
+      rGrad.addColorStop(1.0, 'rgba(22, 125, 168, 0)');
+      g.strokeStyle = rGrad;
+      g.lineWidth = Math.max(5, RIVER.width * k * 1.12);
+      g.beginPath();
+      rPts.forEach((p, i) => (i ? g.lineTo(p.x * k, p.y * k) : g.moveTo(p.x * k, p.y * k)));
+      g.stroke();
+      for (const e of Object.values(EPIC_SPOTS)) {
+        g.fillStyle = 'rgba(22, 134, 180, 0.9)';
+        g.beginPath(); g.arc(e.x * k, e.y * k, 250 * k, 0, 6.3); g.fill();
+      }
+      // Soft feathered Mid ford crossing
+      const mGrad = g.createLinearGradient(2550 * k, 3450 * k, 3450 * k, 2550 * k);
+      mGrad.addColorStop(0.0, 'rgba(146, 155, 112, 0.0)');
+      mGrad.addColorStop(0.25, 'rgba(146, 155, 112, 0.85)');
+      mGrad.addColorStop(0.75, 'rgba(146, 155, 112, 0.85)');
+      mGrad.addColorStop(1.0, 'rgba(146, 155, 112, 0.0)');
+      g.strokeStyle = mGrad;
+      g.lineWidth = Math.max(4, LANE_WIDTH * k * 1.05);
+      g.beginPath(); g.moveTo(2550 * k, 3450 * k); g.lineTo(3450 * k, 2550 * k); g.stroke();
+      // Jungle camp markers and epic pit rings
+      g.fillStyle = 'rgba(232, 188, 84, 0.72)';
+      for (const c of CAMPS) {
+        g.beginPath(); g.arc(c.x * k, c.y * k, c.type === 'big' ? 3.2 : 2.1, 0, 6.3); g.fill();
+      }
+      for (const e of Object.values(EPIC_SPOTS)) {
+        g.strokeStyle = 'rgba(242, 118, 198, 0.78)';
+        g.lineWidth = 1.5;
+        g.beginPath(); g.arc(e.x * k, e.y * k, Math.max(4, 155 * k), 0, 6.3); g.stroke();
+      }
+    }
+    g.fillStyle = g.strokeStyle = 'rgba(42, 128, 64, 0.78)';
     for (const b of world.bushes || []) shape(b, 140);
-    g.fillStyle = g.strokeStyle = '#5b6a85';
-    for (const w of world.walls || []) shape(w, 60);
+    // Solid cliff islands in deep ink-navy + curved base ramparts in stone slate
+    for (const w of world.walls || []) {
+      const bw = !!w.baseWall;
+      g.fillStyle = is5v5 ? (bw ? '#2c3e48' : '#0a141b') : '#596660';
+      g.strokeStyle = g.fillStyle;
+      shape(w, 60, is5v5 ? (bw ? '#6898b0' : '#283e46') : null);
+    }
     const f = world.fountain || {};
     for (const t of ['blue', 'red']) {
       const p = f[t]; if (!p || p.x < 0) continue;
-      g.fillStyle = teamCol(t); g.globalAlpha = 0.35; g.beginPath(); g.arc(p.x * k, p.y * k, 14, 0, 6.3); g.fill(); g.globalAlpha = 1;
+      g.fillStyle = teamCol(t); g.globalAlpha = 0.45; g.beginPath(); g.arc(p.x * k, p.y * k, 12, 0, 6.3); g.fill(); g.globalAlpha = 1;
     }
   }
 

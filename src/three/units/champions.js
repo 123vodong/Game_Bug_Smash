@@ -49,6 +49,18 @@ const SIZE_K = { stack: [1.08, 1.12], guard: [1.12, 1.15], ops: [1.18, 1.15], em
 const ITEM_NAMES = new Set(['1H_Sword_Offhand', 'Badge_Shield', 'Rectangle_Shield', 'Round_Shield', 'Spike_Shield', '1H_Sword', '2H_Sword', 'Spellbook', 'Spellbook_open', '1H_Wand', '2H_Staff',
   'Knife_Offhand', '1H_Crossbow', '2H_Crossbow', 'Knife', 'Throwable', '1H_Axe_Offhand', 'Barbarian_Round_Shield', '1H_Axe', '2H_Axe', 'Mug']);
 const SLOT_ANIM = { melee: { q: '2H_Melee_Attack_Slice', w: 'Block_Attack', e: 'Dodge_Forward', r: '2H_Melee_Attack_Spin' }, ranged: { q: 'Spellcast_Shoot', w: 'Spellcast_Raise', e: 'Dodge_Forward', r: 'Spellcast_Long' } };
+const WEAPON_STYLE = {
+  stack: 'chop', dev: 'chop',
+  zero: 'thrust', courier: 'thrust', tester: 'thrust', lint: 'thrust',
+  guard: 'slam', barista: 'slam',
+  cleaner: 'sweep',
+  pixel: 'channel', model: 'channel', hr: 'channel', appdev: 'channel',
+  ops: 'pulse', embedded: 'pulse', cache: 'pulse', sprint: 'pulse', oncall: 'pulse',
+};
+const PROC_KIND_MAP = {
+  chop: 'swing', thrust: 'thrust', slam: 'slam', sweep: 'swing',
+  channel: 'cast', pulse: 'cast', raise: 'raise', spin: 'spin',
+};
 
 /** -> {base:{Knight,...gltf}, clips} (all four models share the Rig_Medium clip set) */
 export async function loadChampionModels() {
@@ -105,10 +117,12 @@ export class ChampView {
         }
       });
     }
+    this.propMesh = null; this._propBasePos = null; this._propBaseRot = null; this._propAnim = { kind: '', t: 0, dur: 0 };
     for (const [slot, bone] of [['hat', 'head'], ['prop', 'handslot.r'], ['outfit', 'chest']]) {
       if (slot === 'hat' && hasHead) continue;
       const geo = bones[bone] && gearGeometry(c.champ, look, slot); if (!geo) continue;
       const mesh = new THREE.Mesh(geo, gearMaterial()); mesh.castShadow = true; mesh.frustumCulled = false; bones[bone].add(mesh); this.own.push(mesh);
+      if (slot === 'prop') { this.propMesh = mesh; this._propBasePos = mesh.position.clone(); this._propBaseRot = mesh.rotation.clone(); }
     }
     if (look.vehicle) { // courier scooter under the feet, attached to this.model so it rotates with yaw
       const geo = gearGeometry(c.champ, look, 'vehicle');
@@ -148,17 +162,62 @@ export class ChampView {
     if (this.cur && this.cur !== a) a.crossFadeFrom(this.cur, fade, false);
     a.play(); this.cur = a;
   }
-  oneShot(name, ts = 1.4) {
-    if (this.rig) { if (this.dead) return; const k = /Spell|Ranged/.test(name) ? 'cast' : /Dodge/.test(name) ? 'dash' : 'swing'; this.rig.once(k, k === 'dash' ? 0.35 : 0.42); this.busy = 0.4; return; }
+  oneShot(name, ts = 1.4, procKind = '') {
+    if (this.rig) {
+      if (this.dead) return;
+      const k = procKind || (/Spell|Ranged/.test(name) ? 'cast' : /Dodge/.test(name) ? 'dash' : 'swing');
+      this.rig.once(k, k === 'dash' ? 0.35 : 0.42);
+      this.busy = 0.4;
+      return;
+    }
     const a = this.action(name); if (!a || this.dead) return;
     this.play(name, 0.06, { once: true, ts });
     this.busy = Math.min(a.getClip().duration / ts, 0.9);
+  }
+  _triggerPropAnim(kind, dur = 0.36) {
+    if (!this.propMesh || this.dead) return;
+    this._propAnim.kind = kind || 'chop';
+    this._propAnim.t = 0;
+    this._propAnim.dur = dur;
+  }
+  _stepPropAnim(dt) {
+    if (!this.propMesh || !this._propBasePos || !this._propBaseRot) return;
+    const a = this._propAnim;
+    if (this.dead || a.dur <= 0) {
+      this.propMesh.position.copy(this._propBasePos);
+      this.propMesh.rotation.copy(this._propBaseRot);
+      return;
+    }
+    a.t += dt;
+    if (a.t >= a.dur) {
+      a.dur = 0;
+      this.propMesh.position.copy(this._propBasePos);
+      this.propMesh.rotation.copy(this._propBaseRot);
+      return;
+    }
+    const p = a.t / a.dur, s = Math.sin(p * Math.PI);
+    const bp = this._propBasePos, br = this._propBaseRot;
+    let px = bp.x, py = bp.y, pz = bp.z, rx = br.x, ry = br.y, rz = br.z;
+    switch (a.kind) {
+      case 'thrust': pz += s * 0.26; rx += s * 0.55; break;
+      case 'slam': py -= s * 0.08; rx += s * 0.95; break;
+      case 'sweep': ry += Math.cos(p * Math.PI) * 0.75; rz += s * 0.45; break;
+      case 'channel': case 'raise': py += s * 0.16; rz += Math.sin(p * Math.PI * 4) * 0.18; break;
+      case 'pulse': pz -= s * 0.12; rx -= s * 0.35; rz += Math.sin(p * Math.PI * 6) * 0.15; break;
+      case 'spin': ry += p * Math.PI * 2; rz += s * 0.4; break;
+      default: py -= s * 0.06; rx += s * 0.8; break;
+    }
+    this.propMesh.position.set(px, py, pz);
+    this.propMesh.rotation.set(rx, ry, rz);
   }
   flash() { this.flashT = 0.14; }
   attack(tx, ty) {
     if (this.dead) return;
     if (Number.isFinite(tx) && Number.isFinite(ty)) this.faceYaw = Math.atan2(tx - this.px, ty - this.py);
-    this.oneShot(this.ranged ? (this.def.role === 'Marksman' ? '1H_Ranged_Shoot' : 'Spellcast_Shoot') : '1H_Melee_Attack_Slice_Horizontal', 2.0);
+    const wStyle = WEAPON_STYLE[this.champ] || (this.ranged ? 'channel' : 'chop');
+    const pKind = PROC_KIND_MAP[wStyle] || (this.ranged ? 'cast' : 'swing');
+    this.oneShot(this.ranged ? (this.def.role === 'Marksman' ? '1H_Ranged_Shoot' : 'Spellcast_Shoot') : '1H_Melee_Attack_Slice_Horizontal', 2.0, pKind);
+    this._triggerPropAnim(wStyle, 0.32);
     this.atkRecoil = 0.16;
   }
   _applyBaseEmissive() {
@@ -196,7 +255,13 @@ export class ChampView {
     if (!this.dead) {
       if (c.action_seq !== this.seq) {
         this.seq = c.action_seq; const slot = c.action;
-        if (slot && slot.length === 1 && 'qwer'.includes(slot)) this.oneShot(SLOT_ANIM[this.ranged ? 'ranged' : 'melee'][slot], 1.5);
+        if (slot && slot.length === 1 && 'qwer'.includes(slot)) {
+          const wStyle = WEAPON_STYLE[this.champ] || (this.ranged ? 'channel' : 'chop');
+          const propKind = slot === 'q' ? wStyle : slot === 'w' ? 'raise' : slot === 'e' ? 'thrust' : (this.ranged ? 'channel' : 'spin');
+          const pKind = slot === 'e' ? 'dash' : slot === 'w' ? 'raise' : slot === 'r' ? (this.ranged ? 'cast' : 'spin') : (PROC_KIND_MAP[wStyle] || 'swing');
+          this.oneShot(SLOT_ANIM[this.ranged ? 'ranged' : 'melee'][slot], 1.5, pKind);
+          this._triggerPropAnim(propKind, slot === 'r' ? 0.52 : 0.38);
+        }
       }
       if (this.busy > 0) this.busy -= dt;
       else {
@@ -205,6 +270,7 @@ export class ChampView {
       }
     }
     if (this.rig) this.rig.update(dt, this.speed, this.dead); else this.mixer.update(dt);
+    this._stepPropAnim(dt);
     const tags = c.buffs || '';
     const src = typeof window !== 'undefined' && window.__three && window.__three.source;
     const st = src && src.state && src.state();

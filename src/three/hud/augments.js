@@ -4,6 +4,7 @@
 // Like the 2D game the picker ONLY opens while you are dead (never at fountain / mid-fight); once opened it stays open until you pick, unless a newer level offer replaces it while alive.
 // While open isOpen() is true; hud.js exposes it through hud.blocked() / scoreboardOpen() so Input.isBlocked() pauses orders and hotkeys.
 import { AUGMENTS, RARITY_COLOR, AUGMENT_SYNERGIES } from '../../../shared/moba/augments.js';
+import { t, tText, getLang, onLangChange } from '../../core/I18n.js';
 import { esc } from './tooltip.js';
 
 const el = (parent, tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
@@ -33,10 +34,11 @@ export function createAugments({ root, source, toast = () => {} }) {
     else if (e.code === 'KeyR' && !Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0) { e.preventDefault(); e.stopPropagation(); reroll(); }
   };
   window.addEventListener('keydown', onKey, true);
+  const offLang = onLangChange(() => { sig = ''; if (shown) render(); });
 
   function render() {
     if (!shown || !offer) return;
-    const s = `${offer.level}:${offer.rerolls}:${(offer.slotRerolls || []).join(',')}:${offer.choices.join(',')}:${owned.join(',')}`;
+    const s = `${getLang()}:${offer.level}:${offer.rerolls}:${(offer.slotRerolls || []).join(',')}:${offer.choices.join(',')}:${owned.join(',')}`;
     if (s === sig) return; sig = s;
     const ownedSet = new Set(owned);
     const cards = offer.choices.map((id, i) => {
@@ -44,11 +46,12 @@ export function createAugments({ root, source, toast = () => {} }) {
       const col = hex(RARITY_COLOR[a.rarity] || 0x39c2ff);
       const syn = AUGMENT_SYNERGIES.find((sy) => sy.requires.includes(id) && sy.requires.some((r) => r !== id && ownedSet.has(r)));
       const canRoll = Array.isArray(offer.slotRerolls) ? (offer.slotRerolls[i] || 0) > 0 : false;
-      return `<div class="aug-card ${a.rarity}" style="--rc:${col}"><div class="rar">${esc(a.rarity.toUpperCase())} · ${esc(a.group.toUpperCase())}</div><button class="aug-pick" data-a="pick" data-v="${id}"><div class="ico">${a.icon || '⚡'}</div><div class="nm">${esc(a.name)}</div><div class="ds">${esc(a.desc)}</div>${syn ? `<div class="syn">✨ Synergy: ${esc(syn.name)}</div>` : ''}<div class="ph">PICK [${i + 1}]</div></button>${Array.isArray(offer.slotRerolls) ? `<button class="bsh-btn aug-rr${canRoll ? '' : ' off'}" ${canRoll ? `data-a="reroll" data-v="${i}"` : 'disabled'}>${canRoll ? '🎲 REROLL' : 'rerolled'}</button>` : ''}</div>`;
+      const desc = tText(`aug.${id}`, a.desc || '');
+      return `<div class="aug-card ${a.rarity}" style="--rc:${col}"><div class="rar">${esc(a.rarity.toUpperCase())} · ${esc(a.group.toUpperCase())}</div><button class="aug-pick" data-a="pick" data-v="${id}"><div class="ico">${a.icon || '⚡'}</div><div class="nm">${esc(a.name)}</div><div class="ds">${esc(desc)}</div>${syn ? `<div class="syn">✨ ${esc(t('aug.synergy', { name: syn.name }))}</div>` : ''}<div class="ph">${esc(t('aug.pickHint', { n: i + 1 }))}</div></button>${Array.isArray(offer.slotRerolls) ? `<button class="bsh-btn aug-rr${canRoll ? '' : ' off'}" ${canRoll ? `data-a="reroll" data-v="${i}"` : 'disabled'}>${canRoll ? `🎲 ${esc(t('aug.reroll'))}` : esc(t('aug.rerolled'))}</button>` : ''}</div>`;
     }).join('');
-    const global = !Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0 ? `<button class="bsh-btn aug-rr big" data-a="reroll" data-v="">🎲 REROLL ALL [R] · ${offer.rerolls} left</button>` : '';
+    const global = !Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0 ? `<button class="bsh-btn aug-rr big" data-a="reroll" data-v="">🎲 ${esc(t('aug.reroll'))} [R] · ${offer.rerolls}</button>` : '';
     const ownedRow = owned.length ? `<div class="aug-own">INSTALLED: ${owned.map((id) => AUGMENTS[id] ? `<span title="${esc(AUGMENTS[id].name)}">${AUGMENTS[id].icon || '⚡'}</span>` : '').join('')}</div>` : '';
-    modal.innerHTML = `<div class="aug-box"><div class="aug-t">⚡ CODE AUGMENT · Lv ${offer.level}</div><div class="aug-s">${esc(QUIPS[offer.level] || 'Choose one patch. No rollbacks.')} Pick one (keys 1-3).</div><div class="aug-cards">${cards}</div>${global ? `<div class="aug-f">${global}</div>` : ''}${ownedRow}</div>`;
+    modal.innerHTML = `<div class="aug-box"><div class="aug-t">⚡ ${esc(t('aug.title', { lv: offer.level }))}</div><div class="aug-s">${esc(t('aug.sub'))} (${esc(QUIPS[offer.level] || '')})</div><div class="aug-cards">${cards}</div>${global ? `<div class="aug-f">${global}</div>` : ''}${ownedRow}</div>`;
   }
 
   function parseOffer(me) {
@@ -66,7 +69,7 @@ export function createAugments({ root, source, toast = () => {} }) {
       const o = me ? parseOffer(me) : null;
       if (!o || !o.choices.length) { offer = null; canShow = false; shownLv = 0; lastLevel = 0; if (shown) close(true); pill.hidden = true; return; }
       offer = o; owned = parseOwned(me);
-      if (lastLevel !== o.level) { lastLevel = o.level; toast(`⚡ Code Augment Lv ${o.level} — mở khi hồi sinh`, '#ffd23f', 2200); }
+      if (lastLevel !== o.level) { lastLevel = o.level; toast(`⚡ ${t('aug.readyOnDeath', { lv: o.level })}`, '#ffd23f', 2200); }
       if (shownLv && shownLv !== o.level && !me.dead) { canShow = false; shownLv = 0; }
       const safe = !!me.dead;
       if (safe && ctx && ctx.phase === 'playing') { canShow = true; shownLv = o.level; }
@@ -77,9 +80,9 @@ export function createAugments({ root, source, toast = () => {} }) {
         close(false);
       }
       const showPill = !shown; if (pill.hidden === showPill) pill.hidden = !showPill;
-      if (showPill) { const t = `⚡ AUGMENT Lv ${o.level} — mở khi hồi sinh`; if (pill._t !== t) { pill._t = t; pill.textContent = t; } }
+      if (showPill) { const txt = `⚡ ${t('aug.readyOnDeath', { lv: o.level })}`; if (pill._t !== txt) { pill._t = txt; pill.textContent = txt; } }
     },
     isOpen: () => shown,
-    dispose() { disposed = true; window.removeEventListener('keydown', onKey, true); pill.remove(); modal.remove(); },
+    dispose() { disposed = true; offLang(); window.removeEventListener('keydown', onKey, true); pill.remove(); modal.remove(); },
   };
 }

@@ -9,6 +9,7 @@ import { IS_MOBILE } from '../core/Quality.js';
 import { CHAMPIONS, CHAMPION_IDS, isChampionId } from '../../../shared/moba/champions.js';
 import { SPELLS, SPELL_IDS, DEFAULT_SPELLS, validSpellPair } from '../../../shared/moba/spells.js';
 import { SaveManager } from '../../core/SaveManager.js';
+import { t, tText } from '../../core/I18n.js';
 import { HATS, isHatUnlocked } from '../../data/cosmetics.js';
 import { getPid } from '../../core/Identity.js';
 
@@ -172,18 +173,18 @@ function showSelect(deps, preset = {}) {
 
   root = document.createElement('div');
   root.id = 'bs3d-select';
-  root.style.cssText = 'position:fixed;inset:0;z-index:9000;overflow:auto;background:#0b0f1e;color:#e8eefc;font:14px "Segoe UI",system-ui,sans-serif;padding:16px;box-sizing:border-box';
+  root.style.cssText = 'position:fixed;inset:0;z-index:9000;overflow-y:auto;overflow-x:hidden;background:radial-gradient(circle at 50% 0,#132c2d 0,#05090c 58%);color:#eee9da;font:14px "Segoe UI",system-ui,sans-serif;padding:16px;box-sizing:border-box';
   const opt = (id, sel) => `<option value="${id}"${id === sel ? ' selected' : ''}>${esc(SPELLS[id].icon)} ${esc(SPELLS[id].name)}</option>`;
   const hatOpt = (x) => `<option value="${esc(x.id)}"${x.id === hat ? ' selected' : ''}>${esc(x.emoji ? x.emoji + ' ' : '')}${esc(x.name)}</option>`;
 
   root.innerHTML = `
     <div style="max-width:1120px;margin:0 auto">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
-        <button id="back-menu" class="b-ghost">← MENU</button>
+        <button id="back-menu" class="b-ghost">${esc(t('ui.back'))}</button>
         <h1 style="margin:0;font-size:26px">Pick your dev <small style="color:#8fa0c4;font-size:13px">3D beta</small></h1>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0">
-        <input id="n" maxlength="14" placeholder="Name" style="padding:8px;border-radius:6px;border:1px solid #39c2ff;background:#141b36;color:#fff;width:150px">
+        <input id="n" maxlength="14" placeholder="Name" style="padding:8px;border-radius:2px;border:1px solid #80672f;background:#091518;color:#fff;width:150px">
         <label>D <select id="sd" class="selbox">${SPELL_IDS.map((i) => opt(i, spells[0])).join('')}</select></label>
         <label>F <select id="sf" class="selbox">${SPELL_IDS.map((i) => opt(i, spells[1])).join('')}</select></label>
         <label>🎩 <select id="hat" class="selbox" title="Career hat (cosmetic)">${unlockedHats.map(hatOpt).join('')}</select></label>
@@ -195,26 +196,33 @@ function showSelect(deps, preset = {}) {
       <div id="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px"></div>
       <div id="preview" class="preview"></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
-        <button id="off" class="b">PRACTICE OFFLINE (bots)</button>
-        <button id="sbx" class="b" style="background:#ffb347">SANDBOX</button>
-        <button id="on" class="b" style="background:#39c2ff">PLAY ONLINE</button>
-        <button id="cust" class="b" style="background:#c44dff;color:#fff">CUSTOM ROOMS</button>
+        <button id="off" class="b">${esc(t('lobby.practice'))}</button>
+        <button id="sbx" class="b b-amber">SANDBOX</button>
+        <button id="on" class="b b-cyan">${esc(t('lobby.quickMatch'))}</button>
+        <button id="cust" class="b b-violet">${esc(t('lobby.custom'))}</button>
       </div>
     </div>
     <style>
-      #bs3d-select .b{padding:12px 18px;border:0;border-radius:8px;background:#7ed957;color:#10230a;font-weight:700;font-size:15px;cursor:pointer}
-      #bs3d-select .b:hover{filter:brightness(1.08)}
-      #bs3d-select .b-ghost{padding:8px 14px;border:1px solid #39c2ff88;border-radius:8px;background:#141b36;color:#7ec8ff;font-weight:700;font-size:13px;cursor:pointer}
-      #bs3d-select .b-ghost:hover{border-color:#39c2ff;color:#fff}
-      #bs3d-select .selbox{padding:6px 8px;background:#141b36;color:#fff;border:1px solid #2b3868;border-radius:6px}
-      #bs3d-select .chip{padding:6px 12px;border-radius:16px;border:1px solid #2b3868;background:#141b36;color:#9fb3d6;font-size:12px;font-weight:700;cursor:pointer}
-      #bs3d-select .chip.on{border-color:#39c2ff;background:#1d3354;color:#fff}
-      #bs3d-select .c{padding:10px;border-radius:8px;background:#141b36;border:2px solid #232c52;cursor:pointer;text-align:left;color:#e8eefc}
-      #bs3d-select .c.sel{border-color:#7ed957;background:#1c2a3a}
-      #bs3d-select .preview{margin:14px 0 6px;padding:12px 14px;border-radius:10px;background:#121933;border:1px solid #293866}
+      #bs3d-select{scrollbar-width:none;overscroll-behavior:contain}
+      #bs3d-select *{box-sizing:border-box}
+      #bs3d-select::-webkit-scrollbar{display:none}
+      #bs3d-select .b{padding:12px 18px;border:1px solid #c89b3c;border-radius:4px;background:linear-gradient(155deg,#254631,#101b16);color:#f5edcf;font-weight:750;font-size:14px;letter-spacing:.04em;cursor:pointer}
+      #bs3d-select .b:hover{filter:brightness(1.14);border-color:#f0d58a}
+      #bs3d-select .b-amber{background:linear-gradient(155deg,#4f3b1b,#1d160b);border-color:#c89b3c;color:#fff0c4}
+      #bs3d-select .b-cyan{background:linear-gradient(155deg,#17474c,#09191b);border-color:#0ac8b9;color:#dcfffb}
+      #bs3d-select .b-violet{background:linear-gradient(155deg,#3b254a,#140d1b);border-color:#a576d6;color:#f3e5ff}
+      #bs3d-select .b-ghost{padding:8px 14px;border:1px solid #80672f;border-radius:2px;background:#091518;color:#c8b878;font-weight:700;font-size:13px;cursor:pointer}
+      #bs3d-select .b-ghost:hover{border-color:#f0d58a;color:#fff}
+      #bs3d-select .selbox{padding:7px 9px;background:#091518;color:#eee9da;border:1px solid #5e5438;border-radius:2px}
+      #bs3d-select .chip{padding:6px 12px;border-radius:2px;border:1px solid #3b5552;background:#091518;color:#95aaa5;font-size:12px;font-weight:700;cursor:pointer}
+      #bs3d-select .chip.on{border-color:#c89b3c;background:#34331f;color:#fff3c7}
+      #bs3d-select .c{padding:10px;border-radius:4px;background:linear-gradient(145deg,#102629,#071013);border:1px solid #3f5652;cursor:pointer;text-align:left;color:#eee9da}
+      #bs3d-select .c:hover{border-color:#0ac8b9;background:linear-gradient(145deg,#19383a,#091518)}
+      #bs3d-select .c.sel{border-color:#f0d58a;background:linear-gradient(145deg,#3a3822,#101914);box-shadow:inset 3px 0 0 #c89b3c}
+      #bs3d-select .preview{margin:14px 0 6px;padding:12px 14px;border-radius:2px;background:linear-gradient(145deg,#102629,#071013);border:1px solid #80672f;box-shadow:inset 3px 0 0 #c89b3c}
       #bs3d-select .skills{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-      #bs3d-select .sk{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:6px;background:#1a2446;border:1px solid #2d3e72;font-size:12px;color:#dce6ff}
-      #bs3d-select .sk b{color:#7ed957}
+      #bs3d-select .sk{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:2px;background:#0a171a;border:1px solid #3f5652;font-size:12px;color:#d9e2dc}
+      #bs3d-select .sk b{color:#f0d58a}
     </style>`;
   document.body.appendChild(root);
 
@@ -240,7 +248,7 @@ function showSelect(deps, preset = {}) {
         <span style="color:#7ec8ff;font-size:12px;margin-left:auto">${esc(d.role || '')}${d.lane ? ' · ' + esc(d.lane) : ''}</span>
       </div>
       <div class="skills">
-        ${keys.map(([k, s]) => s ? `<span class="sk" title="${esc(s.desc || '')}"><b>${k}</b> ${esc(s.icon || '')} ${esc(s.name || '')}</span>` : '').join('')}
+        ${keys.map(([k, s]) => s ? `<span class="sk" title="${esc(tText(`skill.${champ}.${k.toLowerCase()}`, s.desc || ''))}"><b>${k}</b> ${esc(s.icon || '')} ${esc(s.name || '')}</span>` : '').join('')}
       </div>`;
   };
 
@@ -324,14 +332,14 @@ function showCustom(deps, preset = {}) {
 
   root = document.createElement('div');
   root.id = 'bs3d-custom';
-  root.style.cssText = 'position:fixed;inset:0;z-index:9000;overflow:auto;background:#0b0f1e;color:#e8eefc;font:14px "Segoe UI",system-ui,sans-serif;padding:16px;box-sizing:border-box';
+  root.style.cssText = 'position:fixed;inset:0;z-index:9000;overflow-y:auto;overflow-x:hidden;background:radial-gradient(circle at 50% 0,#132c2d 0,#05090c 58%);color:#eee9da;font:14px "Segoe UI",system-ui,sans-serif;padding:16px;box-sizing:border-box';
   const champOpt = (id) => `<option value="${esc(id)}"${id === champ ? ' selected' : ''}>${esc(CHAMPIONS[id].emoji || '')} ${esc(CHAMPIONS[id].name)}</option>`;
 
   root.innerHTML = `
     <div style="max-width:1000px;margin:0 auto">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <button id="back-menu" class="b-ghost">← MENU</button>
-        <h1 style="margin:0;font-size:24px">🏠 Custom Rooms <small style="color:#8fa0c4;font-size:13px">3D beta</small></h1>
+        <button id="back-menu" class="b-ghost">${esc(t('ui.back'))}</button>
+        <h1 style="margin:0;font-size:24px">🏠 ${esc(t('custom.title'))} <small style="color:#95aaa5;font-size:13px">3D beta</small></h1>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="cname" maxlength="16" placeholder="Your name" class="inp" style="width:140px">
           <select id="cchamp" class="inp" title="Preferred champion">${CHAMPION_IDS.map(champOpt).join('')}</select>
@@ -342,12 +350,12 @@ function showCustom(deps, preset = {}) {
         <div class="bar-box">
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <input id="rname" maxlength="28" placeholder="Room name (e.g. Friday Deploy)" class="inp" style="flex:1;min-width:180px">
-            <button id="create-btn" class="b">＋ CREATE ROOM</button>
+            <button id="create-btn" class="b">${esc(t('custom.create'))}</button>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
             <input id="rcode" maxlength="32" placeholder="Paste room code..." class="inp" style="flex:1;min-width:180px">
-            <button id="join-code-btn" class="b" style="background:#39c2ff">JOIN BY CODE</button>
-            <button id="refresh-btn" class="b-ghost">⟳ REFRESH</button>
+            <button id="join-code-btn" class="b b-cyan">${esc(t('custom.code'))}</button>
+            <button id="refresh-btn" class="b-ghost">${esc(t('custom.refresh'))}</button>
           </div>
         </div>
         <div id="rooms-list" class="panel" style="margin-top:12px">Loading open rooms…</div>
@@ -355,18 +363,23 @@ function showCustom(deps, preset = {}) {
       <div id="room-view" style="display:none"></div>
     </div>
     <style>
-      #bs3d-custom .b{padding:10px 16px;border:0;border-radius:8px;background:#7ed957;color:#10230a;font-weight:700;font-size:14px;cursor:pointer}
-      #bs3d-custom .b:hover{filter:brightness(1.08)}
-      #bs3d-custom .b-ghost{padding:8px 14px;border:1px solid #39c2ff88;border-radius:8px;background:#141b36;color:#7ec8ff;font-weight:700;font-size:13px;cursor:pointer}
-      #bs3d-custom .b-ghost:hover{border-color:#39c2ff;color:#fff}
-      #bs3d-custom .inp{padding:8px 10px;border-radius:6px;border:1px solid #2b3868;background:#141b36;color:#fff;font-size:14px}
-      #bs3d-custom .bar-box,#bs3d-custom .panel{background:#121933;border:1px solid #293866;border-radius:10px;padding:12px}
-      #bs3d-custom .rrow{display:grid;grid-template-columns:1.6fr 1fr .7fr .8fr .8fr auto;gap:8px;align-items:center;padding:10px;border-bottom:1px solid #1e2a50}
+      #bs3d-custom{scrollbar-width:none;overscroll-behavior:contain}
+      #bs3d-custom *{box-sizing:border-box}
+      #bs3d-custom::-webkit-scrollbar{display:none}
+      #bs3d-custom .b{padding:10px 16px;border:1px solid #c89b3c;border-radius:4px;background:linear-gradient(155deg,#254631,#101b16);color:#f5edcf;font-weight:750;font-size:13px;letter-spacing:.04em;cursor:pointer}
+      #bs3d-custom .b:hover{filter:brightness(1.14);border-color:#f0d58a}
+      #bs3d-custom .b-cyan{background:linear-gradient(155deg,#17474c,#09191b);border-color:#0ac8b9;color:#dcfffb}
+      #bs3d-custom .b-ghost{padding:8px 14px;border:1px solid #80672f;border-radius:2px;background:#091518;color:#c8b878;font-weight:700;font-size:13px;cursor:pointer}
+      #bs3d-custom .b-ghost:hover:not(:disabled){border-color:#f0d58a;color:#fff}
+      #bs3d-custom .b-ghost:disabled{opacity:.45;cursor:default}
+      #bs3d-custom .inp{padding:8px 10px;border-radius:2px;border:1px solid #5e5438;background:#091518;color:#eee9da;font-size:14px}
+      #bs3d-custom .bar-box,#bs3d-custom .panel{background:linear-gradient(145deg,#102629,#071013);border:1px solid #80672f;border-radius:6px;padding:12px;box-shadow:inset 3px 0 0 rgba(200,155,60,.35)}
+      #bs3d-custom .rrow{display:grid;grid-template-columns:1.6fr 1fr .7fr .8fr .8fr auto;gap:8px;align-items:center;padding:10px;border-bottom:1px solid #243b39}
       #bs3d-custom .rrow:last-child{border-bottom:0}
       #bs3d-custom .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
       @media(max-width:680px){#bs3d-custom .cols{grid-template-columns:1fr}#bs3d-custom .rrow{grid-template-columns:1fr auto}}
-      #bs3d-custom .seat{padding:8px 10px;border-radius:6px;background:#0d1428;border:1px solid #22305c;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
-      #bs3d-custom .seat.me{border-color:#ffd23f;color:#ffd23f}
+      #bs3d-custom .seat{padding:8px 10px;border-radius:2px;background:#091518;border:1px solid #334e4b;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+      #bs3d-custom .seat.me{border-color:#f0d58a;background:linear-gradient(145deg,#34321e,#0e1815);color:#fff3c7}
     </style>`;
   document.body.appendChild(root);
 
@@ -424,7 +437,7 @@ function showCustom(deps, preset = {}) {
         <div>👤 ${r.humans | 0}/${ROOM_MAX_HUMANS}</div>
         <div style="color:#9fc5e8">🔵 ${r.blue | 0} · 🔴 ${r.red | 0}</div>
         <div style="color:${open ? '#7ed957' : '#ffb347'}">${open ? '🟢 open' : esc(r.phase || 'locked')}</div>
-        <div><button class="b" style="padding:6px 12px;font-size:13px" ${open ? '' : 'disabled'}>${open ? 'JOIN' : 'LOCKED'}</button></div>`;
+        <div><button class="b" style="padding:6px 12px;font-size:13px" ${open ? '' : 'disabled'}>${open ? esc(t('ui.join')) : 'LOCKED'}</button></div>`;
       const btn = row.querySelector('button');
       if (open) btn.onclick = () => connectCustom('join', r.roomId);
       else btn.style.opacity = '0.45';
@@ -513,7 +526,7 @@ function showCustom(deps, preset = {}) {
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button id="copy-code" class="b-ghost">📋 COPY CODE</button>
               <button id="copy-link" class="b-ghost">🔗 INVITE LINK</button>
-              <button id="leave-room" class="b-ghost" style="border-color:#ff7b7b;color:#ff9b9b">LEAVE ROOM</button>
+              <button id="leave-room" class="b-ghost" style="border-color:#ff7b7b;color:#ff9b9b">${esc(t('ui.leave'))}</button>
             </div>
           </div>
           <div class="cols">
@@ -535,7 +548,7 @@ function showCustom(deps, preset = {}) {
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:12px">
             <div style="color:#8fa0c4">Bots fill empty seats · Bot level: <b style="color:#ffd23f">${esc(botLevel.toUpperCase())}</b></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              ${isHost ? `<button id="bot-lvl" class="b-ghost">🤖 BOT: ${esc(botLevel.toUpperCase())}</button><button id="start-now" class="b">▶ START MATCH</button>` : '<span style="color:#ffd23f">⏳ Waiting for host to start…</span>'}
+              ${isHost ? `<button id="bot-lvl" class="b-ghost">🤖 BOT: ${esc(botLevel.toUpperCase())}</button><button id="start-now" class="b">${esc(t('ui.startNow'))}</button>` : '<span style="color:#ffd23f">⏳ Waiting for host to start…</span>'}
             </div>
           </div>
         </div>`;

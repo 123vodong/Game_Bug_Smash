@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { S } from './ground.js';
 import { LANES, LANE_WIDTH, RIVER, CAMPS, EPIC_SPOTS, STRUCTURES, FOUNTAIN, BASE_RADIUS, distToSeg } from '../../../shared/moba/map.js'; // 5v5 only
+import { wallDist as navWallDist } from '../../../shared/moba/nav.js';
 
 const col = (g, hex) => { const c = new THREE.Color(hex), n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; } g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g; };
 const box = (w, h, d, x, y, z, hex) => col(new THREE.BoxGeometry(w, h, d).translate(x, y, z), hex);
@@ -35,11 +36,7 @@ export function makeProps(world, lite = false) {
   const rnd = mulberry(seedOf(world && world.id));
   const wallDist = (x, y) => { // distance from edge of any wall (negative = inside)
     let best = 1e9;
-    for (const w of walls) {
-      if (w.kind === 'seg') best = Math.min(best, distToSeg(x, y, w.x1, w.y1, w.x2, w.y2) - w.w / 2);
-      else if (w.kind === 'rect') { const dx = Math.max(w.x - x, 0, x - (w.x + w.w)), dy = Math.max(w.y - y, 0, y - (w.y + w.h)); best = Math.min(best, (dx || dy) ? Math.hypot(dx, dy) : -1); }
-      else if (w.kind === 'circle') best = Math.min(best, Math.hypot(x - w.x, y - w.y) - w.r);
-    }
+    for (const w of walls) best = Math.min(best, navWallDist(x, y, w));
     return best;
   };
   const inBush = (x, y, pad) => bushes.some((b) => b.kind === 'circle' ? Math.hypot(x - b.x, y - b.y) < b.r + pad : distToSeg(x, y, b.x1, b.y1, b.x2, b.y2) < b.w / 2 + pad);
@@ -56,10 +53,18 @@ export function makeProps(world, lite = false) {
     for (const f of [FOUNTAIN.blue, FOUNTAIN.red]) if (Math.hypot(x - f.x, y - f.y) < BASE_RADIUS * 0.45) return false;
     return true;
   };
-  // candidates: beside wall faces and along the edge of bushes
+  // candidates: beside wall faces (including organic poly edges) and along the edge of bushes
   const cand = [];
   for (const w of walls) {
-    if (w.kind === 'seg') {
+    if (w.kind === 'poly' && w.pts && w.pts.length >= 3) {
+      for (let i = 0; i < w.pts.length; i += 2) {
+        const a = w.pts[i], b = w.pts[(i + 1) % w.pts.length];
+        const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+        const o = 75 + rnd() * 45;
+        cand.push([(a[0] + b[0]) * 0.5 + (dy / L) * o, (a[1] + b[1]) * 0.5 - (dx / L) * o, false]);
+        cand.push([(a[0] + b[0]) * 0.5 - (dy / L) * o, (a[1] + b[1]) * 0.5 + (dx / L) * o, false]);
+      }
+    } else if (w.kind === 'seg') {
       const dx = w.x2 - w.x1, dy = w.y2 - w.y1, L = Math.hypot(dx, dy) || 1, n = Math.max(1, Math.round(L / 260));
       for (let i = 0; i < n; i++) { const t = (i + 0.2 + rnd() * 0.6) / n, s = rnd() < 0.5 ? 1 : -1, o = w.w / 2 + 70 + rnd() * 40; cand.push([w.x1 + dx * t - dy / L * o * s, w.y1 + dy * t + dx / L * o * s, false]); }
     } else if (w.kind === 'rect') {

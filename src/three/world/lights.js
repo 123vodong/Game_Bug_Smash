@@ -3,9 +3,10 @@ import * as THREE from 'three';
 import { SHADOW_SIZE } from '../core/Quality.js';
 
 export function makeLights(scene) {
-  const hemi = new THREE.HemisphereLight(0xbcd0ff, 0x3a3358, 1.5);
-  const amb = new THREE.AmbientLight(0x505a80, 0.5);
-  const sun = new THREE.DirectionalLight(0xfff0dd, 3.2);
+  // Summoner's Rift–inspired visual hierarchy: crisp moonlit key light, readable terrain values, subtle atmospheric depth.
+  const hemi = new THREE.HemisphereLight(0xc2e2dc, 0x2b3d34, 1.48);
+  const amb = new THREE.AmbientLight(0x4b6862, 0.52);
+  const sun = new THREE.DirectionalLight(0xfff0d2, 3.15);
   sun.castShadow = true;
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 3;
   const R = 17;
@@ -13,6 +14,7 @@ export function makeLights(scene) {
   sun.shadow.mapSize.set(1024, 1024);
   const offset = new THREE.Vector3(-9, 17, 6);
   scene.add(hemi, amb, sun, sun.target);
+  scene.fog = new THREE.FogExp2(0x101e24, 0.0026);
   return {
     sun,
     /** move the sun (and its shadow frustum) so it covers scene point (x, z) */
@@ -26,6 +28,6 @@ export function makeLights(scene) {
       sun.castShadow = size > 0;
       if (size > 0 && sun.shadow.mapSize.x !== size) { sun.shadow.mapSize.set(size, size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
     },
-    dispose() { scene.remove(hemi, amb, sun, sun.target); sun.shadow.dispose(); },
+    dispose() { scene.remove(hemi, amb, sun, sun.target); scene.fog = null; sun.shadow.dispose(); },
   };
 }

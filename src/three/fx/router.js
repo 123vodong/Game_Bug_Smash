@@ -10,6 +10,7 @@ import { createObjects } from './objects.js'; // persistent kit objects + signat
 import { createSprites } from './sprites.js'; // per-skill 2D-parity flipbook sprites (primary skill visual)
 import { createKit, resolveSkill, resolveSpell } from './skills/index.js'; // per-skill themed VFX (consulted before the generic kind mapping)
 import { CHAMPIONS, parseKitTags } from '../../../shared/moba/champions.js'; // read-only: skill.pierce / champ colour / stance tags
+import { getSkillIdentity } from './identity.js';
 
 const S = 0.01; // mirrors world scale used by Renderer.js
 const rnd = (a = 1, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
@@ -79,6 +80,13 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
   }
   const pos = (id) => { const e = ent(id); return e && fin(e.x, e.y) ? { x: e.x, y: e.y } : null; };
   const flairOf = (sid) => { const c = ent(sid); return (c && c.champ && FLAIR[c.champ]) || FL0; };
+  const visualOf = (m, fallback) => {
+    const c = m && m.sid ? ent(m.sid) : null;
+    const id = c && c.champ ? getSkillIdentity(c.champ, m.slot) : null;
+    if (!id) return fallback;
+    const shape = SH[id.shape] !== undefined ? SH[id.shape] : fallback.head;
+    return { ...fallback, c2: id.secondary, head: shape, identity: id };
+  };
   const mix = (a, b) => (rnd() < 0.5 ? a : b);
   const kit = createKit({ sh, parts, SH, S, rnd, mix, lite, pos });
   const spr = createSprites({ THREE, scene, S, lite, ent, pos, source });
@@ -157,18 +165,26 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
   // generic while the visible head/impact silhouette comes from each champion.
   function impact(x, y, color, size = 1, big = false, fl = FL0) {
     const wx = x * S, wz = y * S, r = size * (big ? 1.5 : 0.9);
+    const id = fl.identity;
+    const rot = id ? id.spin * 0.15 : rnd(3);
+    const scale = id ? Math.max(0.85, Math.min(1.4, id.tailWidth)) : 1;
     sh.add({ type: SH.FLASH, x: wx, y: wz, z: 0.6, sx: r, dur: big ? 0.35 : 0.24, color: 0xffffff, alpha: 0.9, prio: big ? 1 : 0 });
-    sh.add({ type: fl.head || SH.RAYS, x: wx, y: wz, z: 0.62, sx: r * 1.3, sz: r * 1.3, rot: rnd(3), dur: big ? 0.4 : 0.28, color: fl.c2 || color, prio: big ? 1 : 0 });
+    sh.add({ type: fl.head || SH.RAYS, x: wx, y: wz, z: 0.62, sx: r * 1.3 * scale, sz: r * 1.3 * scale, rot, dur: big ? 0.4 : 0.28, color: fl.c2 || color, prio: big ? 1 : 0 });
     if (big) sh.add({ type: SH.RING, x: wx, y: wz, sx: r * 1.5, dur: 0.4, color });
     pburst(wx, 0.6, wz, color, fl, big ? 18 : 8, big ? 3.4 : 2.2, 0.11, 0.5);
     light(wx, 1.0, wz, color, big ? 14 : 6, 0.25);
   }
   // basic-attack / minion / structure hits: one muted coloured flash, no sparks, no light
   function quietHit(x, y, color, size = 0.5) { sh.add({ type: SH.FLASH, x: x * S, y: y * S, z: 0.6, sx: size, dur: 0.16, color, alpha: 0.6, prio: 0 }); }
-  function beam(x0, y0, x1, y1, color, h = 0.9, n = 20, jitter = 0.06) {
+  function beam(x0, y0, x1, y1, color, h = 0.9, n = 20, jitter = 0.06, fl = FL0) {
     const a = Math.atan2(y1 - y0, x1 - x0), L = Math.hypot(x1 - x0, y1 - y0) * S;
-    sh.add({ type: SH.STREAK, x: ((x0 + x1) / 2) * S, y: ((y0 + y1) / 2) * S, z: h, rot: a, sx: L / 2, sz: 0.16, dur: 0.3, color, prio: 1 });
-    for (let i = 0; i <= n; i++) { const t = i / n; parts.puff((x0 + (x1 - x0) * t) * S + rnd(-jitter, jitter), h + Math.sin(t * 3.14) * 0.2, (y0 + (y1 - y0) * t) * S + rnd(-jitter, jitter), 0, rnd(-0.1, 0.4), 0, 0.28 + t * 0.2, 0.16, color, 1, 0, 3); }
+    const w = fl.identity ? Math.max(0.12, fl.identity.tailWidth * 0.22) : 0.16;
+    sh.add({ type: SH.STREAK, x: ((x0 + x1) / 2) * S, y: ((y0 + y1) / 2) * S, z: h, rot: a, sx: L / 2, sz: w, dur: 0.3, color, prio: 1 });
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const pcol = fl !== FL0 && (i & 1) ? fl.c2 : color;
+      parts.puff((x0 + (x1 - x0) * t) * S + rnd(-jitter, jitter), h + Math.sin(t * 3.14) * 0.2, (y0 + (y1 - y0) * t) * S + rnd(-jitter, jitter), 0, rnd(-0.1, 0.4), 0, 0.28 + t * 0.2, 0.16, pcol, 1, 0, 3);
+    }
   }
   function ringAt(x, y, color, size = 1.6, dur = 0.45, alpha = 1, follow = null, type = SH.RING) { sh.add({ type, x: x * S, y: y * S, sx: size, dur, color, alpha, follow }); }
   function teleport(x, y, color) {
@@ -177,16 +193,21 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
   }
   function dashTrail(x0, y0, x1, y1, color, fl = FL0) {
     const a = Math.atan2(y1 - y0, x1 - x0), L = Math.hypot(x1 - x0, y1 - y0) * S, mx = ((x0 + x1) / 2) * S, my = ((y0 + y1) / 2) * S;
-    sh.add({ type: SH.STREAK, x: mx, y: my, z: 0.5, rot: a, sx: L / 2 + 0.2, sz: 0.55, dur: 0.38, color });
-    sh.add({ type: SH.STREAK, x: mx, y: my, z: 0.52, rot: a, sx: L / 2, sz: 0.25, dur: 0.3, color: 0xffffff, alpha: 0.8 });
+    const tw = fl.identity ? Math.max(0.35, Math.min(0.85, fl.identity.tailWidth * 0.62)) : 0.55;
+    sh.add({ type: SH.STREAK, x: mx, y: my, z: 0.5, rot: a, sx: L / 2 + 0.2, sz: tw, dur: 0.38, color });
+    sh.add({ type: SH.STREAK, x: mx, y: my, z: 0.52, rot: a, sx: L / 2, sz: tw * 0.45, dur: 0.3, color: 0xffffff, alpha: 0.8 });
+    sh.add({ type: fl.head || SH.RAYS, x: x1 * S, y: y1 * S, z: 0.54, rot: a, sx: 0.95, sz: 0.95, dur: 0.32, color: fl.c2 || color, alpha: 0.9 });
     const n = 16; for (let i = 0; i <= n; i++) { const t = i / n; parts.puff((x0 + (x1 - x0) * t) * S, 0.4 + rnd(0.5), (y0 + (y1 - y0) * t) * S, rnd(-0.3, 0.3), rnd(0, 0.5), rnd(-0.3, 0.3), 0.25 + 0.4 * t, 0.2 * fl.sz, mix(color, fl.c2), 0.9, fl.g * 0.3, 3); }
   }
   function circleBurst(x, y, R, col, fl) {
-    const wx = x * S, wz = y * S;
+    const wx = x * S, wz = y * S, rot = fl.identity ? fl.identity.spin * 0.12 : rnd(3);
     sh.add({ type: SH.RING, x: wx, y: wz, sx: R * 1.05, dur: 0.5, color: col });
     sh.add({ type: SH.RING, x: wx, y: wz, sx: R * 0.7, dur: 0.4, delay: 0.06, color: fl.c2, alpha: 0.8 });
     sh.add({ type: SH.FLASH, x: wx, y: wz, z: 0.5, sx: Math.max(0.8, R * 0.9), dur: 0.4, color: col });
-    sh.add({ type: fl.head || SH.RAYS, x: wx, y: wz, z: 0.55, sx: Math.max(0.9, R), sz: Math.max(0.9, R), rot: rnd(3), dur: 0.5, color: fl.c2 });
+    sh.add({ type: fl.head || SH.RAYS, x: wx, y: wz, z: 0.55, sx: Math.max(0.9, R), sz: Math.max(0.9, R), rot, dur: 0.5, color: fl.c2 });
+    if (!lite && fl.identity && Math.abs(fl.identity.spin) >= 6) {
+      sh.add({ type: fl.head || SH.RING, x: wx, y: wz, z: 0.57, sx: Math.max(0.7, R * 0.78), sz: Math.max(0.7, R * 0.78), rot: -rot + 0.785, delay: 0.07, dur: 0.44, color: col, alpha: 0.65 });
+    }
     pburst(wx, 0.3, wz, col, fl, Math.min(30, 12 + Math.round(R * 12)), R * 3, 0.12, 0.7);
     light(wx, 1.2, wz, col, 12, 0.3); addShake(R > 1.4 ? 0.12 : 0.05);
   }
@@ -194,7 +215,8 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
   // 'fx' kinds
   function onFx(m) {
     if (disposed || !m || typeof m !== 'object') return;
-    const col = Number.isFinite(m.color) ? m.color : 0x39c2ff, fl = flairOf(m.sid), st = m.k === 'spell' ? null : styleOf(m);
+    const baseFl = flairOf(m.sid), fl = visualOf(m, baseFl);
+    const col = Number.isFinite(m.color) ? m.color : (fl.identity ? fl.identity.primary : 0x39c2ff), st = m.k === 'spell' ? null : styleOf(m);
     try { spr.cast(m, col); } catch (_) { /* sprite bug must never break fx */ }
     try { objects.cast(m, col); } catch (_) { /* cast impact must never break fx */ }
     const objHandled = objects.onFx(m); // persistent kit objects (wall/portal/pin/shadow/tether/link/...) are owned by objects.js
@@ -208,7 +230,7 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
       case 'proj': {
         if (!fin(m.x, m.y, m.dx, m.dy)) return;
         const c = ent(m.sid), sk = c && CHAMPIONS[c.champ] && CHAMPIONS[c.champ].skills && CHAMPIONS[c.champ].skills[m.slot];
-        bolt({ x: m.x, y: m.y, dx: m.dx, dy: m.dy, speed: m.speed || 1200, range: m.range || 800, color: col, size: Math.max(0.28, Math.min(0.6, (m.width || 60) * S * 0.55)), pierce: !!(sk && sk.pierce), sid: m.sid, fl, sprM: m.slot ? m : null, onEnd: (x, y) => { impact(x, y, col, 0.9, false, fl); if (m.slot) spr.hit(x, y, col, false); landStyle(st, m, x, y); } });
+        bolt({ x: m.x, y: m.y, dx: m.dx, dy: m.dy, speed: m.speed || 1200, range: m.range || 800, color: col, size: Math.max(0.28, Math.min(0.6, (m.width || 60) * S * 0.55)), pierce: !!(sk && sk.pierce), sid: m.sid, fl, sprM: m.slot ? m : null, headType: fl.head, headCol: fl.c2, tailLen: fl.identity && fl.identity.tailLength, tailW: (fl.identity && fl.identity.tailWidth) || 0.8, spin: fl.identity ? fl.identity.spin : 6, onEnd: (x, y) => { impact(x, y, col, 0.9, false, fl); if (m.slot) spr.hit(x, y, col, false); landStyle(st, m, x, y); } });
         if (m.slot && m.range) kit.line(m.x, m.y, m.dx, m.dy, m.range, m.width || 60, col); // true range/width flash
         ringAt(m.x, m.y, col, 0.7, 0.25); light(m.x * S, 1, m.y * S, col, 5, 0.2); break;
       }
@@ -227,14 +249,15 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
         const cone = m.shape === 'cone' || m.shape === 'arc';
         tg.tele({ x: m.x, y: m.y, mode: cone ? 3 : 2, a: len, b: cone ? half : wd, ext: len * 1.05, rot: -ang, color: col, delay: Math.max(0.15, (m.delay || 0) / 1000), onEnd: () => {
           const ox = m.x * S, oz = m.y * S, cx = Math.cos(ang), cz = Math.sin(ang);
-          if (cone) { for (let k = 1; k <= 3; k++) sh.add({ type: SH.CHEVRON, x: ox + cx * len * k * 0.3, y: oz + cz * len * k * 0.3, z: 0.5, rot: ang, sx: len * 0.22 * (0.6 + k * 0.25), sz: len * 0.22 * k * 0.6, dur: 0.35, delay: k * 0.04, color: k % 2 ? col : fl.c2 }); }
-          else { sh.add({ type: SH.STREAK, x: ox + cx * len * 0.5, y: oz + cz * len * 0.5, z: 0.5, rot: ang, sx: len * 0.5, sz: Math.max(0.3, wd), dur: 0.35, color: col }); sh.add({ type: SH.STREAK, x: ox + cx * len * 0.5, y: oz + cz * len * 0.5, z: 0.52, rot: ang, sx: len * 0.5, sz: Math.max(0.15, wd * 0.4), dur: 0.28, color: 0xffffff, alpha: 0.8 }); }
-          sh.add({ type: fl.head || SH.RAYS, x: ox + cx * len * 0.85, y: oz + cz * len * 0.85, z: 0.5, sx: Math.max(0.8, wd * 1.2), sz: Math.max(0.8, wd * 1.2), dur: 0.35, color: fl.c2 });
+          const tw = fl.identity ? fl.identity.tailWidth : 1;
+          if (cone) { for (let k = 1; k <= 3; k++) sh.add({ type: SH.CHEVRON, x: ox + cx * len * k * 0.3, y: oz + cz * len * k * 0.3, z: 0.5, rot: ang, sx: len * 0.22 * (0.6 + k * 0.25), sz: len * 0.22 * k * 0.6 * Math.max(0.8, tw), dur: 0.35, delay: k * 0.04, color: k % 2 ? col : fl.c2 }); }
+          else { sh.add({ type: SH.STREAK, x: ox + cx * len * 0.5, y: oz + cz * len * 0.5, z: 0.5, rot: ang, sx: len * 0.5, sz: Math.max(0.3, wd * Math.max(0.85, tw)), dur: 0.35, color: col }); sh.add({ type: SH.STREAK, x: ox + cx * len * 0.5, y: oz + cz * len * 0.5, z: 0.52, rot: ang, sx: len * 0.5, sz: Math.max(0.15, wd * 0.4), dur: 0.28, color: fl.c2 || 0xffffff, alpha: 0.85 }); }
+          sh.add({ type: fl.head || SH.RAYS, x: ox + cx * len * 0.85, y: oz + cz * len * 0.85, z: 0.5, rot: ang, sx: Math.max(0.8, wd * 1.2), sz: Math.max(0.8, wd * 1.2), dur: 0.35, color: fl.c2 });
           for (let i = 0; i < 20; i++) { const t = Math.random(); parts.puff(ox + cx * len * t + rnd(-wd, wd) * 0.6, 0.4, oz + cz * len * t + rnd(-wd, wd) * 0.6, cx * 3, rnd(0.3, 1.5), cz * 3, 0.5, 0.16 * fl.sz, mix(col, fl.c2), 1, fl.g, 1); }
           light(ox + cx * len * 0.5, 1, oz + cz * len * 0.5, col, 10, 0.25); addShake(0.08); landStyle(st, m, m.x + Math.cos(ang) * len / S * 0.5, m.y + Math.sin(ang) * len / S * 0.5);
         } }); break;
       }
-      case 'dash': if (fin(m.x0, m.y0, m.x1, m.y1)) { dashTrail(m.x0, m.y0, m.x1, m.y1, col, fl); ringAt(m.x1, m.y1, col, 1.4, 0.4); sh.add({ type: SH.RAYS, x: m.x1 * S, y: m.y1 * S, z: 0.5, sx: 1.1, dur: 0.3, color: fl.c2 }); addShake(0.03); } break;
+      case 'dash': if (fin(m.x0, m.y0, m.x1, m.y1)) { dashTrail(m.x0, m.y0, m.x1, m.y1, col, fl); ringAt(m.x1, m.y1, col, 1.4, 0.4); sh.add({ type: fl.head || SH.RAYS, x: m.x1 * S, y: m.y1 * S, z: 0.5, sx: 1.1, dur: 0.3, color: fl.c2 }); addShake(0.03); } break;
       case 'blink': case 'tp': {
         if (fin(m.x0, m.y0)) teleport(m.x0, m.y0, col); if (fin(m.x1, m.y1)) teleport(m.x1, m.y1, col); break;
       }
@@ -253,14 +276,14 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
         const p = pos(m.id); if (!p) return; if (m.id && ent(m.id) && ent(m.id).champ) { impact(p.x, p.y, col, 0.8, false, fl); spr.hit(p.x, p.y, col, false); } else quietHit(p.x, p.y, col, 0.6);
         for (let i = 0; i < bolts.length; i++) { const o = bolts[i]; if (!o.pierce && o.sid && o.tx === undefined && Math.hypot(o.x - p.x, o.y - p.y) < 90 && o.color === col) { o.onEnd = null; o.T = 0; break; } } break;
       }
-      case 'tgt': if (fin(m.x0, m.y0, m.x1, m.y1)) { beam(m.x0, m.y0, m.x1, m.y1, col); impact(m.x1, m.y1, col, 1.1, true, fl); landStyle(st, m, m.x1, m.y1); } break;
-      case 'zap': if (fin(m.x0, m.y0, m.x1, m.y1)) { beam(m.x0, m.y0, m.x1, m.y1, col, 1.0, 16, 0.12); impact(m.x1, m.y1, col, 0.6, false, fl); } break;
+      case 'tgt': if (fin(m.x0, m.y0, m.x1, m.y1)) { beam(m.x0, m.y0, m.x1, m.y1, col, 0.9, 20, 0.06, fl); impact(m.x1, m.y1, col, 1.1, true, fl); landStyle(st, m, m.x1, m.y1); } break;
+      case 'zap': if (fin(m.x0, m.y0, m.x1, m.y1)) { beam(m.x0, m.y0, m.x1, m.y1, col, 1.0, 16, 0.12, fl); impact(m.x1, m.y1, col, 0.6, false, fl); } break;
       case 'buff': case 'heal': {
         const id = m.sid || m.id, p = pos(id) || (fin(m.x, m.y) ? { x: m.x, y: m.y } : null); if (!p) return;
         const heal = m.k === 'heal', c = heal ? 0x7ed957 : col, fo = id ? () => pos(id) : null;
-        sh.add({ type: heal ? SH.PLUS : SH.HEX, x: p.x * S, y: p.y * S, z: 0.1, sx: heal ? 1.0 : 1.2, dur: 0.7, color: c, follow: fo });
-        sh.add({ type: SH.RING, x: p.x * S, y: p.y * S, sx: 1.3, dur: 0.55, color: c, follow: fo });
-        for (let i = 0; i < 12; i++) { const a = rnd(6.283), r = rnd(0.2, 0.55); parts.puff(p.x * S + Math.cos(a) * r, 0.1, p.y * S + Math.sin(a) * r, 0, rnd(0.8, 1.8), 0, rnd(0.6, 1), 0.12, c, 1, 0, 0.3); } break;
+        sh.add({ type: heal ? SH.PLUS : (fl.head || SH.HEX), x: p.x * S, y: p.y * S, z: 0.1, sx: heal ? 1.0 : 1.2, dur: 0.7, color: c, follow: fo });
+        sh.add({ type: SH.RING, x: p.x * S, y: p.y * S, sx: 1.3, dur: 0.55, color: heal ? c : (fl.c2 || c), follow: fo });
+        for (let i = 0; i < 12; i++) { const a = rnd(6.283), r = rnd(0.2, 0.55); parts.puff(p.x * S + Math.cos(a) * r, 0.1, p.y * S + Math.sin(a) * r, 0, rnd(0.8, 1.8), 0, rnd(0.6, 1), 0.12, heal ? c : mix(c, fl.c2), 1, 0, 0.3); } break;
       }
       case 'cc': {
         const ms = Math.min(1.8, (m.ms || 800) / 1000), ty = m.type || 'stun', ccCol = CC_COL[ty] ?? 0xffe14a; let o = null; for (const k of ccs) if (k.id === m.id) { o = k; break; }
@@ -284,13 +307,13 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
         bolt({ x: a.x, y: a.y, dx: (b.x - a.x) / d, dy: (b.y - a.y) / d, speed: 1800, range: d, color: c, size: 0.2, small: true, onEnd: (x, y) => quietHit(x, y, c, 0.5) }); break;
       }
       case 'obj': if (fin(m.x, m.y)) { // placed object (turret, pin, ward, portal, wall...): deploy flash + footprint that lasts the object's life
-        const R = Math.max(0.8, (m.r || 70) * S), life = Math.min(8, Math.max(0.9, (m.ms || 0) / 1000 || 0.9)); sh.add({ type: SH.FLASH, x: m.x * S, y: m.y * S, z: 0.5, sx: 1.1, dur: 0.4, color: 0xffffff }); parts.burst(m.x * S, 0.3, m.y * S, col, 12, 2, 0.12, 0.5);
+        const R = Math.max(0.8, (m.r || 70) * S), life = Math.min(8, Math.max(0.9, (m.ms || 0) / 1000 || 0.9)); sh.add({ type: SH.FLASH, x: m.x * S, y: m.y * S, z: 0.5, sx: 1.1, dur: 0.4, color: fl.c2 || 0xffffff }); parts.burst(m.x * S, 0.3, m.y * S, col, 12, 2, 0.12, 0.5);
         if (fin(m.x2, m.y2)) { // wall / fence between two points: glowing beam + end posts
           const a = Math.atan2(m.y2 - m.y, m.x2 - m.x), L = Math.hypot(m.x2 - m.x, m.y2 - m.y) * S, mx = ((m.x + m.x2) / 2) * S, my = ((m.y + m.y2) / 2) * S, w = Math.max(0.16, (m.thick || 46) * S * 0.6);
           const h1 = sh.add({ type: SH.STREAK, x: mx, y: my, z: 0.45, rot: a, sx: L / 2, sz: w, color: col, alpha: 0.9, dur: 0, prio: 1 }), h2 = sh.add({ type: SH.STREAK, x: mx, y: my, z: 0.46, rot: a + Math.PI, sx: L / 2, sz: w, color: col, alpha: 0.9, dur: 0, prio: 1 });
-          const h3 = sh.add({ type: SH.HEX, x: m.x * S, y: m.y * S, z: 0.47, sx: 0.5, dur: 0, color: 0xffffff, prio: 1 }), h4 = sh.add({ type: SH.HEX, x: m.x2 * S, y: m.y2 * S, z: 0.47, sx: 0.5, dur: 0, color: 0xffffff, prio: 1 });
+          const h3 = sh.add({ type: fl.head || SH.HEX, x: m.x * S, y: m.y * S, z: 0.47, sx: 0.5, dur: 0, color: 0xffffff, prio: 1 }), h4 = sh.add({ type: fl.head || SH.HEX, x: m.x2 * S, y: m.y2 * S, z: 0.47, sx: 0.5, dur: 0, color: 0xffffff, prio: 1 });
           objs.push({ hs: [h1, h2, h3, h4], left: life, x: m.x, y: m.y, x2: m.x2, y2: m.y2, col, acc: 0 });
-        } else { const h = sh.add({ type: SH.HEX, x: m.x * S, y: m.y * S, z: 0.1, sx: Math.min(2.2, R), dur: 0, color: col, alpha: 0.8, prio: 1 }); if (h) objs.push({ hs: [h], left: Math.min(life, 5), x: m.x, y: m.y, col, acc: 0 }); }
+        } else { const h = sh.add({ type: fl.head || SH.HEX, x: m.x * S, y: m.y * S, z: 0.1, sx: Math.min(2.2, R), dur: 0, color: col, alpha: 0.8, prio: 1 }); if (h) objs.push({ hs: [h], left: Math.min(life, 5), x: m.x, y: m.y, col, acc: 0 }); }
       } break;
       case 'gping': if (fin(m.x0, m.y0, m.x1, m.y1)) {
         const a = Math.atan2(m.y1 - m.y0, m.x1 - m.x0), L = Math.hypot(m.x1 - m.x0, m.y1 - m.y0) * S, dur = Math.max(0.45, (m.ms || 800) / 1000);
