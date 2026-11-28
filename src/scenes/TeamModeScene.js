@@ -2470,23 +2470,37 @@ export default class TeamModeScene extends Phaser.Scene {
           if (this._moveDest && canMove) {
             const slow = (c.slowUntil || 0) > srvNow ? 1 - Math.min(90, c.slowPct || 0) / 100 : 1;
             let step = Math.max(0, (c.ms || 330) * slow) * dt;
+            const nav = this.world.nav;
             // Walk the nav path (waypoints around walls), carrying leftover step to the next waypoint.
             for (let guard = 0; guard < 4 && this._moveDest && step > 0; guard++) {
               const path = this._movePath;
               const wp = path && path.length ? path[0] : this._moveDest;
               const dx = wp.x - p.x, dy = wp.y - p.y, d = Math.hypot(dx, dy);
               if (d <= step) {
-                p.x = wp.x; p.y = wp.y; step -= d;
+                if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, wp.x, wp.y, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+                else { p.x = wp.x; p.y = wp.y; }
+                step -= d;
                 if (path && path.length) path.shift();
                 if (!path || !path.length) { this._moveDest = null; this._movePath = null; }
-              } else { p.x += (dx / d) * step; p.y += (dy / d) * step; step = 0; }
+              } else {
+                const nx = p.x + (dx / d) * step, ny = p.y + (dy / d) * step;
+                if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, nx, ny, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+                else { p.x = nx; p.y = ny; }
+                step = 0;
+              }
             }
-            if (err > 60) { const k = approach(dt, 2); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k; }
+            if (err > 60) {
+              const k = approach(dt, 2), bx = p.x + (c.x - p.x) * k, by = p.y + (c.y - p.y) * k;
+              if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, bx, by, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+              else { p.x = bx; p.y = by; }
+            }
           } else {
-            const k = approach(dt, 9); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k;
+            const k = approach(dt, 9), bx = p.x + (c.x - p.x) * k, by = p.y + (c.y - p.y) * k;
+            if (this.world.nav && this.world.nav.moveSlide) { const m = this.world.nav.moveSlide(p.x, p.y, bx, by, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+            else { p.x = bx; p.y = by; }
           }
           // Never show yourself inside furniture (reconcile blending can cut a corner).
-          if (this.world.nav.isBlocked(p.x, p.y, CHAMP_RADIUS - 4)) { const q = this.world.nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
+          if (this.world.nav.isBlocked(p.x, p.y, CHAMP_RADIUS)) { const q = this.world.nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
         }
         v.setDisplayPos(p.x, p.y);
       }

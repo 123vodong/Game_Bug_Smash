@@ -632,8 +632,17 @@ export class OfflineSim {
   _navR(e) { return e.champ ? CHAMP_RADIUS : e.kind === 'pet' ? PET_R : (R.EPICS[e.kind] ? 0 : MINION_RADIUS); }
   /** Step then resolve wall overlap (minions, monsters). */
   _stepNav(e, to, speed, dt) {
-    const done = this._step(e, to, speed, dt);
     const r = this._navR(e);
+    if (r > 0 && this.nav.moveSlide) {
+      const dx = to.x - e.x, dy = to.y - e.y, d = Math.hypot(dx, dy);
+      if (d < 1) return true;
+      const s = Math.min(d, speed * dt);
+      const m = this.nav.moveSlide(e.x, e.y, e.x + (dx / d) * s, e.y + (dy / d) * s, r);
+      e.x = m.x; e.y = m.y;
+      if (e.champ) { e._mvx = dx / d; e._mvy = dy / d; }
+      return s >= d;
+    }
+    const done = this._step(e, to, speed, dt);
     if (r) { const q = this.nav.pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y; }
     return done;
   }
@@ -647,8 +656,25 @@ export class OfflineSim {
     const wp = e._nav[0];
     if (!wp) return true;
     let arrived = false;
-    if (this._step(e, wp, speed, dt)) { e._nav.shift(); arrived = !e._nav.length; }
-    const q = this.nav.pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y;
+    if (this.nav.moveSlide) {
+      const dx = wp.x - e.x, dy = wp.y - e.y, d = Math.hypot(dx, dy);
+      if (d < 1) {
+        e._nav.shift(); arrived = !e._nav.length;
+      } else {
+        const s = Math.min(d, speed * dt);
+        const m = this.nav.moveSlide(e.x, e.y, e.x + (dx / d) * s, e.y + (dy / d) * s, r);
+        e.x = m.x; e.y = m.y;
+        if (e.champ) { e._mvx = dx / d; e._mvy = dy / d; }
+        if (s >= d || Math.hypot(e.x - wp.x, e.y - wp.y) < 1) {
+          e._nav.shift(); arrived = !e._nav.length;
+        } else if (m.hit && e._nav.length === 1 && this.nav.isBlocked(goal.x, goal.y, r)) {
+          e._nav.shift(); arrived = true;
+        }
+      }
+    } else {
+      if (this._step(e, wp, speed, dt)) { e._nav.shift(); arrived = !e._nav.length; }
+      const q = this.nav.pushOut(e.x, e.y, r); e.x = q.x; e.y = q.y;
+    }
     return arrived;
   }
 

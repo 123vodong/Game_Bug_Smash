@@ -12,7 +12,7 @@
 // Cost: no A* per entity per tick. A* runs only when the straight line is
 // blocked; units (not champions) share a per-tick path budget and a per-unit
 // cooldown, falling back to step + pushOut (slide) meanwhile.
-import { isBlocked, pushOut, segmentClear, findPath, nearestFree, wallDist, NAV_CELL } from '../../../shared/moba/nav.js';
+import { isBlocked, pushOut, segmentClear, moveSlide, findPath, nearestFree, wallDist, NAV_CELL } from '../../../shared/moba/nav.js';
 import { MAP_W, MAP_H, WALLS, CHAMP_RADIUS, clampToMap } from '../../../shared/moba/map.js';
 
 export const REPATH_DIST = 150;   // goal moved this far → new route
@@ -122,14 +122,20 @@ export class Mover {
     for (let guard = 0; guard < 8 && step > 0; guard++) {
       const pts = nav.pts;
       const last = !pts || nav.i >= pts.length - 1;
+      const goalFree = last && isBlocked(gx, gy, r)
+        ? (pts && pts.length ? pts[pts.length - 1] : nearestFree(gx, gy, r))
+        : { x: gx, y: gy };
       // Intermediate waypoints are clear by construction; the last leg heads for
-      // the CURRENT goal (it may have drifted < REPATH_DIST since planning).
-      const tx = last ? gx : pts[nav.i].x;
-      const ty = last ? gy : pts[nav.i].y;
+      // the CURRENT goal (or nearestFree/path end if the clicked point sits inside a wall).
+      const tx = last ? goalFree.x : pts[nav.i].x;
+      const ty = last ? goalFree.y : pts[nav.i].y;
       const dx = tx - e.x, dy = ty - e.y;
       const d = Math.hypot(dx, dy);
       if (d < 0.5) {
-        if (last) { e.x = gx; e.y = gy; return true; }
+        if (last) {
+          if (!isBlocked(tx, ty, r)) { e.x = tx; e.y = ty; }
+          return true;
+        }
         nav.i++;
         continue;
       }
@@ -144,17 +150,27 @@ export class Mover {
         }
       }
       if (step >= d) {
-        e.x = tx; e.y = ty;
+        const m = r > 0 ? moveSlide(e.x, e.y, tx, ty, r) : { x: tx, y: ty, hit: false };
+        e.x = m.x; e.y = m.y;
         step -= d;
-        if (last) { resolveWalls(e); return Math.hypot(e.x - gx, e.y - gy) < 1; }
+        if (last) {
+          resolveWalls(e);
+          if (m.hit && isBlocked(gx, gy, r) && Math.hypot(e.x - tx, e.y - ty) < 4) return true;
+          return Math.hypot(e.x - tx, e.y - ty) < 1;
+        }
         nav.i++;
         // Shortcut: the goal is in plain sight now → drop the rest of the route.
-        if (nav.i < pts.length - 1 && segmentClear(e.x, e.y, gx, gy, r)) { nav.pts = null; nav.i = 0; }
+        if (nav.i < pts.length - 1 && segmentClear(e.x, e.y, goalFree.x, goalFree.y, r)) { nav.pts = null; nav.i = 0; }
         continue;
       }
-      e.x += ux * step;
-      e.y += uy * step;
+      const nx = e.x + ux * step, ny = e.y + uy * step;
+      const m = r > 0 ? moveSlide(e.x, e.y, nx, ny, r) : { x: nx, y: ny, hit: false };
+      e.x = m.x; e.y = m.y;
       step = 0;
+      if (m.hit && last && isBlocked(gx, gy, r) && Math.hypot(e.x - tx, e.y - ty) < 4) {
+        resolveWalls(e);
+        return true;
+      }
     }
     resolveWalls(e);
     return false;

@@ -21,7 +21,7 @@ import { MAP_W, MAP_H, WALLS, distToSeg } from './map.js';
 
 export const NAV_CELL = 60;
 const EPS = 0.5;
-const GRID_MARGIN = 6;            // px of extra clearance baked into the A* grid
+const GRID_MARGIN = 13;           // px of extra clearance (> NAV_CELL/2 * sqrt(2) - CHAMP_RADIUS) so diagonal vertices never poke between adjacent cells
 
 // ── primitive distances (independent of any wall list) ──
 function rectDist(px, py, w) {
@@ -258,7 +258,7 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
     if (isBlocked(x0, y0, r)) { const p = pushOut(x0, y0, r); x0 = p.x; y0 = p.y; }
     if (segmentClear(x0, y0, x1, y1, r)) return { x: x1, y: y1, hit: false };
     const len = Math.hypot(x1 - x0, y1 - y0);
-    const steps = Math.max(1, Math.ceil(len / 8));
+    const steps = Math.max(1, Math.ceil(len / 4));
     let lx = x0, ly = y0;
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
@@ -267,6 +267,62 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
       lx = px; ly = py;
     }
     return { x: x1, y: y1, hit: false };
+  }
+
+  /** Outward unit normal at point (px, py) from the closest wall surface. */
+  function wallNormalAt(px, py) {
+    let bestW = null, bestD = Infinity;
+    for (let i = 0; i < WALLS_.length; i++) {
+      const d = wallDist(px, py, WALLS_[i]);
+      if (d < bestD) { bestD = d; bestW = WALLS_[i]; }
+    }
+    if (!bestW) return { nx: 0, ny: 1 };
+    if (bestW.kind === 'poly') {
+      const { d, cx, cy, nx, ny } = polyEdgeDist(px, py, bestW.pts);
+      if (d > 0.01 && !pointInPoly(px, py, bestW.pts)) {
+        return { nx: (px - cx) / d, ny: (py - cy) / d };
+      }
+      const sign = pointInPoly(cx + nx, cy + ny, bestW.pts) ? -1 : 1;
+      return { nx: nx * sign, ny: ny * sign };
+    }
+    if (bestW.kind === 'circle') {
+      const dx = px - bestW.x, dy = py - bestW.y, l = Math.hypot(dx, dy);
+      return l > 0.01 ? { nx: dx / l, ny: dy / l } : { nx: 1, ny: 0 };
+    }
+    if (bestW.kind === 'seg') {
+      const vx = bestW.x2 - bestW.x1, vy = bestW.y2 - bestW.y1, l2 = vx * vx + vy * vy || 1;
+      const t = Math.max(0, Math.min(1, ((px - bestW.x1) * vx + (py - bestW.y1) * vy) / l2));
+      const cx = bestW.x1 + vx * t, cy = bestW.y1 + vy * t;
+      const dx = px - cx, dy = py - cy, l = Math.hypot(dx, dy);
+      if (l > 0.01) return { nx: dx / l, ny: dy / l };
+      const len = Math.sqrt(l2);
+      return { nx: -vy / len, ny: vx / len };
+    }
+    const cx = Math.max(bestW.x, Math.min(px, bestW.x + bestW.w));
+    const cy = Math.max(bestW.y, Math.min(py, bestW.y + bestW.h));
+    const dx = px - cx, dy = py - cy, l = Math.hypot(dx, dy);
+    return l > 0.01 ? { nx: dx / l, ny: dy / l } : { nx: 0, ny: 1 };
+  }
+
+  /** Continuous move-and-slide from (x0, y0) to (x1, y1) for radius r without tunneling through walls. */
+  function moveSlide(x0, y0, x1, y1, r = 0) {
+    if (!fin(x0, y0, x1, y1)) return { x: x0, y: y0, hit: false };
+    if (isBlocked(x0, y0, r)) {
+      let p = pushOut(x0, y0, r);
+      if (isBlocked(p.x, p.y, r)) p = nearestFree(x0, y0, r);
+      x0 = p.x; y0 = p.y;
+    }
+    if (segmentClear(x0, y0, x1, y1, r)) return { x: x1, y: y1, hit: false };
+    const h = clipMove(x0, y0, x1, y1, r);
+    const rx = x1 - h.x, ry = y1 - h.y;
+    if (Math.hypot(rx, ry) < 0.5) return { x: h.x, y: h.y, hit: true };
+    const { nx, ny } = wallNormalAt(h.x, h.y);
+    const dot = rx * nx + ry * ny;
+    const tx = dot < 0 ? rx - dot * nx : rx;
+    const ty = dot < 0 ? ry - dot * ny : ry;
+    if (Math.hypot(tx, ty) < 0.5) return { x: h.x, y: h.y, hit: true };
+    const slid = clipMove(h.x, h.y, h.x + tx, h.y + ty, r);
+    return { x: slid.x, y: slid.y, hit: true };
   }
 
   /** Closest free position to (x, y) for a circle of radius r. */
@@ -371,13 +427,13 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
     return -1;
   }
 
-  /** Open cell near (x, y) whose center is reachable in a straight line (falls back to BFS). */
+  /** Open cell near (x, y) whose center is reachable in a straight line. */
   function visibleOpenCell(g, x, y, r) {
     const c0 = cellOf(x, y);
     const cx0 = c0 % GW, cy0 = (c0 - cx0) / GW;
     let best = -1, bestD = Infinity;
-    for (let oy = -2; oy <= 2; oy++) {
-      for (let ox = -2; ox <= 2; ox++) {
+    for (let oy = -4; oy <= 4; oy++) {
+      for (let ox = -4; ox <= 4; ox++) {
         const nx = cx0 + ox, ny = cy0 + oy;
         if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
         const n = ny * GW + nx;
@@ -386,7 +442,7 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
         if (d < bestD && segmentClear(x, y, cellX(n), cellY(n), r)) { bestD = d; best = n; }
       }
     }
-    return best >= 0 ? best : openCellNear(g, c0);
+    return best;
   }
 
   // A* scratch buffers (reused; JS is single-threaded).
@@ -430,7 +486,7 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
     const g = gridFor(r);
     const s = visibleOpenCell(g, x0, y0, r);
     const t = visibleOpenCell(g, goal.x, goal.y, r);
-    if (s < 0 || t < 0) return [goal];
+    if (s < 0 || t < 0) { const c = clipMove(x0, y0, goal.x, goal.y, r); return [{ x: c.x, y: c.y }]; }
     gen++;
     heap.length = 0;
     const tx = t % GW, ty = (t - tx) / GW;
@@ -459,7 +515,7 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
         hpush(ng + h(n), n);
       }
     }
-    if (!found) return [goal];
+    if (!found) { const c = clipMove(x0, y0, goal.x, goal.y, r); return [{ x: c.x, y: c.y }]; }
     const cells = [];
     for (let c = t; c !== -1; c = came[c]) cells.push(c);
     cells.reverse();
@@ -505,7 +561,7 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
   return {
     w: width, h: height,
     get walls() { return WALLS_; },
-    isBlocked, pushOut, segmentClear, clipMove, nearestFree, blinkLanding, findPath, pathLength, setDynamic,
+    isBlocked, pushOut, segmentClear, clipMove, moveSlide, nearestFree, blinkLanding, findPath, pathLength, setDynamic,
     hasDynamic: (id) => dyn.has(id),
   };
 }
@@ -516,6 +572,7 @@ export const isBlocked = NAV_5V5.isBlocked;
 export const pushOut = NAV_5V5.pushOut;
 export const segmentClear = NAV_5V5.segmentClear;
 export const clipMove = NAV_5V5.clipMove;
+export const moveSlide = NAV_5V5.moveSlide;
 export const nearestFree = NAV_5V5.nearestFree;
 export const blinkLanding = NAV_5V5.blinkLanding;
 export const findPath = NAV_5V5.findPath;
