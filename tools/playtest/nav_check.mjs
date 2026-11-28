@@ -6,11 +6,12 @@ import {
   WALLS, BUSHES, LANES, STRUCTURES, CAMPS, EPIC_SPOTS, FOUNTAIN, RIVER, MAP_W, MAP_H,
   STRUCTURE_RADIUS, distToSeg, CHAMP_RADIUS,
 } from '../../shared/moba/map.js';
-import { wallDist, findPath, pathLength, isBlocked, nearestFree, segmentClear, clipMove, pushOut } from '../../shared/moba/nav.js';
+import { wallDist, findPath, pathLength, isBlocked, nearestFree, segmentClear, clipMove, pushOut, moveSlide, pointInPoly } from '../../shared/moba/nav.js';
+import { Mover } from '../../server/game/moba/Mover.js';
 
 const problems = [];
 // Clearances tuned for organic cliffs + curved Baron/Dragon pit horseshoes + 3-gate base ramparts.
-const CLEAR = { lane: 175, river: 135, struct: 185, camp: 125, epic: 145, fountain: 880, gap: 105 };
+const CLEAR = { lane: 175, river: 135, struct: 185, camp: 125, epic: 110, fountain: 880, gap: 105 };
 
 // Distance from a wall's surface to a point / polyline.
 const wPoint = (w, p) => wallDist(p.x, p.y, w);
@@ -154,6 +155,76 @@ for (const b of BUSHES) {
     const d = wallDist(bx, by, w);
     if (d < 10) problems.push(`bush ${b.id} clips wall ${w.id} (dist=${d.toFixed(1)})`);
   }
+}
+
+// Regression: moveSlide, findPath across walls, and Mover clicking inside walls never cross walls or jitter endlessly.
+{
+  const segInt = (ax, ay, bx, by, cx, cy, dx, dy) => {
+    const cr = (x1, y1, x2, y2) => x1 * y2 - y1 * x2;
+    const d1 = cr(bx - ax, by - ay, cx - ax, cy - ay), d2 = cr(bx - ax, by - ay, dx - ax, dy - ay);
+    const d3 = cr(dx - cx, dy - cy, ax - cx, ay - cy), d4 = cr(dx - cx, dy - cy, bx - cx, by - cy);
+    return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+  };
+  const segHitsAnyWall = (x0, y0, x1, y1) => {
+    for (const w of WALLS) {
+      if (w.kind !== 'poly') continue;
+      const pts = w.pts;
+      if (pointInPoly((x0 + x1) * 0.5, (y0 + y1) * 0.5, pts)) return w.id;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        if (segInt(x0, y0, x1, y1, pts[j][0], pts[j][1], pts[i][0], pts[i][1])) return w.id;
+      }
+    }
+    return null;
+  };
+
+  let slideCross = 0, crossPathBad = 0, moverCross = 0, moverJitterFail = 0;
+  const mover = new Mover();
+  for (const w of WALLS) {
+    if (w.kind !== 'poly') continue;
+    const pts = w.pts;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const mx = (a[0] + b[0]) * 0.5, my = (a[1] + b[1]) * 0.5;
+      const vx = b[0] - a[0], vy = b[1] - a[1], l = Math.hypot(vx, vy) || 1;
+      let nx = -vy / l, ny = vx / l;
+      if (pointInPoly(mx + nx * 2, my + ny * 2, pts)) { nx = -nx; ny = -ny; }
+      const sx = mx + nx * (r + 1), sy = my + ny * (r + 1);
+      if (isBlocked(sx, sy, r)) continue;
+
+      for (const st of [15, 30, 50, 80]) {
+        const m = moveSlide(sx, sy, sx - nx * st, sy - ny * st, r);
+        if (segHitsAnyWall(sx, sy, m.x, m.y)) { slideCross++; break; }
+      }
+
+      const gx = mx - nx * 250, gy = my - ny * 250;
+      const path = findPath(sx, sy, gx, gy, r);
+      let px = sx, py = sy;
+      for (const wp of path) {
+        if (!segmentClear(px, py, wp.x, wp.y, r - 2)) { crossPathBad++; break; }
+        px = wp.x; py = wp.y;
+      }
+
+      if (i % 3 === 0) {
+        const ix = mx - nx * 25, iy = my - ny * 25;
+        const e = { x: sx, y: sy, radius: r, etype: 'champ', nav: null, navPathAt: 0 };
+        let now = 1000, ox = sx, oy = sy, activeTicks = 0, done = false;
+        for (let tick = 0; tick < 80; tick++) {
+          now += 50;
+          mover.beginTick();
+          done = mover.move(e, ix, iy, 360, 50, now);
+          if (segHitsAnyWall(ox, oy, e.x, e.y)) { moverCross++; break; }
+          if (Math.hypot(e.x - ox, e.y - oy) > 0.1) activeTicks++;
+          ox = e.x; oy = e.y;
+          if (done) break;
+        }
+        if (!done && activeTicks > 60) moverJitterFail++;
+      }
+    }
+  }
+  if (slideCross) problems.push(`moveSlide crossed wall ${slideCross} time(s)`);
+  if (crossPathBad) problems.push(`findPath across walls had ${crossPathBad} clipping leg(s)`);
+  if (moverCross) problems.push(`Mover.move clicking inside wall crossed ${moverCross} time(s)`);
+  if (moverJitterFail) problems.push(`Mover.move clicking inside wall jittered endlessly on ${moverJitterFail} edge(s)`);
 }
 
 console.log(`walls: ${WALLS.length} · fountain paths: ${n} avg ${(total / n).toFixed(2)} ms max ${slow.toFixed(2)} ms · random: avg ${(rTotal / 2000).toFixed(3)} ms max ${rMax.toFixed(2)} ms`);

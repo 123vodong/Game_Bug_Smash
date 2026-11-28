@@ -506,14 +506,29 @@ export function createInput({ canvas, source, pick, project, camera, mode = 'tea
         const wp = movePath && movePath.length ? movePath[0] : moveDest;
         const dx = wp.x - p.x, dy = wp.y - p.y, d = Math.hypot(dx, dy);
         if (d <= step) {
-          p.x = wp.x; p.y = wp.y; step -= d;
+          if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, wp.x, wp.y, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+          else { p.x = wp.x; p.y = wp.y; }
+          step -= d;
           if (movePath && movePath.length) movePath.shift();
           if (!movePath || !movePath.length) { moveDest = null; movePath = null; }
-        } else { p.x += (dx / d) * step; p.y += (dy / d) * step; step = 0; }
+        } else {
+          const nx = p.x + (dx / d) * step, ny = p.y + (dy / d) * step;
+          if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, nx, ny, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+          else { p.x = nx; p.y = ny; }
+          step = 0;
+        }
       }
-      if (err > 60) { const k = approach(dt, 2); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k; }
-    } else { const k = approach(dt, 9); p.x += (c.x - p.x) * k; p.y += (c.y - p.y) * k; }
-    if (nav && nav.isBlocked && nav.isBlocked(p.x, p.y, CHAMP_RADIUS - 4)) { const q = nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
+      if (err > 60) {
+        const k = approach(dt, 2), bx = p.x + (c.x - p.x) * k, by = p.y + (c.y - p.y) * k;
+        if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, bx, by, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+        else { p.x = bx; p.y = by; }
+      }
+    } else {
+      const k = approach(dt, 9), bx = p.x + (c.x - p.x) * k, by = p.y + (c.y - p.y) * k;
+      if (nav && nav.moveSlide) { const m = nav.moveSlide(p.x, p.y, bx, by, CHAMP_RADIUS); p.x = m.x; p.y = m.y; }
+      else { p.x = bx; p.y = by; }
+    }
+    if (nav && nav.isBlocked && nav.isBlocked(p.x, p.y, CHAMP_RADIUS)) { const q = nav.pushOut(p.x, p.y, CHAMP_RADIUS); p.x = q.x; p.y = q.y; }
   }
 
   // ---------------- source messages ----------------

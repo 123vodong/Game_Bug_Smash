@@ -88,8 +88,8 @@ export const CAMPS = [
   ...BLUE_CAMPS.map((c) => ({ ...c, ...rot180(c), side: 'red', id: `red_${c.id}` })),
 ];
 export const EPIC_SPOTS = {
-  deadline: { x: 1925, y: 1730 }, // Baron pit cove (inside upper C-alcove)
-  golden:   { x: 4075, y: 4270 }, // Dragon pit cove (inside lower C-alcove)
+  deadline: { x: 1995, y: 1645 }, // Baron pit cove (inside upper C-alcove)
+  golden:   { x: 4005, y: 4355 }, // Dragon pit cove (inside lower C-alcove)
 };
 
 // ── Walls (v7: high-fidelity LoL Summoner's Rift rock landmasses + 3-gate curved base ramparts) ──
