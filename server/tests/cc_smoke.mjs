@@ -7,6 +7,8 @@
 // Author: Duke Nguyen
 import assert from 'node:assert/strict';
 import { CHAMPIONS, CC_TYPES, CC_TUNING, parseCcTags } from '../../shared/moba/champions.js';
+import { CHAMP_RADIUS } from '../../shared/moba/map.js';
+import { isBlocked } from '../../shared/moba/nav.js';
 import { SkillEngine } from '../game/moba/SkillEngine.js';
 import { Kits } from '../game/moba/Kits.js';
 import { Objects } from '../game/moba/Objects.js';
@@ -343,18 +345,23 @@ const FAR = (i) => 100 + i * 150; // spread dummies far from each other
   assert.ok(!fx.some((f) => f.k === 'proj' && f.sid === tp2.id), 'stun cancels the shot');
 }
 
-// 7. phase dash through a thin wall (w0: vertical seg x=920, 60 wide, y 1620..2300)
+// 7. phase dash through a thin wall
 {
   const spec = CHAMPIONS.courier.skills.q;
   const run = (s) => { const c = champ('courier', 'blue', 700, 2000); fx.length = 0; room.skills.cast(c, 'q', s, aim(1200, 2000), T0); return c; };
+  let firstBlockedX = Infinity;
+  for (let x = 704; x <= 1200; x += 4) {
+    if (isBlocked(x, 2000, CHAMP_RADIUS)) { firstBlockedX = x; break; }
+  }
+  assert.ok(Number.isFinite(firstBlockedX), 'test path intersects a wall');
   const c1 = run(spec);
   assert.ok(c1.x > 1100, `phase lands past the wall (x=${c1.x})`);
   assert.ok(last('dash').phase === 1, 'dash fx carries phase:1');
   const c2 = run({ ...spec, phase: undefined });
-  assert.ok(c2.x < 920, 'plain dash stops at the wall');
+  assert.ok(c2.x > 700 && c2.x < firstBlockedX && isBlocked(c2.x + 4, c2.y, CHAMP_RADIUS), 'plain dash stops at the wall');
   assert.ok(!last('dash').phase);
   const c3 = run({ ...spec, phase: { maxWall: 20 } });
-  assert.ok(c3.x < 920, 'wall thicker than maxWall: stops short');
+  assert.ok(c3.x > 700 && c3.x < firstBlockedX && !last('dash').phase, 'wall thicker than maxWall: stops short');
   // a long wall in the way of the whole dash: stop at the last free point before it
   const c4 = champ('courier', 'blue', 700, 2000);
   room.skills.cast(c4, 'q', { ...spec, range: 160 }, aim(1200, 2000), T0);
