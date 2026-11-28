@@ -1,8 +1,8 @@
 // LocalStorage wrapper for persistent flags, high scores, and level progression.
 // Schema keyed under a single localStorage entry so we can wipe/migrate easily.
 //
-// Save migration rule (EXPERIENCE_PASS_BREAKDOWN.md §3.4): keys are only ever ADDED, every
-// new key has a default on read, `muted` is never renamed, and `reset()` stays the one wipe.
+// Save migration rule: keys are only ever ADDED, every new key has a default on read,
+// `muted` is never renamed, and `reset()` stays the one wipe.
 //   settings   { volume:0.8, shake:true, flashes:true }
 //   flags      { welcomeSeen, coachCampaign, tipsArena, tipsSiege }  (any JSON value; falsy = unset)
 //   levelStars { [levelId]: 0..3 }   — best stars per campaign level

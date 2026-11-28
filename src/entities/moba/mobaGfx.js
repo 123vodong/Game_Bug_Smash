@@ -47,7 +47,7 @@ export const toArr = (a) => (!a ? [] : Array.isArray(a) ? a : Array.from(a));
 export const toCss = (c, dflt = '#888888') => (typeof c === 'number' && Number.isFinite(c) ? css(c) : (typeof c === 'string' && c ? c : dflt));
 
 // ─────────────────────────── EP-10: calm settings + EP-11: hats ───────────────────────────
-// settings { shake, flashes } (EXPERIENCE_PASS_BREAKDOWN §3.4) via core/FxPrefs (cached reads;
+// settings { shake, flashes } via core/FxPrefs (cached reads;
 // it also gates every Camera.shake / Camera.flash globally). Views ask before their own flashes.
 const _calm = { shake: true, flashes: true };
 export function calmPrefs() {

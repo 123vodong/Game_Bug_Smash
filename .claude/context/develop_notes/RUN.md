@@ -19,9 +19,10 @@ Open http://localhost:2567 — main menu → **PLAY** (SP campaign), **MULTIPLAY
 (arena with AI coworkers, world events, the Deadline boss) or **TEAM 5v5** ("Office Siege" MOBA).
 
 Deep links: `?scene=lobby` (Team Mode champion select) · `?scene=team&champ=tester` (straight into a
-match; champs: pixel, stack, ops, tester, zero, model) · add `&offline=1` for the no-server mock.
+match; the Team Mode roster has 18 champions) · add `&offline=1` for the no-server mock. Append
+`&renderer=3d` to opt into the unapproved Three.js renderer; Phaser 2D remains the default.
 Team Mode playtests: `node tools/playtest/team_sim.mjs` (headless human) ·
-`node tools/playtest/team_sim.mjs --exploits` (18 checks) · in-process fast-forward:
+`node tools/playtest/team_sim.mjs --exploits` (current exploit checks) · in-process fast-forward:
 `node tools/playtest/team_ff.mjs 10 45 --seed=1 --quiet` (whole bots-only matches in seconds — use it
 to check balance/match length after any rules.js change; ≥ 20 matches before trusting a side split). The old two-terminal flow
 (`python -m http.server 8000` + the server) still works for LAN testing on phones.
@@ -59,9 +60,11 @@ Compress-Archive -Path index.html, README.txt, src, assets -DestinationPath BugS
 
 ---
 
-## Multiplayer hosting (planned)
+## Multiplayer hosting
 
-Currently runs only on the developer's PC. Phase 4 of the roadmap (see [../design/10_ROADMAP.md](../design/10_ROADMAP.md) + [../plan/3D_MP_PHASES.md](../plan/3D_MP_PHASES.md)) deploys the Colyseus server to **Render free tier** (`https://*.onrender.com`), then the client's `SERVER_URL` constant in [src/scenes/MultiPlayScene.js](../../../src/scenes/MultiPlayScene.js) flips from `ws://localhost:2567` to the deployed `wss://…`.
+These instructions describe local development only. They do not establish that a public server is
+deployed or that a Render URL is active. Before sharing a build, check the current server URL
+configuration and deployment environment; do not assume the old Render free-tier plan is live.
 
 ---
 
@@ -70,6 +73,6 @@ Currently runs only on the developer's PC. Phase 4 of the roadmap (see [../desig
 | URL | Purpose |
 |---|---|
 | http://localhost:8000 | Game (client) |
-| http://localhost:8000/?multiplayer | (planned) deep-link straight into MP scene |
+| http://localhost:8000/?scene=team&offline=1 | Team Mode offline practice (when serving the client on port 8000) |
 | http://localhost:2567 | MP server landing page |
 | http://localhost:2567/colyseus | Colyseus monitor — active rooms + clients |

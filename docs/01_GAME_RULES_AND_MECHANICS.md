@@ -133,7 +133,7 @@ When `trueDmg === false`, resistance mitigation executes strictly in three deter
 - **Champion Takedowns:** Kill `300g` · Assist pool `150g` (split among assisters who dealt damage within `ASSIST_WINDOW_MS = 10s`) · First Blood `+100g`.
 - **Champion Kill XP:** `140 + 30 * victimLevel` shared equally among living enemy champions within `XP_SHARE_RADIUS = 1300 px`.
 - **Tower Destruction:** `+120g` to every living/dead teammate (`18` towers + `2` cores on map; `9` towers per team across `3` lanes).
-- **Shop & Sell Rules:** `SHOP_ONLY_IN_FOUNTAIN = true` (`FOUNTAIN_RADIUS = 520 px`, or while dead). Sell refunds `70%` (`SELL_UNDO_MS = 10s` grants `100%` undo refund). Fountain heals `12% max HP/s` and `15% max Mana/s`.
+- **Shop & Sell Rules:** `SHOP_ONLY_IN_FOUNTAIN = true` (`FOUNTAIN_RADIUS = 520 px`, or while dead). Selling refunds `75%` of item cost; there is no undo window (`SELL_UNDO_MS = 0`). Fountain heals `12% max HP/s` and `15% max Mana/s`.
 
 ### 3.1. Minion Waves, AI & Anti-Pileup Caps
 - **Spawn Cadence:** First wave at `0:20` (`WAVE_FIRST_MS = 20000`), subsequent waves every `30s` (`WAVE_EVERY_MS = 30000`), growing **linearly** `+2.5%` HP/DMG per wave (`1 + 0.025 * (wave - 1)`, **capped at `MINION_GROWTH_MAX = 1.85x`** around wave 35 / `17:30` so late-game waves remain clearable).
@@ -353,7 +353,7 @@ Every `50 ms` (`20 Hz`), the authoritative simulation advances `dt = min(0.1, el
 | `RECALL_MS` / `FOUNTAIN_RADIUS` | `4,000 ms` / `520 px` | Base recall channel and shop/heal zone |
 | `FOUNTAIN_HEAL_PER_SEC` / `FOUNTAIN_MANA_PER_SEC` | `12%` / `15%` | Fountain regeneration rates per second |
 | `FOUNTAIN_LASER_DPS` | `1200` True DPS | Anti-spawn-camp laser inside enemy fountain |
-| `INVENTORY_SLOTS` / `SELL_REFUND_PCT` / `SELL_UNDO_MS` | `6` / `70%` / `10,000 ms` | Inventory capacity and sell/undo rules |
+| `INVENTORY_SLOTS` / `SELL_REFUND_PCT` / `SELL_UNDO_MS` | `6` / `75%` / `0 ms` | Inventory capacity and sell rules; no undo window |
 | `MAX_HASTE_PCT` | `0.40` (`40%`) | Hard cap on combined Item + Blue Buff Haste |
 | `CC_DR_WINDOW_MS` / `CC_DR_MUL` | `4,000 ms` / `[1, 0.5, 0.25]` | 3-stage Hard CC Diminishing Returns (`stun`, `root`, `wallStun`) |
 | `CC_IMMUNE_AFTER` / `CC_IMMUNE_MS` | `3` hits / `2,000 ms` | Hard CC Chain Immunity window granted after 3rd Hard CC resolves |

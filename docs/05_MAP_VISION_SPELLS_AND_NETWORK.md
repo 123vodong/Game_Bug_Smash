@@ -10,8 +10,8 @@
 ### 1.1. Coordinate System & Mirror Symmetry
 - **Dimensions:** `6000 x 6000 px` (`MAP_W = 6000`, `MAP_H = 6000`).
 - **Team Orientation:** Startup (`blue`) spawns at bottom-left fountain `(380, 5620)`; MegaCorp (`red`) spawns at top-right fountain `mirror(380, 5620) = (5620, 380)`.
-- **Fairness by Construction:** Every red-side coordinate is `mirror(p) = { x: p.y, y: p.x }` across the top-left-to-bottom-right river diagonal (`x = y`).
-- **River-Parallel `(s, m)` Basis:** Authoring helpers use `s = y - x` (signed distance from river axis) and `m = x + y` (mid lane axis `m = 6000`), with `sm(s, m) = { x: (m - s) / 2, y: (m + s) / 2 }` and `reflectMid(p) = { x: 6000 - p.y, y: 6000 - p.x }` mirroring blue's top jungle into blue's bot jungle.
+- **Symmetry:** Team structures use diagonal mirror `mirror(p) = { x: p.y, y: p.x }`. Camps, walls, and bushes use 180-degree rotation `rot180(p) = { x: 6000 - p.x, y: 6000 - p.y }`; epic objectives are paired at opposite map locations.
+- **River:** `RIVER_PATH` contains the curved centerline; `RIVER` gives its approximate endpoints and `420 px` width.
 
 ### 1.2. Lanes, River & Bases
 | Region | Geometry / Waypoints | Width / Radius | Tactical Purpose |
@@ -19,7 +19,7 @@
 | **Top Lane** | `(850,4650) -> (650,4000) -> (650,1000) -> (1000,650) -> (4000,650) -> (4650,850)` | `320 px` | Long solo lane; open river corner above `y = 1620` |
 | **Mid Lane** | `(1200,4800) -> (3000,3000) -> (4800,1200)` | `320 px` | Shortest lane; fastest roam access to both river objectives |
 | **Bot Lane** | `(1350,5150) -> (2000,5350) -> (5000,5350) -> (5350,5000) -> (5350,2000) -> (5150,1350)` | `320 px` | Carry + Support duo lane; Dragon/Golden Bug contest |
-| **River ("Data Stream")** | `(700,700) -> (5300,5300)` | `420 px` | Central neutral corridor housing both Epic Pits |
+| **River ("Data Stream")** | S-curved `RIVER_PATH` from northwest to southeast; envelope `(700,700)` to `(5300,5300)` | `420 px` | Central neutral corridor housing both Epic Pits |
 | **Bases / Fountains** | Blue `(380,5620)` / Red `(5620,380)` | `BASE_RADIUS = 1150 px`, `FOUNTAIN_RADIUS = 520 px` | Heal/Shop safe zone + `1200 DPS` enemy fountain laser |
 
 ### 1.3. Structures (`20` Total = `10` per Team)
@@ -44,11 +44,11 @@
 | `blue_bot_3` | Tower (Core Firewall) | `bot` | 3 | `(1350, 5150)` | `(5150, 1350)` |
 | `blue_core` | Core (Attacks `640 px`) | `base` | 4 | `(850, 5150)` | `(5150, 850)` |
 
-### 1.4. Jungle Camps (`12`), Epic Pits (`2`), Walls (`44`) & Bushes (`24`)
-- **Blue Top-Jungle Camps:** `blue_tj_small` `(1350, 2500)`, `blue_tj_medium` `(1500, 3450)`, `blue_tj_big` `(2150, 3000)` -> reflected across mid (`reflectMid`) to `blue_bj_*`, then mirrored to Red (`red_tj_*`, `red_bj_*`).
-- **Epic Pits:** `deadline` at `(2050, 2050)` (top-side river), `golden` at `(3950, 3950)` (bot-side river).
-- **Walls (`44` total, `W_EDGE = 60 px`):** `11` walls per quadrant (`3` top-lane cubicles with entrances at `y = 2300–2600`, `3300–3600`, and open river corner `< 1620`; `3` glass river-bank walls with open corners and pit entrances; `2` mid-lane partitions; `2` interior camp dividers; `1` circular pillar `r = 70` at `(1250, 4000)`).
-- **Bushes (`24` total, `6` per quadrant):** Top-lane gank entrance `(800, 2650–2950)`, Deadline-pit entrance `sm(650, 3950–4250)`, Mid-side jungle entrance `sm(1500–1800, 5400)`, Mid-lane ambush `sm(2200–2500, 5480)`, River control `sm(200, 4700–5000)`, and interior camp circle `(1250, 3350, r = 110)`.
+### 1.4. Jungle Camps (`12`), Epic Pits (`2`), Walls (`50`) & Bushes (`34`)
+- **Jungle camps:** Six blue-side camps are authored in `CAMPS`; their red counterparts are rotated 180 degrees. Exact coordinates are listed in §7.1.
+- **Epic Pits:** `deadline` at `(1995, 1645)` and `golden` at `(4005, 4355)`.
+- **Walls:** `50` polygon obstacles (`25` authored and rotated 180 degrees for the opposite side). Exact shapes are maintained in `shared/moba/map.js`.
+- **Bushes:** `34` total (`17` authored and rotated 180 degrees for the opposite side); the authored set contains capsule segments and circles.
 
 ---
 
@@ -59,7 +59,7 @@
   2. Otherwise runs 8-neighbor A* (`SQ2` diagonal cost, **no corner cutting** across blocked cardinal neighbors) followed by line-of-sight string-pulling smoothing.
   3. Goal inside a wall snaps to `nearestFree(goal, r)`.
 - **Collision & Movement Primitives:**
-  - `isBlocked(x, y, r)`: Checks exact distance (`wallDist`) against `circle`, `seg` (capsule), and `rect` walls.
+  - `isBlocked(x, y, r)`: Checks polygon containment and edge distance, plus supported `circle`, `seg` (capsule), and `rect` wall shapes.
   - `pushOut(x, y, r)`: Runs up to `4` resolution passes to push overlapping walkers cleanly out of wall corners.
   - `clipMove(x0, y0, x1, y1, r)`: Computes farthest free point `{ x, y, hit }` along a dash or knockback segment; returns `hit = true` when stopped by a wall (triggering `wallStun` on knockbacks).
   - `nearestFree(x, y, r)`: Used by `blink` skills and `Alt+Tab` Flash so blinks cross walls cleanly when targeting beyond wall thickness.
@@ -159,31 +159,33 @@
 
 ---
 
-## 7. Complete Quadrant Coordinate Reference (`shared/moba/map.js`)
+## 7. Map Coordinate Reference (`shared/moba/map.js`)
 
-All coordinates below are authored for **Blue Top-Jungle** (`tj_*`). Reflections across mid (`reflectMid(p) = (6000 - p.y, 6000 - p.x)`) generate **Blue Bot-Jungle** (`bj_*`), and diagonal mirroring (`mirror(p) = (p.y, p.x)`) generates **Red** equivalents.
+Team structures use diagonal mirroring. Camps, walls, and bushes on the red side are generated with a 180-degree rotation; epic objectives are paired at opposite map locations.
 
 ### 7.1. Jungle Camps & Heal Relics (Exact Coordinates)
-| Entity ID | Side / Quadrant | Type / Tier | Coordinates `(x, y)` | Red Mirror `(x, y)` |
-| :--- | :---: | :---: | :---: | :---: |
-| `blue_tj_small` | Blue Top Jg | `small` (3 Coffee Drones) | `(1350, 2500)` | `(2500, 1350)` |
-| `blue_tj_medium` | Blue Top Jg | `medium` (2 Shredder Bots) | `(1500, 3450)` | `(3450, 1500)` |
-| `blue_tj_big` | Blue Top Jg | `big` (Blue Buff Mainframe) | `(2150, 3000)` | `(3000, 2150)` |
-| `blue_bj_small` | Blue Bot Jg | `small` (3 Loose Bugs) | `(3500, 4650)` | `(4650, 3500)` |
-| `blue_bj_medium` | Blue Bot Jg | `medium` (2 Legacy Beetles) | `(2550, 4500)` | `(4500, 2550)` |
-| `blue_bj_big` | Blue Bot Jg | `big` (Red Buff Mainframe) | `(3000, 3850)` | `(3850, 3000)` |
-| `deadline` | Top River Pit | Epic Boss (`THE DEADLINE`) | `(2050, 2050)` | Shared Neutral |
-| `golden` | Bot River Pit | Epic Boss (`GOLDEN BUG`) | `(3950, 3950)` | Shared Neutral |
-| Heal Relics (`6` total) | Behind Tier-1s | `18% HP + 15% Mana` (`60s`) | Top `(650, 2240)` · Mid `(2070, 3930)` · Bot `(3760, 5350)` | Mirrored per lane |
+| Entity ID | Region | Type | Coordinates `(x, y)` |
+| :--- | :--- | :---: | :---: |
+| `blue_tj_small` | Blue top jungle | `small` | `(1280, 2060)` |
+| `blue_tj_medium` | Blue top jungle | `medium` | `(1500, 3410)` |
+| `blue_tj_big` | Blue top jungle | `big` | `(1475, 2775)` |
+| `blue_bj_small` | Blue bottom jungle | `small` | `(3430, 5075)` |
+| `blue_bj_medium` | Blue bottom jungle | `medium` | `(2880, 3930)` |
+| `blue_bj_big` | Blue bottom jungle | `big` | `(3165, 4465)` |
+| `red_tj_small` | Red top jungle | `small` | `(4720, 3940)` |
+| `red_tj_medium` | Red top jungle | `medium` | `(4500, 2590)` |
+| `red_tj_big` | Red top jungle | `big` | `(4525, 3225)` |
+| `red_bj_small` | Red bottom jungle | `small` | `(2570, 925)` |
+| `red_bj_medium` | Red bottom jungle | `medium` | `(3120, 2070)` |
+| `red_bj_big` | Red bottom jungle | `big` | `(2835, 1535)` |
+| `deadline` | Neutral epic | `THE DEADLINE` | `(1995, 1645)` |
+| `golden` | Neutral epic | `GOLDEN BUG` | `(4005, 4355)` |
+| Heal relics (`6`) | Behind Tier-1 towers | `18% HP + 15% Mana`, `60s` respawn | Each is offset `185 px` from its Tier-1 tower toward its own core; generated from `STRUCTURES` in `TeamRoom` and `OfflineSim` |
 
-### 7.2. Quadrant Wall & Bush Layout (`11` Walls + `6` Bushes per Quadrant)
-- **Walls (`TOP_JUNGLE_WALLS`, `W_EDGE = 60 px`):**
-  - Top-lane edge (`x = 920`): `y: 1620–2300`, `2600–3300`, `3600–3950` (leaving open river corner `< 1620` and two `300 px` jungle entrances).
-  - River bank (`s = y - x = 400`): `m: 2560–3000`, `3300–3900`, `4300–5250` (open top/bot river corner `< 2560`, `300 px` mid-river entrance, and `400 px` epic-pit mouth).
-  - Mid-lane edge (`m = x + y = 5618`): `s: 750–1500` and `1800–2800` (open river corner `< 750` and `300 px` mid-jungle gaps).
-  - Interior camp pockets: horizontal shelf `(1150, 3000) -> (1600, 3000)`, big-camp partition `(1850, 2560) -> (1850, 2950)`, and circular plant pillar `(1250, 4000, r = 70)`.
-- **Bushes (`TOP_JUNGLE_BUSHES`, `w = 130–150 px`):**
-  - Top-lane entrance `(800, 2650–2950)`, Deadline-pit entrance `sm(650, 3950–4250)`, Mid-jungle entrance `sm(1500–1800, 5400)`, Mid-lane ambush `sm(2200–2500, 5480)`, River control `sm(200, 4700–5000)`, and interior camp circle `(1250, 3350, r = 110)`.
+### 7.2. Wall & Bush Geometry
+- `WALLS` contains `50` polygon obstacles: `25` authored blue-side polygons plus their 180-degree-rotated copies.
+- `BUSHES` contains `34` entries: `17` authored capsules/circles plus their 180-degree-rotated copies.
+- Exact geometry is intentionally kept in `shared/moba/map.js` rather than duplicated here; the arrays are the authoritative coordinate source.
 
 ---
 
@@ -223,40 +225,14 @@ All coordinates below are authored for **Blue Top-Jungle** (`tj_*`). Reflections
   - Default scale is `0.65` (persisted via `localStorage['bugsmash.hud.scale']`, adjustable `0.65`–`1.15` via `-` / `+` buttons).
   - `_syncScaledHud()` dynamically repositions `buyNudge`, `recallBox`, `hideBox`, toasts, and hover tooltips against `_panelTop()` and `_hudScale` so no widget floats detached at any scale.
 - **Shop Tile Layout (`ShopPanel.js`, `uiKit.js`):** `41` items render across 9 rows (`1` consumable + `2` basic + `6` core) inside `1174 x 682` panel bounds, showing recipe discounts (`⚒️` green badge), `Builds from:` component checklists, and compact stat tags (`MR`, `Pen`, `MPen`, `MP/s`).
+- **Optional Three.js Renderer:** The `?renderer=3d` path is opt-in; Phaser 2D remains the default. Browser/device QA and gameplay parity are incomplete, and the current 3D presentation has not been approved as a visual replacement. See [ART_QUALITY_PASS.md](../.claude/context/tasks/ART_QUALITY_PASS.md) and [TASK_STATUS.md](../.claude/context/tasks/TASK_STATUS.md).
 
 
 ---
 
-## 10. Complete Wall & Bush Geometry Catalog (`shared/moba/map.js`)
+## 10. Wall & Bush Geometry Source
 
-The `44` map walls and `24` bushes are generated symmetrically from `11` walls and `6` bushes authored in `TOP_JUNGLE_WALLS` and `TOP_JUNGLE_BUSHES`:
-1. `reflectWall(w)` reflects each Blue Top-Jungle obstacle across the mid lane (`x + y = 6000`) to form Blue Bot-Jungle (`22` Blue walls, `12` Blue bushes).
-2. `mirrorWall(w)` swaps `(x, y)` across the river axis (`x = y`) to form Red Top-Jungle and Red Bot-Jungle (`44` walls `w0..w43`, `24` bushes `b0..b23`).
-
-### 10.1. Blue Top-Jungle Base Obstacles (`W_EDGE = 60 px`)
-| ID Group | Look / Shape | Coordinates (`x1,y1 -> x2,y2` or `x,y,r`) | Thickness / Radius | Gameplay Function |
-| :--- | :---: | :--- | :---: | :--- |
-| Top Edge #1 | `cubicles` (`seg`) | `(920, 1620) -> (920, 2300)` | `60 px` | Separates Top Lane from Blue Top Jungle; open above `y = 1620` |
-| Top Edge #2 | `cubicles` (`seg`) | `(920, 2600) -> (920, 3300)` | `60 px` | Leaves `300 px` gank entrance at `y = 2300–2600` |
-| Top Edge #3 | `cubicles` (`seg`) | `(920, 3600) -> (920, 3950)` | `60 px` | Leaves `300 px` base-side entrance at `y = 3300–3600` |
-| River Bank #1 | `glass` (`seg`) | `sm(400, 2560) -> sm(400, 3000)` | `60 px` | Open top river corner (`m < 2560`) for seamless lane-to-river rotate |
-| River Bank #2 | `glass` (`seg`) | `sm(400, 3300) -> sm(400, 3900)` | `60 px` | Leaves `300 px` river entrance at `m = 3000–3300` |
-| River Bank #3 | `glass` (`seg`) | `sm(400, 4300) -> sm(400, 5250)` | `60 px` | Leaves `400 px` Deadline Pit mouth at `m = 3900–4300` |
-| Mid Edge #1 | `partition` (`seg`) | `sm(750, 5618) -> sm(1500, 5618)` | `60 px` | Open river corner (`s < 750`) along Mid Lane |
-| Mid Edge #2 | `partition` (`seg`) | `sm(1800, 5618) -> sm(2800, 5618)` | `60 px` | Leaves `300 px` Mid-Jungle flank at `s = 1500–1800` |
-| Camp Divider #1 | `shelf` (`seg`) | `(1150, 3000) -> (1600, 3000)` | `60 px` | Separates `tj_small` and `tj_medium` camps |
-| Camp Divider #2 | `partition` (`seg`) | `(1850, 2560) -> (1850, 2950)` | `60 px` | Shields `tj_big` Blue Buff pit (wall-pin target for `Brick` / `Patch`) |
-| Corner Pillar | `plant` (`circle`) | `(1250, 4000)` | `r = 70 px` | Base-entrance kite pillar |
-
-### 10.2. Blue Top-Jungle Base Bushes (`TOP_JUNGLE_BUSHES`)
-| Bush Role | Shape | Coordinates | Width / Radius | Tactical Use |
-| :--- | :---: | :--- | :---: | :--- |
-| Top Lane Ambush | `seg` | `(800, 2650) -> (800, 2950)` | `140 px` | Top laner brush control & jungler lane-gank staging |
-| Deadline Pit Guard | `seg` | `sm(650, 3950) -> sm(650, 4250)` | `150 px` | Jungle-side ambush outside `The Deadline` pit |
-| Mid Jungle Flank | `seg` | `sm(1500, 5400) -> sm(1800, 5400)` | `150 px` | Conceals jungler gank approach to Mid Lane |
-| Mid Lane Side Bush | `seg` | `sm(2200, 5480) -> sm(2500, 5480)` | `130 px` | Classic mid-lane side brush |
-| River Control Bush | `seg` | `sm(200, 4700) -> sm(200, 5000)` | `140 px` | Neutral river pixel bush (mirrored pair across river) |
-| Deep Jungle Bush | `circle` | `(1250, 3350)` | `r = 110 px` | Conceals camp invades between `tj_small` and `tj_medium` |
+The current map defines `BLUE_JUNGLE_POLYS` and `BLUE_BUSHES` in `shared/moba/map.js`, then generates the opposing-side geometry with a 180-degree rotation. There are `50` polygon walls (`w0`–`w49`) and `34` bushes (`b0`–`b33`). The code arrays are the sole source for the exact points, styles, and collision shapes; keep geometry out of this prose document to avoid a second, drifting map definition.
 
 ---
 
@@ -292,7 +268,7 @@ All items below define the staged verification suite required before declaring o
 
 1. **Syntax & Shared-Module Integrity:**
    - `node --check` passes across `shared/moba/*.js`, `server/rooms/TeamRoom.js`, `server/game/moba/*.js`, `src/entities/moba/*.js`, `src/scenes/TeamModeScene.js`, and `src/ui/moba/*.js`.
-   - Navmesh validation (`nav_check.mjs`) confirms `0` blocked lane waypoints, `0` trapped jungle camp spawns, and valid `nearestFree` exits across all `44` walls.
+   - Navmesh validation (`nav_check.mjs`) confirms `0` blocked lane waypoints, `0` trapped jungle camp spawns, and valid `nearestFree` exits around all `50` walls.
 2. **Server Authoritative Load Benchmark (`10 x 5v5` Rooms = `100 CCU`):**
    - Spawn `10` concurrent `TeamRoom` instances with active `MobaBots` and full wave/camp/epic simulation.
    - Measure mean tick duration (target `< 25 ms`), `P99` tick duration (target `< 45 ms` within `50 ms` tick budget), heap RSS stability over `20` minutes, and `StateView` delta patch bandwidth per client (`< 15 KB/s` average).
@@ -345,10 +321,11 @@ function isHiddenFrom(entity e, team):
  10. return true (in Fog of War)
 ```
 
-### 14.2. Symmetry Proof (`mirror` & `reflectMid`)
-- Every structure, camp, wall, bush, and heal relic on **Blue** (`s > 0`, where `s = y - x`) maps via `mirror(p) = (p.y, p.x)` to **Red** (`s < 0`) at identical Euclidean distances from fountain `(380, 5620)` / `(5620, 380)` and from mid-river center `(3000, 3000)`.
-- `deadline` `(2050, 2050)` and `golden` `(3950, 3950)` lie strictly on `x = y` (`s = 0`), guaranteeing equidistant travel from both teams' Mid lanes (`3000, 3000`), Top/Bot lanes, and fountains.
-- Both `TOP_JUNGLE_WALLS` and `TOP_JUNGLE_BUSHES` are reflected across `x + y = 6000` (`reflectMid`) before mirroring across `x = y` (`mirror`), ensuring symmetric gank paths, flash-able wall thicknesses (`60 px`), and camp pocket angles in all four quadrants.
+### 14.2. Map Symmetry
+- Team structures are mirrored across `x = y`; the red fountain is the mirrored blue fountain.
+- Red camps, walls, and bushes are generated by 180-degree rotation of the authored blue-side data.
+- The neutral epic locations are paired by 180-degree rotation: `(1995, 1645)` and `(4005, 4355)`.
+- Exact geometry and transformations are implemented in `shared/moba/map.js`; this document does not claim that every map object uses the same transform.
 
 ### 14.3. Complete Match End-to-End Scene Flow (`TeamModeScene.js`)
 1. **Boot & Asset Load:** Loads procedural textures (`looks.js`), stickman poses (`144x144` SVG), baked terrain (`MobaMap`), and UI panels (`ShopPanel`, `AugmentPanel`, `InfoPanel`, `MobaHud`).
@@ -406,7 +383,7 @@ To move cleanly from design/architecture specifications to **proven gameplay fun
 ## 16. Client UI Layers, Rendering Depth Hierarchy & Navigation API
 
 ### 16.1. UI & World Depth Stratification (`TeamModeScene`, `MobaHud`, `ShopPanel`, `AugmentPanel`)
-Strict Phaser depth ordering prevents clicks or visual overlays from bleeding across layers:
+For the Phaser 2D renderer, strict depth ordering prevents clicks or visual overlays from bleeding across layers. The optional Three.js renderer has a separate rendering path.
 
 | Layer / Component | Depth | Coordinate Space | Interaction & Lifecycle Notes |
 | :--- | :---: | :--- | :--- |

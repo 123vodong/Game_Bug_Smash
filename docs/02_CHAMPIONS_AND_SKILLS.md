@@ -7,6 +7,8 @@ absorbed the former design documents `03_KIT_REDESIGN_V6.md` and `04_KIT_REDESIG
 carried over; the contract text is folded in below). Sections that described the v5 kits (matchup tables, combo sheets, power spikes, lane playbooks,
 kit audit, skill-type counts) were removed because they no longer match the game.
 
+**Visual approval:** These tables describe gameplay kits and visual recipes, not production-art approval. The current 2D/3D visuals still include placeholder or generic effects; the recent Pixel visual pilot was rejected and is not approved for production. The 2D renderer remains the default. See [ART_QUALITY_PASS.md](../.claude/context/tasks/ART_QUALITY_PASS.md).
+
 **Section map for code comments and cross-references.** Comments in the code and a few references inside the merged text cite the numbering of the two
 deleted documents ("v6 numbering" / "v6.1 numbering"). Translate them with this table:
 

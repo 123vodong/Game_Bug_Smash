@@ -236,7 +236,7 @@ export const AUTO_AIM_SLACK = 150;           // auto-aim looks for enemies withi
 export const ROOM_NAME_MAX = 24;             // custom room name length
 export const ROOM_MAX_HUMANS = 10;           // custom rooms: up to 10 humans (5 per side)
 
-// ── Experience Pass 1: "Rollback" (concede) vote — EXPERIENCE_PASS_BREAKDOWN.md §3.3 ──
+// ── Rollback (concede) vote rules ──
 export const ROLLBACK_FROM_MS = 720000;      // votes allowed from 12:00
 export const ROLLBACK_VOTE_MS = 20000;       // a vote stays open this long
 export const ROLLBACK_COOLDOWN_MS = 180000;  // per team, after a failed vote

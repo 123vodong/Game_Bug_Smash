@@ -25,7 +25,12 @@ const DARK = 0x2a2a35, WHITE = 0xf2f2f2, STEEL = 0xb8c2cc, SCREEN = 0x7dffb0;
 
 // ---- hats: head-bone local (head centre ~ origin, top of skull ~ y 0.38) ----
 const HATS = {
-  beret: (l, p) => { part(l, SPH, p[1], 0.06, 0.36, 0, 0.36, 0.1, 0.36); part(l, CYL, p[1], 0.06, 0.46, 0, 0.04, 0.06, 0.04); },
+  beret: (l, p) => {
+    part(l, SPH, p[1], 0.06, 0.36, 0, 0.36, 0.1, 0.36);
+    part(l, CYL, p[1], 0.06, 0.46, 0, 0.04, 0.06, 0.04);
+    part(l, BOX, 0x111827, 0.22, 0.39, 0.3, 0.15, 0.15, 0.04);
+    for (const [x, y, color] of [[0.185, 0.425, p[0]], [0.255, 0.425, 0xffffff], [0.185, 0.355, p[1]], [0.255, 0.355, p[0]]]) part(l, BOX, color, x, y, 0.33, 0.05, 0.05, 0.02);
+  },
   hardhat: (l) => { part(l, HALF, 0xffd23f, 0, 0.3, 0, 0.4, 0.34, 0.4); part(l, CYL, 0xffd23f, 0, 0.3, 0.05, 0.46, 0.04, 0.46); part(l, BOX, 0xffd23f, 0, 0.5, 0, 0.06, 0.05, 0.4); },
   headlamp: (l) => { part(l, TOR, 0x555a66, 0, 0.2, 0, 0.36, 0.36, 0.5, Math.PI / 2); part(l, CYL, 0xfff3a0, 0, 0.26, 0.38, 0.1, 0.09, 0.1, Math.PI / 2); },
   visor: (l, p) => { part(l, TOR, p[1], 0, 0.2, 0, 0.37, 0.37, 0.5, Math.PI / 2); part(l, BOX, 0x66ccff, 0, 0.18, 0.38, 0.5, 0.04, 0.32); },
@@ -47,7 +52,12 @@ const HATS = {
 
 // ---- held props: handslot.r local, built along +Y from the grip ----
 const PROPS = {
-  stylus: (l, p) => { part(l, CYL, p[1], 0, 0.35, 0, 0.04, 0.4, 0.04); part(l, CONE, 0xffffff, 0, 0.82, 0, 0.05, 0.14, 0.05); part(l, SPH, p[0], 0, -0.02, 0, 0.07); },
+  stylus: (l, p) => {
+    part(l, BOX, p[0], 0, 0.35, 0, 0.09, 0.54, 0.09);
+    part(l, BOX, p[1], 0, 0.32, 0.052, 0.095, 0.06, 0.015);
+    part(l, BOX, 0xffffff, 0, 0.68, 0, 0.07, 0.12, 0.07);
+    part(l, BOX, p[1], 0, -0.02, 0, 0.1, 0.08, 0.1);
+  },
   database: (l, p) => { for (let i = 0; i < 3; i++) { part(l, CYL, i % 2 ? 0x9ab0bd : STEEL, 0, 0.2 + i * 0.2, 0, 0.26, 0.09, 0.26); part(l, TOR, p[1], 0, 0.27 + i * 0.2, 0, 0.26, 0.26, 0.2, Math.PI / 2); } },
   wrench: (l) => { part(l, CYL, STEEL, 0, 0.35, 0, 0.06, 0.4, 0.06); part(l, TOR, STEEL, 0, 0.8, 0, 0.14, 0.14, 0.14); part(l, BOX, 0xd13b2f, 0, 0.0, 0, 0.1, 0.12, 0.1); },
   magnifier: (l) => { part(l, CYL, 0x6b4a2b, 0, 0.2, 0, 0.04, 0.22, 0.04); part(l, TOR, 0xffd23f, 0, 0.62, 0, 0.26, 0.26, 0.26); part(l, CYL, 0x9be4ff, 0, 0.62, 0, 0.24, 0.015, 0.24, Math.PI / 2); },
@@ -84,7 +94,11 @@ const OUTFIT = {
   flannel: (l, p) => { for (let i = -1; i <= 1; i++) part(l, BOX, p[1], i * 0.16, 0.0, 0.26, 0.05, 0.55, 0.03); part(l, BOX, p[1], 0, 0.0, 0.26, 0.5, 0.05, 0.03); },
   blazer: (l, p) => { part(l, BOX, p[1], -0.14, 0.12, 0.26, 0.1, 0.36, 0.03, 0, 0, 0.3); part(l, BOX, p[1], 0.14, 0.12, 0.26, 0.1, 0.36, 0.03, 0, 0, -0.3); part(l, BOX, 0xc0392b, 0, 0.1, 0.29, 0.06, 0.28, 0.02); },
   cardigan: (l, p) => { part(l, BOX, p[1], -0.2, 0.0, 0.26, 0.1, 0.55, 0.03); part(l, BOX, p[1], 0.2, 0.0, 0.26, 0.1, 0.55, 0.03); part(l, SPH, 0xffe0e0, 0, 0.0, 0.27, 0.04); },
-  turtleneck: (l, p) => { part(l, TOR, p[0], 0, 0.3, 0, 0.3, 0.3, 0.3, Math.PI / 2); part(l, BOX, p[1], 0, 0.0, 0.26, 0.2, 0.2, 0.03); },
+  turtleneck: (l, p) => {
+    part(l, TOR, p[0], 0, 0.3, 0, 0.3, 0.3, 0.3, Math.PI / 2);
+    part(l, BOX, p[1], 0, 0.0, 0.26, 0.2, 0.2, 0.03);
+    for (const [x, y, color] of [[-0.09, 0.08, p[0]], [0.03, 0.08, p[1]], [-0.09, -0.04, p[1]], [0.03, -0.04, p[0]]]) part(l, BOX, color, x, y, 0.29, 0.09, 0.09, 0.025);
+  },
 };
 const PIXEL_FALLBACK = (l, p) => part(l, OCT(), p[1], 0, 0.04, 0.26, 1, 1, 0.5);
 function OCT() { return OCT.g || (OCT.g = new THREE.OctahedronGeometry(0.09)); }

@@ -234,7 +234,11 @@ export class InfoPanel {
       box.on('pointerover', () => { box.setFillStyle(col, 0.16).setStrokeStyle(2, 0xffffff, 0.85); this._showSkillTip(def, slot, this.x0 + ax + aw / 2, this.y0 + rowY - 6); });
       box.on('pointerout', () => { box.setFillStyle(col, 0.08).setStrokeStyle(1, col, 0.45); this._hideSkillTip(); });
       this.body.add(box);
-      this._t(ax + 8, ay + 6, `${sk.icon} [${K}] ${sk.name}`, { fontFamily: FONT, fontSize: 13, color: css(sk.color ?? 0xffffff), stroke: '#000', strokeThickness: 3 });
+      const iconTexture = typeof sk.iconKey === 'string' && /^pixel-[qwer]$/.test(sk.iconKey) ? `skill-${sk.iconKey}` : null;
+      if (iconTexture && s.textures.exists(iconTexture)) {
+        this.body.add(s.add.image(ax + 23, ay + 34, iconTexture).setDisplaySize(30, 30));
+        this._t(ax + 44, ay + 6, `[${K}] ${sk.name}`, { fontFamily: FONT, fontSize: 13, color: css(sk.color ?? 0xffffff), stroke: '#000', strokeThickness: 3 });
+      } else this._t(ax + 8, ay + 6, `${sk.icon} [${K}] ${sk.name}`, { fontFamily: FONT, fontSize: 13, color: css(sk.color ?? 0xffffff), stroke: '#000', strokeThickness: 3 });
       const meta = `💧${sk.mana} · ⏱ ${s1(cdTot)}${haste ? ` (${sk.cd}s base)` : ''}${left > 0 ? ` · ready in ${s1(left)}` : (locked ? '' : ' · READY')}${locked ? ` · 🔒 Lv ${ULT_UNLOCK_LEVEL}` : ''}`;
       const mt = this._t(ax + aw - 8, ay + 8, meta, { fontSize: 11, color: left > 0 || locked ? '#ffb347' : '#7ed957' }, 1, 0);
       this._live.skills.push({ t: mt, sk, K, cdTot, haste, locked });

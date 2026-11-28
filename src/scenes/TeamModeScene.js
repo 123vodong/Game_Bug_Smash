@@ -1,5 +1,5 @@
 // TeamModeScene — Team Mode ("Office Siege"), the 5v5 office MOBA battlefield.
-// Contract: .claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3 (state fields + messages).
+// Rules, state, and message contracts: docs/01_GAME_RULES_AND_MECHANICS.md and docs/05_MAP_VISION_SPELLS_AND_NETWORK.md.
 //
 // Started with data = { champ, name, offline? }. Joins the Colyseus room 'team'
 // (or runs OfflineSim with `offline`), renders the shared map / structures /
@@ -11,19 +11,19 @@
 // unzoomed camera draws everything screen-pinned (scrollFactor 0). New objects are
 // assigned to the right camera automatically before each render (_classifyCams).
 //
-// v2 (TEAM_MODE_V2_BREAKDOWN.md): walls (MobaMap), local prediction + move-click
+// Navigation: walls (MobaMap), local prediction + move-click
 // path preview via shared/moba/nav.js findPath, aim previews for zone / fan /
 // dash-clipped-by-walls / blink-at-nearestFree / knockback arrows / at:'pet',
 // fx zone · knock · petatk, pets (units with kind 'pet') are never picked.
 //
-// v3 (TEAM_MODE_V3_BREAKDOWN.md): started with { room } by TeamSelectScene (takes over
+// Lobby/selection flow: started with { room } by TeamSelectScene (takes over
 // the SAME room — no re-join; every listener is registered with its unsubscribe and
 // removed on shutdown), or { champ, name } (deep link → joins with autoLock and shows a
 // waiting overlay through lobby / select / loading — the world camera is hidden until
 // `playing`), or { offline, champ, spells, allies? }. Summoner spells on D / F
 // (`spell {slot, x, y, id?}`, fx spell, aim previews), InfoPanel on C / the HUD ℹ button.
 //
-// v4 (TEAM_MODE_V4_BREAKDOWN.md): bushes (MobaMap canopies; the server REMOVES hidden
+// Bush vision (MobaMap canopies; the server REMOVES hidden
 // enemies from our state → their views fade out, and every reference to the id — hover,
 // queued order / cast — is dropped; re-added ones fade in). Own-team champions in a bush
 // and not revealed render translucent (ChampionView.setHidden), with a "🌿 hidden" HUD hint
@@ -32,7 +32,7 @@
 // nearest enemy unit, else facing. Perf (§3.4): views far off-camera are hidden and not
 // updated, auto quality (FPS < 45 for 3 s → low effects; HUD ✨ toggle, remembered).
 //
-// Experience Pass 1 (EXPERIENCE_PASS_BREAKDOWN.md §3.3): EP-07 reconnect — a non-consented drop
+// Reconnect — a non-consented drop
 // (code ∉ {1000, 4000}, not ended, server announced `welcome.reconnectS`) shows "📶 reconnecting…
 // Ns" and calls client.reconnect(token) every 2 s; on success every view is cleared and the NEW
 // room is adopted (hello again). EP-08 🏳 rollback vote (button from 12:00, `/rollback` in chat,
@@ -133,6 +133,10 @@ export default class TeamModeScene extends Phaser.Scene {
   init(data) { this._data = data || {}; }
 
   preload() {
+    for (const slot of ['q', 'w', 'e', 'r']) {
+      const key = `skill-pixel-${slot}`;
+      if (!this.textures.exists(key)) this.load.svg(key, `assets/moba/champions/pixel/${slot}.svg`, { width: 128, height: 128 });
+    }
     for (const [key, file] of STICK_POSES) {
       if (!this.textures.exists(key)) this.load.svg(key, `assets/characters/stickman/${file}`, { width: 144, height: 144 });
     }

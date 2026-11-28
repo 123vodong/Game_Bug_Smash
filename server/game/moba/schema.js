@@ -1,7 +1,6 @@
 // server/game/moba/schema.js — synced state for Team Mode ("Office Siege").
-// FROZEN CONTRACT: .claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3.1 (+ V2/V3/V4 appends) — field
-// names, types and order follow it exactly. Keep NEW fields at the END of a
-// class (field order = wire index) and only after a contract change.
+// Keep NEW fields at the END of a class (field order = wire index) and add a
+// schema field only with an intentional wire-contract change.
 //
 // The simulation keeps its own float-precision records (TeamRoom.champs /
 // units / structs); these schema objects are a rounded mirror written once per
@@ -294,8 +293,8 @@ type({ map: TeamScore })(TeamState.prototype, 'scores');   // v4 §3.2b (appende
 type('string')(TeamState.prototype, 'winReason');           // EP-04 (appended)
 type('string')(TeamState.prototype, 'relicsJson');
 type('string')(TeamState.prototype, 'botLevel');
-// v4 visibility (TEAM_MODE_V4_BREAKDOWN.md §3.2): champions + units are per-client
-// StateView filtered — TeamRoom adds/removes each entry per team view (bush vision).
+// Champions + units are per-client StateView filtered — TeamRoom adds/removes
+// each entry per team view (bush vision).
 // Wire indexes are unchanged; the view tag is server-side only.
 view()(TeamState.prototype, 'champions');
 view()(TeamState.prototype, 'units');

@@ -1,5 +1,4 @@
-// TeamSelectScene — Team Mode v3 "Draft Day": champion select + loading screen.
-// Contract: .claude/context/tasks/TEAM_MODE_V3_BREAKDOWN.md §3.1 / §3.3 / §3.5 / §4.3 U2
+// TeamSelectScene — Team Mode champion select + loading screen.
 //
 //   started with { room, name?, champ?, clockOffset? }   (TeamLobbyScene, room already joined)
 //             or { offline: true, name?, champ? }         (practice: local draft vs bots)

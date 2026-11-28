@@ -15,7 +15,7 @@
 // v2: skill tooltips list the mechanics (zone, fan, knockback / wall-stun, pet,
 // CC); the portrait comes from looks.js drawChampionPortrait (emoji fallback);
 // pets are left off the minimap.
-// Experience Pass 1 (EXPERIENCE_PASS_BREAKDOWN.md): toasts are QUEUED (≤ 2 on screen, laid out by
+// Toasts are queued (≤ 2 on screen, laid out by
 // their real height — no early-match overlap), the death screen fades its lines in one by one,
 // modalSet() updates an open modal (reconnect countdown), a 🏳 ROLLBACK button + team vote panel
 // (EP-08), a coaching tip card under the minimap (EP-10) and a pulsing "🛒 Buy <item> (P)" nudge
@@ -31,6 +31,7 @@ import { t, tText, onLangChange } from '../../core/I18n.js';
 import { FONT, MONO, ME_COLOR, LOOKS, teamColor, teamCss, css, fmtTime, toArr } from './mobaGfx.js';
 
 const CC_ICON = 34, CC_ICON_STEP = 42, CC_ICONS_MAX = 4; // v6.1 status row geometry (px)
+const skillIconTexture = (key) => typeof key === 'string' && /^pixel-[qwer]$/.test(key) ? `skill-${key}` : null;
 
 const sec = (ms) => `${+(Math.max(0, ms || 0) / 1000).toFixed(1)}s`;
 /** "60 (+15/lv) +70% AP" for an amount spec. */
@@ -129,19 +130,23 @@ function kitMechanics(sk, L) {
 }
 
 /** Shared screen-pinned floating tooltip box used by MobaHud and pick scenes. */
-export function showFloatingTip(s, { x, y, title, body, color = 0x39c2ff, W, H, depth = 60, maxWidth = 316 } = {}) {
+export function showFloatingTip(s, { x, y, title, body, color = 0x39c2ff, W, H, depth = 60, maxWidth = 316, iconKey } = {}) {
   const sw = W || s.scale?.width || 1280, sh = H || s.scale?.height || 720;
   const col = color ?? 0x39c2ff;
   const c = s.add.container(0, 0).setScrollFactor(0).setDepth(depth);
+  const texture = skillIconTexture(iconKey);
+  const icon = texture && s.textures.exists(texture) ? s.add.image(0, 0, texture).setDisplaySize(36, 36) : null;
   const t1 = s.add.text(0, 0, title || '', { fontFamily: FONT, fontSize: 14, color: css(col), stroke: '#000', strokeThickness: 3 });
+  const textX = icon ? 52 : 10, bodyY = icon ? 48 : 30;
   const t2 = s.add.text(0, 22, body || '', { fontFamily: MONO, fontSize: 12, color: '#dfe7f5', wordWrap: { width: maxWidth, useAdvancedWrap: true }, lineSpacing: 3 });
-  const w = Math.max(t1.width, t2.width) + 22, h = 22 + t2.height + 16;
+  const w = Math.max(t1.width + (icon ? 48 : 0), t2.width) + 22, h = bodyY + t2.height + 8;
   const bx = Math.max(8, Math.min(sw - w - 8, x - w / 2));
   const by = Math.max(8, Math.min(sh - h - 8, y - h));
   const bg = s.add.rectangle(bx, by, w, h, 0x070b12, 0.96).setOrigin(0).setScrollFactor(0).setStrokeStyle(2, col, 0.85);
-  t1.setPosition(bx + 10, by + 8).setScrollFactor(0);
-  t2.setPosition(bx + 10, by + 30).setScrollFactor(0);
-  c.add([bg, t1, t2]);
+  t1.setPosition(bx + textX, by + 8).setScrollFactor(0);
+  t2.setPosition(bx + 10, by + bodyY).setScrollFactor(0);
+  if (icon) icon.setPosition(bx + 30, by + 27).setScrollFactor(0);
+  c.add(icon ? [bg, icon, t1, t2] : [bg, t1, t2]);
   return c;
 }
 
@@ -153,10 +158,10 @@ export function showSkillTipPanel(s, def, slot, opts = {}) {
   const range = sk.at === 'pet' ? ` · radius ${sk.radius}` : sk.range ? ` · range ${sk.range}${sk.radius ? ` · radius ${sk.radius}` : ''}` : (sk.radius ? ` · radius ${sk.radius}` : '');
   const mech = skillMechanics(sk, def);
   const desc = tText(`skill.${def.id}.${slot}${variant}`, sk.desc || '');
-  const title = `${sk.icon || '✨'} ${sk.name}  [${slot.toUpperCase()}]${slot === 'r' ? `  (Lv ${ULT_UNLOCK_LEVEL}+)` : ''}`;
+  const title = `${sk.iconKey ? '' : `${sk.icon || '✨'} `}${sk.name}  [${slot.toUpperCase()}]${slot === 'r' ? `  (Lv ${ULT_UNLOCK_LEVEL}+)` : ''}`;
   const nextSt = sk.type === 'stance' && opts.stance ? `\nNext stance: ${nextStance(sk, opts.stance)}` : '';
   const body = `${sk.mana} mana · ${sk.cd}s cooldown${range}\n${desc}${nextSt}${mech.length ? `\n${mech.join('\n')}` : ''}`;
-  return showFloatingTip(s, { ...opts, title, body, color: sk.color ?? 0x39c2ff });
+  return showFloatingTip(s, { ...opts, title, body, color: sk.color ?? 0x39c2ff, iconKey: sk.iconKey });
 }
 
 const SLOTS = ['q', 'w', 'e', 'r'];
@@ -312,7 +317,7 @@ export class MobaHud {
       const ring = s.add.graphics();
       c.add([frame, icon, noMana, dim, pie, cd, lock, key, mana, pips, flash, upBg, upTxt, sub, ring]);
       root.add(c);
-      this.slots[slot] = { c, frame, icon, noMana, dim, pie, cd, lock, mana, pips, flash, upBg, upTxt, sub, ring, x, y, spec: null };
+      this.slots[slot] = { c, frame, icon, iconArt: null, noMana, dim, pie, cd, lock, mana, pips, flash, upBg, upTxt, sub, ring, x, y, spec: null };
     });
 
     // v6 kit chips: one generic row (built from parsed `kit:` tags) above the skills; text pool + one graphics for bars.
@@ -1212,6 +1217,7 @@ export class MobaHud {
       const a = (ANG[i] * Math.PI) / 180, R = 112;
       const b = mk(ax + Math.cos(a) * R, ay + Math.sin(a) * R, 31, '·', 0x7ec8ff, () => this.o.onSkill?.(slot, false), 24);
       b.slot = slot;
+      b.iconArt = null;
       b.cd = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 16, color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
       b.dim = s.add.circle(0, 0, 31, 0x000000, 0.55).setVisible(false);
       b.ring = s.add.graphics(); // v6 charge ring
@@ -1319,12 +1325,26 @@ export class MobaHud {
     const sl = this.slots[slot];
     if (!sl || !sk) return;
     sl.spec = sk;
-    sl.icon.setText(sk.icon);
+    this._setSkillIcon(sl, sk);
     sl.mana.setText(String(sk.mana));
     sl.frame.setStrokeStyle(2, sk.color, 0.85);
     const tb = this._touchSkillMap?.[slot];
-    if (tb?.icon) tb.icon.setText(sk.icon);
+    if (tb?.icon) this._setSkillIcon(tb, sk);
     if (this._hoverKey === `skill:${slot}`) this._showSkillTip(slot);
+  }
+
+  _setSkillIcon(target, sk) {
+    const texture = skillIconTexture(sk.iconKey);
+    const ready = texture && this.s.textures.exists(texture);
+    target.icon.setVisible(!ready).setText(sk.icon || '·');
+    if (!ready) {
+      target.iconArt?.setVisible(false);
+      return;
+    }
+    if (!target.iconArt) {
+      target.iconArt = this.s.add.image(0, -1, texture).setDisplaySize(target.slot ? 38 : 42, target.slot ? 38 : 42);
+      target.c.addAt(target.iconArt, target.c.getIndex(target.icon) + 1);
+    } else target.iconArt.setTexture(texture).setVisible(true);
   }
 
   /** Next-stance label on a toggle key + the charge ring on the held slot (panel slot and touch button). */
@@ -1534,6 +1554,7 @@ export class MobaHud {
         tb.dim.setVisible(locked || unlearned || left > 0);
         this._set(`tcd_${slot}`, tb.cd, locked ? '🔒' : (unlearned ? '+' : (left > 0 ? String(Math.ceil(left / 1000)) : '')));
         tb.icon.setAlpha(locked || unlearned ? 0.3 : noMana ? 0.55 : 1);
+        tb.iconArt?.setAlpha(locked || unlearned ? 0.3 : noMana ? 0.55 : 1);
       }
     }
     // Summoner spells (cooldowns are NOT reduced by haste → total = spell cd).

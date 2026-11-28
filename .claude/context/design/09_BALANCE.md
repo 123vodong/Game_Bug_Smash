@@ -1,6 +1,6 @@
 # 09 · Balance — Single Source of Truth
 
-Every tunable number, in one place. Change here first, propagate to code second. When a number in code differs from this doc, **trust the code** — and fix this doc.
+Balance notes for the game's modes. Verify every value against code before changing it; when a number differs, **trust the code** and update this doc.
 
 Sources of truth in code:
 - Server rules (every MP number): [server/game/rules.js](../../../server/game/rules.js)
@@ -48,7 +48,7 @@ Sources of truth in code:
 | Rollback (concede) vote | from 12:00 · open 20 s · 3 min cooldown · 4 of 5 yes and no human "no" | `shared/moba/rules.js` ROLLBACK_* |
 
 
-### Pass 2 (2026-11-21) — ranked, fair play, rejoin, shop & camera ([PASS2_BREAKDOWN.md](../tasks/PASS2_BREAKDOWN.md))
+### Pass 2 (2026-11-21) — ranked, fair play, rejoin, shop & camera
 | Lever | Value | Where |
 |---|---|---|
 | Quick-play queue | waits 30 s from the first join · a later join keeps ≥ 10 s on the clock · never past 45 s · full (10) → 3 s · START NOW = READY (starts when every human is ready; alone = now) | `shared/moba/rules.js` LOBBY_* |
@@ -65,7 +65,7 @@ Sources of truth in code:
 | New champions | Sprint (jungle fighter: AoE slow, self buff, point-and-click dash stun, persistent zone ult) · Cache (marksman: piercing line, slow zone, blink, 2000-range piercing ult) · Hira (support: root skillshot, team heal + speed, slow area, delayed AoE stun ult) · Lint (mid controller: targeted slow, delayed root, shield + speed, knockback ult with wall-stun) | `shared/moba/champions.js` |
 | First balance read (team_ff, 12 bot matches) | no stuck / in-wall · new champions 25–100 % win rate on 2–7 games each (small sample) · first structure median 5:52 · length median 11.7 min | `tools/playtest/team_ff.mjs` |
 
-### 5v5 more (2026-11-24/25): adaptive bots, 6 items ([NEXT_WORK.md](../tasks/NEXT_WORK.md))
+### 5v5 balance pass (2026-11-24/25): adaptive bots and content
 | Lever | Value | Where |
 |---|---|---|
 | Bot level | picked at match start from the humans' average hidden MMR: < 1050 Easy (the old bots: 5 min grace, no ganks for 5 min, mercy after 2 deaths) · 1050–1199 Normal · ≥ 1200 Hard · bots-only matches Normal | `server/game/moba/MobaBots.js` BOT_SKILL / BOT_SKILL_MMR · TeamRoom._botSkillLevel |
@@ -73,7 +73,7 @@ Sources of truth in code:
 | Measured (team_ff, 10 matches per level, seed 7) | kills per match Easy 17.8 · Normal 23.9 · Hard 43.2 · items per bot 3.7 / 4.2 / 4.8 · passive newcomer deaths by 5:00: Easy 0, Normal / Hard 0–3 | `team_ff.mjs --botskill=` |
 | New items | Caffeine Pills 350 (AS 12 %) · Red Pen 450 (AD 6, 6 % lifesteal) · Kanban Board 1800 (AD 30, HP 250, 10 % CDR) · Team Lunch 1500 (HP 200, mana 200, 15 % CDR) · Firewall Appliance 2000 (AP 65, armor 40) · Midnight Oil 2200 (AP 80, 12 % lifesteal, skills included) | `shared/moba/items.js` |
 | Item value (gold per stat, from the basics) | AD ≈ 29 · AP ≈ 16 · HP ≈ 2.5 · armor ≈ 22 · mana ≈ 1.6 · 1 % CDR ≈ 45 · 1 % AS ≈ 30 · 1 % lifesteal ≈ 52 · MS ≈ 12 → new basics 100–120 % efficient, new cores 87–108 % (late items lower, like Server Rack 85 %) | design note |
-| Shop | 31 items in rows of 5 (1 consumable · 10 basic · 20 core), panel 1174 × 612 | `src/ui/moba/ShopPanel.js` |
+| Shop | 41 items across 9 rows (1 consumable · 10 basic · 30 core), panel 1174 × 682 | `src/ui/moba/ShopPanel.js` |
 | Balance read (team_ff, 20 matches, seed 7) | 0 exceptions / stuck / in-wall · sides 10–10 · champion win rates 38–60 % (Mop 17 % on 6 games; 50 % over the next 24) · every new item bought (Red Pen 26, Kanban 25, Team Lunch 15, Caffeine 11, Firewall 8, Midnight Oil 2 held at the end) · length median 14.6 min | `tools/playtest/team_ff.mjs` |
 | New champions | **Brew** (support, ranged 480): piercing slow shot · team +25 % AS / +15 % MS · delayed 1 s stun circle · **Break Room** zone ult (4 s, heals allies per tick, slows + scalds enemies) · **Pager** (jungler, melee): Ping (piercing slow, cd 5, 85 + 17/lv + 100 % AD) · Incident Mode (shield, 15 % DR, +20 % MS, +25 % AS) · Revert (400 blink) · On My Way (950-range champion-only dash, 170 + 24/lv + 95 % AD, 1.2 s stun) | `shared/moba/champions.js` |
 | Champion-only dashes | a `toTarget` dash with `targets: 'enemyChamp'` only locks onto champions (server + offline sim); the offline sim's targeted dash now matches the server (stops at contact, hits only the target) | SkillEngine._dash · OfflineSim._cast |
@@ -144,13 +144,11 @@ Cadence: first event 25 s after the room opens, then a 38–55 s gap; PM nags ev
 | Max clients per room | 32 | |
 | Score persistence | per-session | resets only on disconnect |
 
-### Team Mode (future, in dead `_enterResults` / `_enterPlaying` reference code)
+### Team Mode (live, separate ruleset)
 
-| Constant | Value | Note |
-|---|---|---|
-| `PHASE_PLAYING_MS` | 90 000 (90 s) | per round / per stage |
-| `PHASE_RESULTS_MS` | 8 000 (8 s) | between rounds |
-| Stage respawn timers | 3 / 5 / 8 / 12 / 15 s | progressive per stage |
+The old 90-second stage/round table below has been removed; it described a discarded FFA plan.
+Team Mode is the 5v5 MOBA and uses its own match, champion-level, respawn, and objective rules.
+Use `shared/moba/rules.js`, `server/game/moba/tuning.js`, and [the main rules reference](../../../docs/01_GAME_RULES_AND_MECHANICS.md).
 
 ---
 

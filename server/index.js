@@ -58,7 +58,7 @@ app.get('/api/stats', async (_req, res) => {
   }
 });
 
-// Team Mode v4 custom rooms list (TEAM_MODE_V4_BREAKDOWN.md §3.1): newest first, ≤ 50.
+// Team Mode custom rooms: newest first, ≤ 50.
 // [{ roomId, roomName, host, humans, blue, red, phase, locked }] — cheap (matchMaker.query), no auth.
 app.get('/api/team/rooms', async (_req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -89,7 +89,7 @@ app.get('/api/team/rooms', async (_req, res) => {
   }
 });
 
-// ── Pass 2: player status, ranking, one-tab takeover (PASS2_BREAKDOWN.md) ──
+// ── Player status, ranking, and one-tab takeover ──
 // The secret `pid` only travels in POST bodies (never in a URL / log); responses carry the
 // public id. CORS-open like /api/stats (the :8000 dev client calls :2567).
 const cors = (res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); res.setHeader('Cache-Control', 'no-cache'); };

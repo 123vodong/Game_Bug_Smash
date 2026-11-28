@@ -57,28 +57,20 @@ Auto-applied on player overlap. 5 kinds in [src/data/skills.js](../../../src/dat
 - Up to 32 players
 - Single permanent map (the 6000×3375 arena)
 - Bugs spawn continuously; **5 health pickups** always alive on the map
-- Defeated players **drop bugs** (1–4 per defeat, scaled by their level when they fell)
+- Defeated players **drop bugs** (count scales with the score when they fell; see `server/game/rules.js`)
 - Score persists for the entire session; leaderboard updates live
 - Players join + leave at any time
 - 🔵 Global leaderboard backend → Phase E
 
-### Team Mode — 🔵 planned (Phase C+D)
+### Team Mode — ✅ live 5v5 MOBA
 
-- **Room-based** with 6-char codes for create/join
-- **Lobby** for team selection (up to 5 teams, host can split as needed)
-- Friendly-fire OFF (teammates can't damage each other)
-- **Recovery zones** (2 fixed corner safe-zones, neutral, regen +25/sec)
-- **Multi-stage** match (5 stages, escalating bug variety + count)
-- **Progressive respawn**: stage 1 = 3 s, stage 5 = 15 s
-- No bug drop on defeat (Personal-only mechanic)
-- **MVP screen** at match end (winner by score, ties → eliminations)
+- **Live:** 5v5 office MOBA with team lobby/custom rooms, champion select, lanes, towers, jungle camps, epic objectives, items, augments, bots, ranked/rating, reconnect, and match results. This is not the old multi-stage FFA plan.
+- See [docs/01_GAME_RULES_AND_MECHANICS.md](../../../docs/01_GAME_RULES_AND_MECHANICS.md) and [docs/05_MAP_VISION_SPELLS_AND_NETWORK.md](../../../docs/05_MAP_VISION_SPELLS_AND_NETWORK.md) for implemented rules and current verification limits.
 
-### v2 — Boss Arena (🔵)
+### Story Mode 2.0 — in progress
 
-- After a normal round, a **Mega Deadline Bug** appears for the final 30 s
-- Multi-phase boss with telegraphed attacks
-- All living players must coordinate
-- Defeating the boss = special "deployed!" reward animation + cosmetic unlock
+- Top-down single-player adventure built on the 5v5 engine; the first floor has a prototype and free champion pick.
+- The remaining floors and full campaign are design work, not a completed feature. See [11_STORY_MODE_2.md](./11_STORY_MODE_2.md).
 
 ---
 
@@ -90,16 +82,19 @@ Auto-applied on player overlap. 5 kinds in [src/data/skills.js](../../../src/dat
 
 ---
 
-## Visual content (planned)
+## Visual content
 
-### Cosmetics 🔵
+### Cosmetics — implemented and planned
 
-| Slot | Variants planned |
+Twelve career-unlocked hats are implemented. The following additional slots remain ideas, not shipped features:
+
+| Slot | State / variants |
 |---|---|
-| Laptop skin | Default, cracked, neon, holographic, rusted |
-| Hair | Default, afro, mohawk, balding, bun, anime spike |
-| Accessory | Coffee mug, energy drink, mechanical keyboard, headset |
-| Aura color | Default (player palette color), gold (Lv6 milestone), rainbow (special unlock) |
+| Hat | 12 career-unlocked variants implemented |
+| Laptop skin | Planned: default, cracked, neon, holographic, rusted |
+| Hair | Planned: default, afro, mohawk, balding, bun, anime spike |
+| Accessory | Planned: coffee mug, energy drink, mechanical keyboard, headset |
+| Aura color | Planned: default player color, gold (Lv6), rainbow |
 
 Unlocked via total smashes / rounds played / wins. **Never paid.**
 
@@ -119,11 +114,7 @@ Above Lv6 = "Super Senior" baseline. Earned variants (cosmetic only):
 
 | Item | Source | Why parked |
 |---|---|---|
-| Platformer Level 01 (Code Runner) | [../plan/LEVEL_01_CODE_RUNNER.md](../plan/LEVEL_01_CODE_RUNNER.md) | Dropped: the prototype (`PlatformerScene.js`) was removed on 2026-11-25 |
-| Platformer Level 02 (Vertical Scroll) | [../plan/LEVEL_02_VERTICAL_SCROLL.md](../plan/LEVEL_02_VERTICAL_SCROLL.md) | Same — depends on Level 01 |
-| Platformer Level 03 (Mixed Scroll) | [../plan/LEVEL_03_MIXED_SCROLL.md](../plan/LEVEL_03_MIXED_SCROLL.md) | Same — depends on engine layer |
-| Full 3D Babylon rewrite | [../ideas/MULTIPLAYER_3D_PROPOSAL.md](../ideas/MULTIPLAYER_3D_PROPOSAL.md) | Pivoted to 2D MP after seeing TankGank achieve "looks 3D" with sprites |
-| Bug release on death | Proposal §5 | SP-only mechanic; MP arena doesn't have a use yet |
-| Safe-zone faster recovery from broken | Proposal §3 | Needs map geometry that doesn't exist |
-
-Babylon scaffold preserved at [../recycle_bin/bug_smash_3d_babylon_scaffold/](../recycle_bin/bug_smash_3d_babylon_scaffold/) in case the 3D direction returns.
+| Side-view platformer | Removed prototype; no longer in scope | Story Mode 2.0 is top-down |
+| Full 3D engine rewrite | Not in scope | Three.js is an opt-in renderer for the existing game, not a gameplay rewrite |
+| Bug release on defeat | Implemented | Personal Mode drops bugs; it is not a future proposal |
+| Safe-zone faster recovery from broken | Not planned for Personal Mode | Team Mode uses its separate fountain and recall mechanics |

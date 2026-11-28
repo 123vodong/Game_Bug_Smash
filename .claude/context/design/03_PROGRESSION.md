@@ -1,6 +1,6 @@
 # 03 · Progression — Stickyman Growth System
 
-The visible career arc. Source proposal: [../ideas/STICKYMAN_GROWTH_SYSTEM.md](../ideas/STICKYMAN_GROWTH_SYSTEM.md). Implementation tracker: [../tasks/STICKYMAN_GROWTH_BREAKDOWN.md](../tasks/STICKYMAN_GROWTH_BREAKDOWN.md).
+The visible career arc for **Personal Mode**. Team Mode has a separate MOBA progression system documented in [the main rules reference](../../../docs/01_GAME_RULES_AND_MECHANICS.md).
 
 ---
 
@@ -9,7 +9,7 @@ The visible career arc. Source proposal: [../ideas/STICKYMAN_GROWTH_SYSTEM.md](.
 | Lv | Title | XP needed (cum.) | Sprite scale | Max HP | Max energy | Bug damage | Aura |
 |---|---|---|---|---|---|---|---|
 | 1 | Intern | 0 | **0.70** | **50** | **50** | 1 | — |
-| 2 | Junior | **150** | 0.88 | 90 | **90** | 1 | — |
+| 2 | Junior | **60** | 0.88 | 90 | **90** | 1 | — |
 | 3 | Middle | **600** | 1.05 | 130 | **120** | 2 | — |
 | 4 | Senior | **1800** | 1.22 | 180 | **150** | 2 | — |
 | 5 | Lead | **4500** | 1.40 | 230 | **180** | 3 | ✅ pulsing colored ring |
@@ -22,7 +22,7 @@ The visible career arc. Source proposal: [../ideas/STICKYMAN_GROWTH_SYSTEM.md](.
 ## XP curve
 
 ```
-Lv1 ── 150 ── Lv2 ── 450 ── Lv3 ── 1200 ── Lv4 ── 2700 ── Lv5 ── 5500 ── Lv6
+Lv1 ── 60 ── Lv2 ── 540 ── Lv3 ── 1200 ── Lv4 ── 2700 ── Lv5 ── 5500 ── Lv6
             ★            ★             ★            ★             ★
 ```
 
@@ -62,7 +62,7 @@ Considered: "lose one level on break". Rejected because:
 
 In **Personal Mode** there are no rounds — your level, XP, and score persist for as long as you stay connected without dying. The reset on **broken** wipes level + XP + score AND splashes bugs onto the map. Death is the only progression-reset event.
 
-In **Team Mode** (future): all players reset to Lv1 / 0 XP / full energy / score 0 on round flip. Each round is a fresh climb from Intern. Death within a round does NOT reset score (team-based scoring needs continuity across deaths).
+**Team Mode is live and uses a separate progression model:** champions start at level 3, gain XP and skill points during the match, and keep their progress through respawns. There is no stage/round flip reset. See `shared/moba/rules.js` and [the main rules reference](../../../docs/01_GAME_RULES_AND_MECHANICS.md).
 
 🔵 **Design intent (post-v0):** persistent meta-progression across rounds. Cosmetic unlocks (laptop skins, character tints, title flavor) earned by total smashes. Not stat boosts.
 
@@ -82,11 +82,11 @@ This **redundancy is intentional**. Players can tell at a glance who the Super S
 
 | Idea | Status | Notes |
 |---|---|---|
-| Bug release on death (SP) | 🚫 | Proposal §5 — not in MP path |
-| Safe-zone faster recovery | 🚫 | Needs map geometry we haven't designed |
+| Bug release on defeat | ✅ | Personal Mode drops bugs around a defeated player |
+| Safe-zone faster recovery | 🚫 | Not part of Personal Mode; Team Mode has its own fountain/recall rules |
 | Knockback impulse on PvP hit | 🔵 | Add only if PvP feels too static |
-| Team-based scoring + anti-snowball | 🔵 | One global FFA arena for now |
-| Persistent leaderboard | 🔵 | Phase 4 (hosting + DB) |
+| Team-based scoring + anti-snowball | ✅ | Implemented separately in Team Mode; not shared with Personal Mode |
+| Persistent Personal Mode leaderboard | 🔵 | Personal Mode score is session-scoped |
 
 ## Tuning levers if it feels off
 

@@ -11,7 +11,7 @@ import { createMinimap } from './minimap.js';
 import { createFeed } from './feed.js';
 import { createTarget } from './target.js';
 import { createExtras } from './extras.js';
-import { createTooltip, skillCardHtml, spellCardHtml, champCardHtml, itemCardHtml, esc } from './tooltip.js';
+import { createTooltip, skillCardHtml, skillIconUrl, spellCardHtml, champCardHtml, itemCardHtml, esc } from './tooltip.js';
 import { AudioManager } from '../../core/AudioManager.js';
 import { clearMatch } from '../../core/Identity.js';
 import { t, onLangChange } from '../../core/I18n.js';
@@ -271,7 +271,21 @@ export function createHud({ source, project, mode, opts = {} }) {
 
   function applySpec(slot, sk) {
     const sl = slots[slot]; sl.spec = sk;
-    setText(sl.ic, sk.icon || '✨'); setText(sl.mana, String(sk.mana)); setStyle(sl.box, '--c', hex(sk.color == null ? 0x3a4a66 : sk.color));
+    const url = skillIconUrl(sk.iconKey);
+    if (url) {
+      let img = sl.ic.querySelector('img');
+      if (!img) { sl.ic.replaceChildren(); img = document.createElement('img'); img.alt = ''; sl.ic.appendChild(img); }
+      img.src = url;
+      img.onerror = () => {
+        if (sl.ic.dataset.iconKey !== sk.iconKey) return;
+        sl.ic.replaceChildren(); sl.ic._v = null; setText(sl.ic, sk.icon || '✨');
+      };
+      sl.ic.dataset.iconKey = sk.iconKey;
+    } else {
+      delete sl.ic.dataset.iconKey;
+      sl.ic.replaceChildren(); sl.ic._v = null; setText(sl.ic, sk.icon || '✨');
+    }
+    setText(sl.mana, String(sk.mana)); setStyle(sl.box, '--c', hex(sk.color == null ? 0x3a4a66 : sk.color));
     sl.box.title = '';
   }
 

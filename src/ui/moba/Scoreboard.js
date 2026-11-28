@@ -1,6 +1,6 @@
 // src/ui/moba/Scoreboard.js — Team Mode scoreboard (shown while TAB is held).
 //
-// Contract (.claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3.4):
+// Team Mode ranking and match state are owned by the server.
 //   const sb = new Scoreboard(scene);
 //   sb.show(); sb.hide();
 //   sb.update(state, localSid)   // state = Colyseus TeamState (v4: scores, else champions / structures

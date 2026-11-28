@@ -9,6 +9,10 @@ import { t, tText } from '../../core/I18n.js';
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 export const TIER_CSS = { consumable: '#7ed957', basic: '#7ec8ff', core: '#ffd23f' };
+export const skillIconUrl = (key) => {
+  if (typeof key !== 'string' || !/^pixel-[qwer]$/.test(key)) return '';
+  return new URL(`../../../assets/moba/champions/pixel/${key.slice(-1)}.svg`, import.meta.url).href;
+};
 const STAT_LABEL = { ad: ['AD', 0], ap: ['AP', 0], hp: ['HP', 0], mana: ['Mana', 0], manaRegen: ['Mana/s', 1], armor: ['Armor', 0], armorPen: ['Armor Pen', 2], mr: ['MR', 0], mrPen: ['MR Pen', 2], ms: ['Move Speed', 0], as: ['Atk Speed', 2], haste: ['CDR', 2], lifesteal: ['Lifesteal', 2], apPct: ['Total AP', 2] };
 const fmtStat = (k, v) => { const [lab, mode] = STAT_LABEL[k] || [k, 0]; return `<span class="st"><b>${mode === 2 ? '+' + Math.round(v * 100) + '%' : '+' + v}</b> ${lab}</span>`; };
 export const buildsInto = (id) => SHOP_ORDER.filter((o) => ITEMS[o] && ITEMS[o].recipe && ITEMS[o].recipe.includes(id)).slice(0, 5);
@@ -128,7 +132,9 @@ export function skillCardHtml(def, slot, stance, me) {
   const mech = skillMechanics(sk, def);
   const ultBadge = slot === 'r' ? `<span class="sk-badge">Lv ${ULT_UNLOCK_LEVEL}+</span>` : '';
   const stBadge = isVariant ? `<span class="sk-badge st">${esc(stance)}</span>` : '';
-  return `<div class="ic-h"><span class="e">${esc(sk.icon || '✨')}</span><div><div class="ic-n">${esc(sk.name || '')} <span class="sk-badge">[${esc(slot.toUpperCase())}]</span>${ultBadge}${stBadge}</div><div class="sk-meta">${sk.mana || 0} mana · ${sk.cd || 0}s CD${esc(range)}${esc(nextSt)}</div></div></div>`
+  const iconUrl = skillIconUrl(sk.iconKey);
+  const icon = iconUrl ? `<img class="sk-icon-art" src="${esc(iconUrl)}" data-fallback="${esc(sk.icon || '✨')}" alt="">` : `<span class="e">${esc(sk.icon || '✨')}</span>`;
+  return `<div class="ic-h">${icon}<div><div class="ic-n">${esc(sk.name || '')} <span class="sk-badge">[${esc(slot.toUpperCase())}]</span>${ultBadge}${stBadge}</div><div class="sk-meta">${sk.mana || 0} mana · ${sk.cd || 0}s CD${esc(range)}${esc(nextSt)}</div></div></div>`
     + (desc ? `<div class="sk-desc">${esc(desc)}</div>` : '')
     + (mech.length ? `<div class="sk-mech">${mech.map((m) => `<div>${esc(m)}</div>`).join('')}</div>` : '');
 }
@@ -196,7 +202,14 @@ export function createTooltip(root) {
   return {
     show(html, anchor, opts = {}) {
       if (!html || !anchor) return;
-      if (html !== sig) { sig = html; tip.innerHTML = html; }
+      if (html !== sig) {
+        sig = html; tip.innerHTML = html;
+        for (const img of tip.querySelectorAll('img.sk-icon-art')) img.addEventListener('error', () => {
+          const fallback = document.createElement('span');
+          fallback.className = 'e'; fallback.textContent = img.dataset.fallback || '✨';
+          img.replaceWith(fallback);
+        }, { once: true });
+      }
       tip.style.borderColor = opts.color || '#ffd23f';
       tip.hidden = false;
       const r = anchor.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight, W = window.innerWidth, H = window.innerHeight;

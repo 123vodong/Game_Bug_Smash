@@ -1,6 +1,6 @@
 // Progress — one door for "the player did something that counts" in ANY mode.
 // Updates the lifetime career (SaveManager), feeds today's daily missions, and reports
-// what just happened so the caller can toast it (EXPERIENCE_PASS_BREAKDOWN.md §3.4).
+// what just happened so the caller can toast it.
 //
 //   import { Progress } from '../core/Progress.js';
 //   const { missions, hats } = Progress.add('teamGames', 1, { daily: 'teamGames' });

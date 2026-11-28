@@ -86,7 +86,7 @@ export function pickFarPoint(x, y) {
 export const PHASE_PLAYING_MS = 90_000;  // 90s rounds
 export const PHASE_RESULTS_MS = 8_000;   // 8s end screen
 
-// ---- Stickyman Growth System (see develop_notes/STICKYMAN_GROWTH_BREAKDOWN.md) ----
+// ---- Personal Mode growth rules (see .claude/context/design/03_PROGRESSION.md) ----
 // Cumulative XP per level. Curve is intentionally steep at the top end so
 // that Lv5–6 (Senior / Super Senior) feel earned.
 // EP-20 (2026-11-18): Lv2 at 60 XP (was 150) so a new hire is promoted within

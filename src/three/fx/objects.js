@@ -131,6 +131,15 @@ export function createObjects({ THREE, scene, source, sh, SH, tg, S, ent, CHAMPI
         const p = posts.get(); p.visible = true; p.position.set(px * S, 0, py * S); p.scale.set(1, barrier ? 1.4 : 1.2, 1); p.material.color.set(col); rec.meshes.push(p); rec.pools.push(posts);
         rec.hs.push(shapeP(SH.HEX, px, py, 0.45, 0xffffff, { z: 0.12 }));
       }
+      if (!barrier && rec.slot === 'q' && owner?.champ === 'pixel') {
+        for (let i = 1; i <= 3; i++) {
+          const t = i / 4, px = m.x + (m.x2 - m.x) * t, py = m.y + (m.y2 - m.y) * t;
+          const tile = cubes.get();
+          tile.visible = true; tile.position.set(px * S, 0.08, py * S); tile.scale.setScalar(0.13);
+          tile.material.color.set(i % 2 ? 0x39c2ff : 0xff4fa3);
+          rec.meshes.push(tile); rec.pools.push(cubes);
+        }
+      }
     } else if (kind === 'portal') {
       const pCol = m.access === 'open' ? 0x55efc4 : m.access === 'allies' ? 0x39c2ff : col;
       rec.col = pCol;

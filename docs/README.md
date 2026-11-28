@@ -7,4 +7,6 @@
 2. [02_CHAMPIONS_AND_SKILLS.md](./02_CHAMPIONS_AND_SKILLS.md) — All 18 Champions (Armor & MR stats), Champion Balance & Power Curve Matrix, Synchronized Q/W/E/R Combos, 18 Unique Passives, Servo/Pager/Brick Edge Cases, and Matchup Guide.
 3. [03_ITEMS_AND_PASSIVES.md](./03_ITEMS_AND_PASSIVES.md) — All 41 Items with Basic -> Core Combine Recipes, Magic Resist, Magic Pen, Mana Regen, 3 Active Items (incl. Shadow Proxy), Armor Pen, Anti-Shield, and Build Recommendations.
 4. [04_CODE_AUGMENTS.md](./04_CODE_AUGMENTS.md) — Code Augments v1 (26 Augments, 100% Epic Roster Coverage, Pick 1 of 3 + Two-Step `60/30/10` Roll, Trigger Rules, and 3 Synergies).
-5. [05_MAP_VISION_SPELLS_AND_NETWORK.md](./05_MAP_VISION_SPELLS_AND_NETWORK.md) — Open Office `6000x6000` Map (8 Structures/team), Summoner Spells (D/F), Ward Trinket `[4]` & Server Visibility, Client Reconciliation, 100-CCU Benchmark Plan, and Playtest Telemetry & Balance.
+5. [05_MAP_VISION_SPELLS_AND_NETWORK.md](./05_MAP_VISION_SPELLS_AND_NETWORK.md) — Open Office `6000x6000` Map (20 structures, 50 walls, 34 bushes), Summoner Spells (D/F), Ward Trinket `[4]` & Server Visibility, Client Reconciliation, pending 100-CCU benchmark, and Playtest Telemetry & Balance.
+
+These are implementation references, not art-approval documents. For current visual status and the rejected art pilot, see [`.claude/context/tasks/ART_QUALITY_PASS.md`](../.claude/context/tasks/ART_QUALITY_PASS.md).
