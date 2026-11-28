@@ -15,7 +15,7 @@
   - **Debugger Breakpoint (`freeze_frame`):** `60s` CD, `2s` invulnerable stasis (untargetable, cannot act; **not usable while stunned**).
   - **Git Revert Charm (`git_revert`):** `50s` CD, cleanses all active stuns, roots, and slows + `+35%` MS for `2s` (**usable while stunned**).
   - **Shadow Proxy (`shadow_proxy`):** `60s` CD, grants `240` shield (`3s`) + `+30%` MS + `1.8s` stealth veil (invisible beyond `280 px`, broken immediately on attack or skill cast; **not usable while stunned**).
-- **Shop & Sell Rules:** Buy/sell only in fountain (`FOUNTAIN_RADIUS = 520 px`) or while dead. Sell refunds `70%` (`100%` undo within `10s` of purchase).
+- **Shop & Sell Rules:** Buy/sell only in fountain (`FOUNTAIN_RADIUS = 520 px`) or while dead. Sell refunds `75%` of item cost; there is no undo window.
 - **Shop UI Architecture (`ShopPanel.js` — Unified LoL-Style Inspector):**
   - Right column consolidates **Builds Into** (top horizontal icon strip), **Requires** (inline icon recipe tree with gold costs, connector lines, and green `✓`/`OWNED` indicators), and **Selected Item Detail + `BUY`/`UPGRADE`/`SELL`** inside one unified card above `INVENTORY 0/6` and `RECOMMENDED`.
   - **Controls:** Hovering a grid tile only highlights its border without changing the inspected item; **Left-click** selects any item (grid, `Builds Into`, `Requires` component, or `Recommended`) into the inspector; **Right-click** (or double-click) purchases items/components directly or sells owned inventory slots.
@@ -400,9 +400,8 @@ Using Section 2's Basic Gear baseline (`AD = 29.17g`, `AP = 16.00g`, `HP = 2.50g
    - *Input:* `inv = ['caffeine','mouse','','','','']`, buy `energy_crate` (`['caffeine','caffeine']`).
    - *Result:* Only 1 `caffeine` is matched (`discount = 350g`, `cost = 900g`, `consumedSlots = [0]`); slot `1` (`mouse`) stays untouched.
    - *Input:* `inv = ['caffeine','caffeine','','','','']` -> `discount = 700g`, `cost = 550g`, `consumedSlots = [0, 1]`.
-8. **10-Second Undo Refund vs. 70% Sell:**
-   - Selling within `10,000 ms` of purchase (`SELL_UNDO_MS`) refunds `100%` of item cost (`sellValue`).
-   - Selling after `10,000 ms` (or items retained from prior reconnect) refunds `Math.floor(cost * 0.70)`.
+8. **Sell Refund:**
+   - Every sell refunds `Math.floor(cost * 0.75)`; there is no time-based undo (`SELL_UNDO_MS = 0`).
 9. **Consumable Stack Purchase (`Coffee`):**
    - `Coffee` (`50g`) bypasses the 6-slot inventory (`consumable: true`), is usable even at `6/6` slots, and stacks up to `3` active regens on server (`COFFEE_MAX_STACK = 3`).
 10. **Fountain & Death Shop Gate:**
@@ -462,7 +461,7 @@ Because every champion can carry at most **1 Active Item (`[1]`)** alongside Boo
 ### 14.4. Consumable & Component Slot Planning Summary
 - **Early Efficiency Rule:** Two Basic items (`mouse` `350g` + `caffeine` `350g` = `700g`) convert cleanly with `0g` wasted sell penalty into **7** distinct Core Gear items (`RGB Keyboard`, `Ultrawide Monitor`, `JIT Compiler`, `CORS Bypass`, `Shadow Proxy`, or pivot into `Git Blame Gauntlet` / `Kanban Board` / `Second Monitor`).
 - **Support Mana Bridge:** Starting `Power Bank` (`350g`, `+2.5 MP/s`) eliminates early-game OOM recalls and discounts `Rubber Duck` (`1,100g -> 300g` combine once `Pomodoro` is owned) or `Team Lunch` (`1,500g -> 750g` combine once `Chair` is owned).
-- **Undo Window Safety:** Accidentally purchasing the wrong component or Core item in fountain allows `100%` full gold refund (`SELL_UNDO_MS = 10s`) via right-click or the `UNDO` button in `ShopPanel` before leaving base.
+- **Sell Rule:** Selling any item refunds `75%` of its cost; there is no undo button or time-based full refund (`SELL_UNDO_MS = 0`).
 
 
 ---
@@ -505,5 +504,5 @@ Because every champion can carry at most **1 Active Item (`[1]`)** alongside Boo
 | `cleanse` | **Git Revert Charm** (`git_revert`) | `50s` | **Yes** | Clears `stunnedUntil`, `rootedUntil`, `slowUntil`, `slowPct` + `+35% MS` (`2.0s`) | Re-applied enemy CC after cast |
 | `veil` | **Shadow Proxy** (`shadow_proxy`) | `60s` | No | `240` Shield (`3.0s`) + `+30% MS` (`1.8s`) + stealth beyond `280 px` (`_stealthUntil`) | Any attack, skill cast, or enemy `< 280 px` |
 
-- **Shared Cooldown Variable (`c._activeCd`):** All active items store cooldown on `_activeCd = t + act.cd * 1000`. Selling an Active item inside the `10s` undo window refunds `100%` of its gold and clears `ownedActiveItem()` immediately.
+- **Shared Cooldown Variable (`c._activeCd`):** All active items store cooldown on `_activeCd = t + act.cd * 1000`. Selling an active item refunds `75%` of its cost and clears `ownedActiveItem()` immediately.
 - **No Haste Scaling:** Item Haste and Blue Buff (`15%`) never reduce Active Item cooldowns (`60s` / `50s` fixed).

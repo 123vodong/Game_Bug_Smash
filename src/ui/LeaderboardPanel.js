@@ -1,4 +1,4 @@
-// LeaderboardPanel — "🏆 OFFICE RANKS" (Pass 2, PASS2_BREAKDOWN.md RP-13): your Team Mode rank
+// LeaderboardPanel — "🏆 OFFICE RANKS": your Team Mode rank
 // (tier · division · LP · W/L · placement progress), the tier ladder, and the top 50 (pages of 20).
 //
 //   import { LeaderboardPanel } from '../ui/LeaderboardPanel.js';

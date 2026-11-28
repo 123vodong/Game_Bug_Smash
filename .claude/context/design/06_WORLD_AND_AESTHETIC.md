@@ -1,5 +1,9 @@
 # 06 · World & Aesthetic
 
+Current character, icon, and VFX quality is not production-approved. The Pixel SVG pilot was
+rejected; choose an artist/specialist service and approve a visual target before expanding assets.
+See [ART_QUALITY_PASS.md](../tasks/ART_QUALITY_PASS.md).
+
 The look, sound, and feel of the play space.
 
 ---

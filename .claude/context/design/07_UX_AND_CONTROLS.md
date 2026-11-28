@@ -14,7 +14,9 @@ How players touch the game — both the *design intent* (why we picked these sch
 
 ---
 
-## Multiplayer arena — control matrix
+## Personal Mode arena — control matrix
+
+This legacy arena control matrix applies to Personal Mode, not the 5v5 Team Mode. Team Mode bindings are documented in [docs/05_MAP_VISION_SPELLS_AND_NETWORK.md §11](../../../docs/05_MAP_VISION_SPELLS_AND_NETWORK.md).
 
 **MOBA-style binding** (2026-05-31): SMASH on SPACE, skills on Q/W/E/R. Mobile uses a **fan layout** (SMASH in the corner, 4 skills on a 90° arc above-left).
 
@@ -88,7 +90,7 @@ left-click ──────┼────── click within 44 px of player 
 
 Pinned regions (`scrollFactor 0`):
 - **Top-left** — Minimap (always), then connection status under it
-- **Top-center** — Mode indicator. Personal Mode shows `∞` + `PERSONAL MODE · N online`. Team Mode (future) will show a round/stage countdown.
+- **Top-center** — Mode indicator. Personal Mode shows `∞` + `PERSONAL MODE · N online`; Team Mode has a separate HUD and match clock.
 - **Top-right** — Leaderboard, sorted by score, showing Lv + title
 - **Mid-left** — Combo HUD (only visible when combo > 0)
 - **Bottom-left** — Control hint

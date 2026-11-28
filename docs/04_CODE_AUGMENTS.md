@@ -1,5 +1,9 @@
 # Code Augments v1 — Mid-Match Evolution System
 
+This document describes Team Mode augment mechanics, not champion-art or VFX approval. Phaser 2D
+remains the default renderer; Three.js is optional and its visual parity is still unverified. See
+[the art-quality decision](../.claude/context/tasks/ART_QUALITY_PASS.md).
+
 **Author:** Duke Nguyen (`duc.nguyen@onethesis.com`)
 **Source:** `shared/moba/augments.js`, `src/entities/moba/OfflineSim.js` (26 augments [common: 8 · rare: 10 · epic: 8], **18/18 champions covered in Epic**, 3 synergies)
 

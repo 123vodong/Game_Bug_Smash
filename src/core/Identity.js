@@ -1,4 +1,4 @@
-// src/core/Identity.js — Pass 2 (PASS2_BREAKDOWN.md RP-01/03/05).
+// src/core/Identity.js — persistent player identity for ranking and reconnect.
 //
 // • getPid()          this browser's secret player id (32 hex, localStorage). Sent as the `pid`
 //                     join option and in POST bodies only — the server shows a hashed public id.

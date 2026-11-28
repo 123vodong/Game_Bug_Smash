@@ -1,6 +1,6 @@
 // src/ui/moba/EndScreen.js — Team Mode victory / defeat screen.
 //
-// Contract (.claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3.4):
+// Match results and ranked deltas are supplied by the server.
 //   const end = new EndScreen(scene, { onPlayAgain, onMenu });
 //   end.show({ winner, myTeam, rows, state?, localSid? })   // v4: state.scores fills rows missing from champions
 //     winner, myTeam: 'blue' | 'red'   (unknown / '' → neutral "MATCH OVER")

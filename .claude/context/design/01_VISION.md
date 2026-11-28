@@ -2,7 +2,7 @@
 
 ## Elevator pitch
 
-**Bug Smash** is a hyper-casual, top-down arena game where a stickman developer smashes software bugs with a laptop. It ships as a single-player campaign and as a free-for-all multiplayer arena where developers compete to clear bugs, grow through career titles (Intern → Super Senior), and PvP each other for dominance — until somebody burns out, the laptop breaks, and they reset back to Intern.
+**Bug Smash** is a browser-first game about software developers battling bugs. It includes a single-player campaign, a persistent free-for-all Personal Mode, a playable 5v5 office MOBA (Team Mode), and an in-progress top-down Story Mode. Phaser 2D is the default renderer; Three.js is an opt-in visual path, not a separate gameplay mode.
 
 ## Design pillars
 
@@ -29,13 +29,13 @@
 | **Reset** | Humility | Back to Intern. Sprite tiny. Level gone. Score keeps climbing though — burns hurt your *strength*, not your *standings*. |
 | **Climb again** | Determination | Re-engage the loop with fresh adrenaline |
 
-The loop encourages burnout cycles. In **Personal Mode** (infinite world) the session length is *your choice* — leave whenever the dopamine fades. In **Team Mode** (planned), each match is bounded by stages, so the arc compresses into ~10 min of escalating respawn pain.
+The loop encourages burnout cycles in **Personal Mode** (infinite world), where session length is the player's choice. **Team Mode** is a separate 5v5 MOBA match with lanes, champions, items, objectives, and a match end; it does not use Personal Mode's burnout/reset rules.
 
 Players who play perfectly rarely burn out and feel like gods. Players who play recklessly burn out 5 times in a row and feel the comedy of dev life.
 
 ## What we are NOT
 
-- ❌ A 3D shooter — explicitly pivoted away (see [../plan/3D_MP_PHASES.md](../plan/3D_MP_PHASES.md))
+- ❌ A first- or third-person shooter — an optional Three.js renderer exists, but gameplay remains top-down and the 2D renderer remains the default
 - ❌ A platformer — the platformer prototype was removed (2026-11-25)
 - ❌ A deep RPG — no skill trees, no item drops, no inventory
 - ❌ A simulator — bugs aren't actual code, PMs aren't actual managers; everything is heightened cartoon
@@ -43,6 +43,6 @@ Players who play perfectly rarely burn out and feel like gods. Players who play 
 
 ## Three-line tagline
 
-> Smash bugs. Climb the org chart. Burn out before the deadline.
-> A hyper-casual love letter to software dev life.
-> 90-second rounds. Up to 32 players. Browser-native. Free.
+> Smash bugs. Defend the build. Beat the deadline.
+> An office-comedy game with a persistent arena and a 5v5 MOBA.
+> Browser-first. Phaser 2D by default. Free to play.

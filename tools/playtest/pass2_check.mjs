@@ -1,4 +1,4 @@
-// Pass 2 regression check (PASS2_BREAKDOWN.md RP-14) — run against a DEBUG dev server:
+// Team Mode regression check — run against a DEBUG dev server:
 //   BUG_SMASH_DEBUG=1 BUG_SMASH_RANKS=memory PORT=2650 node server/index.js
 //   SERVER=ws://localhost:2650 node tools/playtest/pass2_check.mjs
 // Checks: one live session per player id (arena + team: DUP_TAB, PLAY HERE takeover, IN_MATCH),

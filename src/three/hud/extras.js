@@ -14,6 +14,7 @@ import { AudioManager } from '../../core/AudioManager.js';
 import { SaveManager } from '../../core/SaveManager.js';
 import { clearMatch } from '../../core/Identity.js';
 import { getLang, toggleLang, t, tText, onLangChange } from '../../core/I18n.js';
+import { skillIconUrl } from './tooltip.js';
 
 const el = (parent, tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
 const setText = (e, v) => { if (e._v !== v) { e._v = v; e.textContent = v; } };
@@ -256,7 +257,9 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
         if (s.dmg) nums.push(`⚔ ${evalAmt(s.dmg, me)} dmg`);
         if (s.heal) nums.push(`💚 ${evalAmt(s.heal, me)} heal`);
         if (s.shield) nums.push(`🛡 ${evalAmt(s.shield, me)} shield`);
-        return `<div class="bsx-sk"><div class="bsx-sk-h"><b>${k.toUpperCase()}</b> ${esc(s.icon || '')} <b>${esc(s.name)}</b> <i>${s.mana || 0} mana · ${s.cd || 0}s</i> ${cdBadge}</div>`
+        const iconUrl = skillIconUrl(s.iconKey);
+        const icon = iconUrl ? `<img class="sk-icon-art" src="${esc(iconUrl)}" data-fallback="${esc(s.icon || '')}" alt="">` : esc(s.icon || '');
+        return `<div class="bsx-sk"><div class="bsx-sk-h"><b>${k.toUpperCase()}</b> ${icon} <b>${esc(s.name)}</b> <i>${s.mana || 0} mana · ${s.cd || 0}s</i> ${cdBadge}</div>`
           + (nums.length ? `<div class="bsx-sk-num">${nums.join(' · ')}</div>` : '')
           + `<div>${esc(tText(`skill.${me.champ}.${k}`, s.desc || ''))}</div></div>`;
       }).join('');
@@ -276,6 +279,11 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
         + (spellsHtml ? `<div class="st-h" style="margin-top:8px">SUMMONER SPELLS</div>${spellsHtml}` : '')
         + `</div></div>`
         + '<div class="bsx-blurb">Keys: Q W E R skills · D F spells · right-click move · SPACE attack · B recall · P shop · C info · TAB scoreboard · ESC pause</div>';
+      for (const img of pBody.querySelectorAll('img.sk-icon-art')) img.addEventListener('error', () => {
+        const fallback = document.createElement('span');
+        fallback.textContent = img.dataset.fallback || '';
+        img.replaceWith(fallback);
+      }, { once: true });
     } else if (kind === 'shop') {
       const items = me ? toArr(me.items) : [], gold = me ? me.gold | 0 : 0;
       setText(pTitle, `🛒 SHOP · 🪙 ${gold}` + (canShopNow ? '' : '  (go to your fountain / break room to buy)'));
@@ -369,7 +377,19 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
       const stance = parseKitTags(me.buffs || '').stance;
       for (const k of ['q', 'w', 'e', 'r']) {
         const tb = touchBtns[k], sk = def && resolveSkill(def, k, stance);
-        if (sk && sk.icon) setText(tb.ic, sk.icon);
+        if (sk && sk.icon) {
+          const iconUrl = skillIconUrl(sk.iconKey);
+          if (iconUrl && tb.ic.dataset.failedSrc !== iconUrl) {
+            let img = tb.ic.querySelector('img');
+            if (!img) { tb.ic.replaceChildren(); img = document.createElement('img'); img.alt = ''; tb.ic.appendChild(img); }
+            if (img.dataset.src !== iconUrl) {
+              img.src = iconUrl; img.dataset.src = iconUrl;
+              img.onerror = () => { tb.ic.dataset.failedSrc = iconUrl; tb.ic.replaceChildren(); tb.ic._v = null; setText(tb.ic, sk.icon); };
+            }
+          } else {
+            tb.ic.replaceChildren(); tb.ic._v = null; setText(tb.ic, sk.icon);
+          }
+        }
         const left = Math.max(0, (me['cd' + k.toUpperCase()] || 0) - sr);
         setText(tb.cd, left > 0 ? (left >= 1000 ? String(Math.ceil(left / 1000)) : (left / 1000).toFixed(1)) : '');
         const dim = left > 0 || (k === 'r' && (me.level || 1) < ULT_UNLOCK_LEVEL) || !!me.dead;

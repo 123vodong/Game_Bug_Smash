@@ -1,4 +1,4 @@
-// TeamCustomScene — Team Mode v4 CUSTOM ROOMS (contract: .claude/context/tasks/TEAM_MODE_V4_BREAKDOWN.md §3.1).
+// TeamCustomScene — Team Mode custom rooms.
 // Started from TeamLobbyScene with { name, champ } (champ = favourite → first hover in the draft).
 //
 // LIST mode: GET /api/team/rooms every ~3 s → rows (room name, host, players, sides, status, JOIN);

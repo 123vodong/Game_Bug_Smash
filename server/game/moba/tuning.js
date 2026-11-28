@@ -72,7 +72,7 @@ export const INTEREST_RADIUS = 1600;       // atk / fx only reach a team with a 
 export const VISION_EVERY_TICKS = 1;       // bush visibility pass cadence (1 = every tick, 20 Hz)
 export const VIEW_GC_MS = 1000;            // drop pending StateView changes of views nobody is using (memory)
 
-// ── Experience Pass 1 (EXPERIENCE_PASS_BREAKDOWN.md §3.2/§3.3) ──
+// ── Team reconnect and rollback vote rules ──
 export const TEAM_RECONNECT_GRACE_S = 300; // EP-03 → Pass 2: the client keeps auto-retrying this long (welcome.reconnectS);
                                            // the seat itself is held for the whole match (REJOIN from the menu later)
 export const VOTE_RATE_MS = 300;           // EP-04: min interval between processed `vote` messages per client

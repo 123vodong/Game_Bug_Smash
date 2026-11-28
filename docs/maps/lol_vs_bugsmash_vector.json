@@ -82,8 +82,8 @@
       "midCrossingRaised": true
     },
     "epicPits": [
-      { "id": "deadline", "center": [2050, 2050], "flankOffset": 295, "rimRadius": 235 },
-      { "id": "golden", "center": [3950, 3950], "flankOffset": 295, "rimRadius": 235 }
+      { "id": "deadline", "center": [1995, 1645], "flankOffset": 295, "rimRadius": 235 },
+      { "id": "golden", "center": [4005, 4355], "flankOffset": 295, "rimRadius": 235 }
     ],
     "jungleCliffs": {
       "sourceWallCount": 50,

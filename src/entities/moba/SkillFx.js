@@ -1139,6 +1139,11 @@ export const LIVE = {
       band.lineBetween(A.x + nx * hw, A.y + ny * hw, B.x + nx * hw, B.y + ny * hw); band.lineBetween(A.x - nx * hw, A.y - ny * hw, B.x - nx * hw, B.y - ny * hw);
       band.lineStyle(6, 0xffffff, Math.min(1, 0.9 * bk)); band.lineBetween(A.x, A.y, B.x, B.y);
       band.lineStyle(3, hot, Math.min(1, bk)); band.strokeCircle(A.x, A.y, hw * 0.9); band.strokeCircle(B.x, B.y, hw * 0.9);
+      for (let i = 1; i <= 4; i++) {
+        const t = i / 5, px = A.x + (B.x - A.x) * t, py = A.y + (B.y - A.y) * t;
+        band.fillStyle(i % 2 ? 0x39c2ff : 0xff4fa3, Math.min(1, 0.92 * bk));
+        band.fillRect(px - 6, py - 6, 12, 12);
+      }
       for (const fr of fires) fr.setAlpha(0.8 * e.vis);
       const fl = 0.7 + 0.3 * Math.sin(e.t / 38) * Math.cos(e.t / 91), k = e.vis * (fl + e.flash * 0.6);
       line.setDisplaySize(th * (1.2 + e.flash), len).setAlpha(Math.min(1, 0.75 * k));
@@ -1482,7 +1487,8 @@ export const V6 = {
     }
   },
   rewind(f, m) { // Pixel E / Pager R: ghosts slide along the trails, reverse spiral at the end point
-    const roll = champOf(f, m.sid) === 'oncall', col = colOf(m.color, roll ? 0x39c2ff : 0xb084ff);
+    const champ = champOf(f, m.sid), roll = champ === 'oncall', pixel = champ === 'pixel';
+    const col = pixel ? 0x39c2ff : colOf(m.color, roll ? 0x39c2ff : 0xb084ff);
     const list = Array.isArray(m.list) ? m.list.slice(0, 6) : [], p = f.posOf(m.sid);
     if (p && m.r > 0 && f.onScreen(p.x, p.y, m.r + 200)) sp(f, 'circle_03', p.x, p.y + 46, { size: m.r * 2, size1: m.r * 0.3, life: 600, tint: col, ease: 'Quad.easeIn', depth: GROUND });
     for (const it of list) {
@@ -1491,12 +1497,23 @@ export const V6 = {
       const a = ang(it.x0, it.y0, it.x1, it.y1), len = Math.hypot(it.x1 - it.x0, it.y1 - it.y0);
       const gh = ghost(f, it.x0, it.y0, col, 0.45);
       if (gh) f.scene.tweens.add({ targets: gh, x: it.x1, y: it.y1, alpha: 0.05, duration: 520, ease: 'Cubic.easeInOut', onComplete: () => gh.destroy() });
+      if (pixel) {
+        const n = N(f, 4);
+        for (let i = 0; i < n; i++) {
+          const t = (i + 1) / (n + 1);
+          sp(f, 'window_01', it.x0 + (it.x1 - it.x0) * t, it.y0 + (it.y1 - it.y0) * t - 40, {
+            size: 25, size1: 12, life: 430, delay: i * 65, tint: i % 2 ? 0xff4fa3 : 0x39c2ff,
+          });
+        }
+        sp(f, 'window_03', it.x0, it.y0 - 40, { size: 36, size1: 58, life: 260, tint: 0xff4fa3 });
+        sp(f, 'window_03', it.x1, it.y1 - 40, { size: 32, size1: 70, life: 320, delay: 500, tint: 0x39c2ff });
+      }
       if (len > 20) sp(f, 'trace_03', (it.x0 + it.x1) / 2, (it.y0 + it.y1) / 2 - 30, { size: len, sx: 0.2, rot: a - Math.PI / 2, life: 700, tint: col, a0: 0.5 });
       lineSteps(it.x0, it.y0, it.x1, it.y1, N(f, 4), (x, y, k) => sp(f, 'smoke_07', x, y - 40, { size: 50, size1: 20, life: 380, delay: k * 420, tint: col, a0: 0.5 }));
       sp(f, 'twirl_01', it.x1, it.y1 - 30, { size: 190, size1: 20, spin: -TAU, life: 420, delay: 480, tint: col, a0: 0.9 });
       sp(f, 'circle_03', it.x1, it.y1, { size: 30, size1: roll ? 220 : 160, life: 380, delay: 760, tint: roll ? 0x39c2ff : 0xffffff });
       sp(f, 'star_09', it.x1, it.y1 - 40, { size: 30, size1: 130, life: 280, delay: 780, tint: 0xffffff });
-      if (!roll) { // Pixel E: spark streaks run back along the trail, a wheel spins at the landing spot, white flash
+      if (!roll && !pixel) { // Pager E: spark streaks run back along the trail, a wheel spins at the landing spot, white flash
         if (len > 20) sp(f, 'spark_06', (it.x0 + it.x1) / 2, (it.y0 + it.y1) / 2 - 30, { size: len, sx: 0.5, rot: a, life: 520, tint: 0xffffff, a0: 0.7 });
         fbx(f, 'vfWheel', it.x1, it.y1, { size: 200, life: 700, delay: 560, tint: col, depth: G });
       }
@@ -1603,17 +1620,17 @@ function arcSteps(f, x, y, rad, a0, a1, n, ms, delay, fn) { for (let i = 0; i < 
 const alongAt = (x, y, a, d) => [x + Math.cos(a) * d, y + Math.sin(a) * d];
 
 // ── area shapes (cone / line / arc) ──
-// Pixel R: a dithered fire strip; a scanline wipes outward over 300 ms after the rectangle fills with scanlines.
+// Pixel R: a cyan/magenta rewrite scanline sweeps the existing lane and resolves into pixel fragments.
 rec('area', 'pixelWipe', (f, { x, y, a, len, w, delay }) => {
   const [ex, ey] = alongAt(x, y, a, len), ww = w || 170;
-  teleG(f, delay, 0xb084ff, [[x - Math.sin(a) * ww / 2, y + Math.cos(a) * ww / 2], [ex - Math.sin(a) * ww / 2, ey + Math.cos(a) * ww / 2], [ex + Math.sin(a) * ww / 2, ey - Math.cos(a) * ww / 2], [x + Math.sin(a) * ww / 2, y - Math.cos(a) * ww / 2]]);
-  for (let i = 1; i <= N(f, 8); i++) { const [px, py] = alongAt(x, y, a, (len * i) / (N(f, 8) + 1)); sp(f, 'trace_06', px, py, { size: ww, sx: 0.05, rot: a, life: 140, delay: (delay * i) / 9, tint: 0xb084ff, a0: 0.7 }); }
+  teleG(f, delay, 0x39c2ff, [[x - Math.sin(a) * ww / 2, y + Math.cos(a) * ww / 2], [ex - Math.sin(a) * ww / 2, ey + Math.cos(a) * ww / 2], [ex + Math.sin(a) * ww / 2, ey - Math.cos(a) * ww / 2], [x + Math.sin(a) * ww / 2, y - Math.cos(a) * ww / 2]]);
+  for (let i = 1; i <= N(f, 8); i++) { const [px, py] = alongAt(x, y, a, (len * i) / (N(f, 8) + 1)); sp(f, 'trace_06', px, py, { size: ww, sx: 0.05, rot: a, life: 140, delay: (delay * i) / 9, tint: i % 2 ? 0x39c2ff : 0xff4fa3, a0: 0.7 }); }
   const [bx, by] = alongAt(x, y, a, 20);
   sp(f, 'trace_06', bx, by, { size: ww, sx: 0.09, rot: a, dx: Math.cos(a) * len, dy: Math.sin(a) * len, life: 300, delay, tint: 0xffffff, ease: 'Linear' });
-  SHAPES.line(f, x, y, ex, ey, { tex: 'trace_06', w: ww / len, tint: 0xb084ff, a0: 0.6, life: 380, delay });
-  sp(f, 'symbol_01', ex, ey, { size: ww * 0.5, size1: ww * 1.3, life: 380, delay: delay + 280, tint: 0xffffff });
+  SHAPES.line(f, x, y, ex, ey, { tex: 'trace_06', w: ww / len, tint: 0x39c2ff, a0: 0.6, life: 380, delay });
+  sp(f, 'window_03', ex, ey, { size: ww * 0.35, size1: ww * 0.8, life: 380, delay: delay + 280, tint: 0xff4fa3 });
   const n = Math.min(N(f, 8), Math.ceil(len / 150));
-  for (let i = 0; i < n; i++) { const [px, py] = alongAt(x, y, a, ((i + 0.5) * len) / n); fbx(f, 'vfDitheredFire', px, py - 10, { size: ww * 1.15, life: 600, delay: delay + (300 * i) / n, tint: i % 2 ? 0xffffff : 0xb084ff }); }
+  for (let i = 0; i < n; i++) { const [px, py] = alongAt(x, y, a, ((i + 0.5) * len) / n); fbx(f, 'vfDitheredFire', px, py - 10, { size: ww * 1.15, life: 600, delay: delay + (300 * i) / n, tint: i % 2 ? 0xff4fa3 : 0x39c2ff }); }
 });
 // Mop Q: five bristle strokes stagger 70 ms across the wedge, dust and star puffs.
 rec('area', 'broomCone', (f, { x, y, a, len, ang: wd, delay }) => {
@@ -1758,10 +1775,16 @@ recAll('drone', (f, { x, y }) => {
 });
 
 // ── targeted ──
-// Pixel W: three pale orbs hop to the target 80 ms apart, a small hit pop per hop.
+// Pixel W: square nodes travel only along the server-provided caster-to-target path.
 rec('tgt', 'pixelOrb', (f, { x0, y0, x1, y1 }) => {
-  SHAPES.line(f, x0, y0 - 40, x1, y1 - 40, { tex: 'trace_04', w: 0.04, life: 300, tint: 0xbfe4ff, a0: 0.5 });
-  for (let i = 0; i < 3; i++) { sp(f, 'magic_03', x0, y0 - 40, { size: 54, size1: 34, dx: x1 - x0, dy: y1 - y0, spin: 2, life: 220, delay: i * 80, tint: 0xbfe4ff, ease: 'Quad.easeIn' }); fbx(f, 'vfSmallHit', x1, y1 - 40, { size: 130 + i * 20, life: 350, delay: 220 + i * 80, tint: i === 2 ? 0xffffff : 0xbfe4ff }); }
+  const len = Math.hypot(x1 - x0, y1 - y0), a = ang(x0, y0, x1, y1);
+  SHAPES.line(f, x0, y0 - 40, x1, y1 - 40, { tex: 'trace_04', w: 0.025, life: 300, tint: 0x39c2ff, a0: 0.42 });
+  for (let i = 0; i < 3; i++) {
+    const t = (i + 1) / 4, px = x0 + (x1 - x0) * t, py = y0 + (y1 - y0) * t - 40;
+    sp(f, 'window_01', px, py, { size: 22, size1: 12, dx: Math.cos(a) * Math.min(24, len * 0.04), dy: Math.sin(a) * Math.min(24, len * 0.04), life: 260, delay: i * 55, tint: i % 2 ? 0xff4fa3 : 0x39c2ff });
+  }
+  sp(f, 'window_03', x1, y1 - 40, { size: 44, size1: 78, life: 250, tint: 0xff4fa3 });
+  fbx(f, 'vfSmallHit', x1, y1 - 40, { size: 110, life: 320, delay: 80, tint: 0x39c2ff });
 });
 // Zero R: a crosshair locks on (the chains and the strike are persistent, see MobaFx suppress / suppressEnd).
 rec('tgt', 'suppressStrike', (f, { x1, y1 }) => {

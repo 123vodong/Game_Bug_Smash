@@ -138,6 +138,6 @@ Tactical layer: a ladybug swarm near an obstacle creates a chain reaction — ea
 
 - Base 10 per kill, multiplied by current combo.
 - **Score and XP increase together** by the same amount.
-- Score **resets to 0 on defeat** in Personal Mode (along with level/XP) — drives the bug-drop count on the way down. Team Mode (future) preserves score per round.
+- Score **resets to 0 on defeat** in Personal Mode (along with level/XP) — drives the bug-drop count on the way down. Team Mode is a separate 5v5 match and does not use Personal Mode's defeat/reset rules; see [04_MULTIPLAYER.md](./04_MULTIPLAYER.md).
 - XP persists until **broken** (level reset). Round end doesn't apply in Personal Mode.
 - 🔵 **Time bonus** (SP only currently): `timeLeftMs / 100` added on win.

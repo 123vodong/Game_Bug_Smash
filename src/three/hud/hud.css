@@ -103,6 +103,7 @@
 .bsh-sbox .lock { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 11px; white-space: pre; color: #ccd; background: rgba(0,0,0,.6); }
 .bsh-sbox .nm { position: absolute; inset: 0; background: rgba(40,80,200,.38); }
 .bsh-sbox .ic { position: relative; }
+.bsh-sbox .ic img { display: block; width: 40px; height: 40px; object-fit: contain; }
 .bsh-sbox .key { position: absolute; left: 2px; top: 0; font: 700 11px Consolas, monospace; color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000; }
 .bsh-sbox .mana { position: absolute; right: 3px; bottom: 0; font: 600 10px Consolas, monospace; color: #7ec8ff; text-shadow: 0 0 2px #000; }
 .bsh-sbox .chg { position: absolute; right: 3px; top: 0; font: 700 12px Consolas, monospace; color: #ffd23f; text-shadow: 0 0 2px #000; }
@@ -175,6 +176,7 @@
 .bsx-pad { position: absolute; right: 14px; bottom: 14px; width: 230px; height: 200px; }
 .bsx-abtn { position: absolute; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); background: rgba(14,22,40,.78); color: #fff; font: 700 15px Consolas, monospace; touch-action: none; padding: 0; overflow: hidden; }
 .bsx-abtn i { position: absolute; inset: 0; display: grid; place-items: center; font-style: normal; font-size: 16px; color: #fff; text-shadow: 0 0 3px #000; }
+.bsx-abtn i img { display: block; width: 38px; height: 38px; object-fit: contain; }
 .bsx-abtn.cd { opacity: .5; }
 .bsx-atk { right: 0; bottom: 0; width: 84px; height: 84px; font-size: 34px; border-color: #ff6b6b; background: rgba(120,30,30,.7); }
 .bsx-s { width: 54px; height: 54px; } .bsx-sp { width: 42px; height: 42px; font-size: 12px; }
@@ -194,6 +196,7 @@
 .bsx-tip .sk-desc { margin-top: 5px; color: #dfe6f0; line-height: 1.35; }
 .bsx-tip .sk-mech { margin-top: 6px; padding-top: 5px; border-top: 1px solid #243350; display: flex; flex-direction: column; gap: 3px; font: 11px/1.3 Consolas, monospace; color: #cfd8e8; }
 .ic-h { display: flex; align-items: center; gap: 8px; } .ic-h .e { font-size: 30px; } .ic-n { font-weight: 700; font-size: 14px; color: #fff; } .ic-t { font: 700 10px Consolas, monospace; letter-spacing: .5px; }
+.ic-h .sk-icon-art, .bsx-sk-h .sk-icon-art { display: block; width: 32px; height: 32px; object-fit: contain; flex: 0 0 32px; }
 .ic-c { margin-left: auto; font: 700 14px Consolas, monospace; color: #ffd23f; white-space: nowrap; } .ic-c s { color: #888; font-size: 11px; }
 .ic-st { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 6px 0 2px; } .ic-st .st { color: #b9c6dd; } .ic-st .st b { color: #7ed957; }
 .ic-pas { margin-top: 5px; color: #ffd27a; } .ic-d { margin-top: 5px; color: #9fb0c8; font-style: italic; }

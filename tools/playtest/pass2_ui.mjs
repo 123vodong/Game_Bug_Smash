@@ -1,4 +1,4 @@
-// Pass 2 browser check (PASS2_BREAKDOWN.md RP-14) — the real client in headless Chrome/Edge against a
+// Team Mode browser check — the real client in headless Chrome/Edge against a
 // DEBUG dev server (static files + ws on the same port):
 //   BUG_SMASH_DEBUG=1 BUG_SMASH_RANKS=memory PORT=2650 node server/index.js
 //   GAME_URL=http://localhost:2650/ node tools/playtest/pass2_ui.mjs <outDir>

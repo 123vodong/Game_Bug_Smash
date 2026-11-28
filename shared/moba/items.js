@@ -1,8 +1,7 @@
 // shared/moba/items.js — Team Mode shop (office gear). Shared by server + client.
 //
-// Buying happens inside your fountain (or while dead). 6 inventory slots, no
-// recipes (buy directly). Pass 2: items can be SOLD (rules.sellValue: 70 %, or 100 % within
-// 10 s of buying). Stat fields (all additive):
+// Buying happens inside your fountain (or while dead). 6 inventory slots.
+// Selling refunds 75% of cost with no undo window. Stat fields (all additive):
 //   ad, ap, hp, mana, armor, ms (flat move speed), as (attack-speed %),
 //   haste (cooldown reduction, capped by rules.MAX_HASTE_PCT), lifesteal (fraction
 //   of attack + skill damage healed), apPct (× total AP)

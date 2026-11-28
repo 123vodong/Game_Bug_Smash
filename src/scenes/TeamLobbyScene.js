@@ -1,5 +1,5 @@
-// TeamLobbyScene — Team Mode ("Office Siege", 5v5 office MOBA) QUEUE screen (v3 "Draft Day").
-// Browse the 12 champions (grouped by lane, filter chips, costume portraits from
+// TeamLobbyScene — Team Mode ("Office Siege", 5v5 office MOBA) queue screen.
+// Browse the 18 champions (grouped by lane, filter chips, costume portraits from
 // looks.js) — the highlighted card is your FAVOURITE (= first hover in champ select),
 // set a display name, then QUICK MATCH → joins the Colyseus room 'team' and shows the
 // queue overlay ("Searching… humans n · starts in Xs", START NOW, CANCEL), or
@@ -7,14 +7,13 @@
 //   keys: ← → ↑ ↓ / 1–9 browse · ENTER quick match (queue: start now) · C custom rooms
 //         O practice offline
 //         ESC back (queue: cancel) · click the name to edit
-// Contract: .claude/context/tasks/TEAM_MODE_V3_BREAKDOWN.md §3.5 / §4.3 U1
 //   joined room, phase 'select' (or later) → scene.start('TeamSelectScene', { room, clockOffset, clockRtt })
 // Server clock: contract §3.6 'time' message (startClockSync in uiKit), sampled while queued.
 //   PRACTICE OFFLINE → scene.start('TeamSelectScene', { offline: true, name })
 // All champion numbers come from shared/moba/*.js (read-only) — nothing mirrored here.
 // NOTE: we never send 'hello' here — the server answers it only ONCE per client and
 // TeamModeScene needs that 'welcome' after the handoff.
-// Pass 2 (PASS2_BREAKDOWN.md): 16 champions (6 × 3 grid), your rank + 🏆 RANKS (LeaderboardPanel),
+// Ranked profile, one-tab takeover, and rejoin are part of the current Team Mode flow.
 // the queue waits ~30 s with a READY check, DUP_TAB → PLAY HERE, IN_MATCH / a saved match → REJOIN.
 import { CHAMPIONS, CHAMPION_IDS, ROLE_ORDER, isChampionId } from '../../shared/moba/champions.js';
 import { ensureMobaLooks, drawChampionPortrait } from '../entities/moba/looks.js';

@@ -1,6 +1,6 @@
 // src/ui/moba/ShopPanel.js — Team Mode shop: the "Office Supply Store".
 //
-// Contract (.claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3.4):
+// Item behavior and shop rules: docs/03_ITEMS_AND_PASSIVES.md.
 //   const shop = new ShopPanel(scene, { onBuy, onSell }); // onBuy(itemId) → 'buy' { item }
 //                                                  // Pass 2: onSell(slot) → 'sell' { slot } — click an
 //                                                  // owned item (SELL button) or right-click it

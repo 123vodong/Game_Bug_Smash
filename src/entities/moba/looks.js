@@ -1,5 +1,5 @@
 // looks.js — Team Mode v2 procedural art ("Walls & New Hires", client-art).
-// Contract: .claude/context/tasks/TEAM_MODE_V2_BREAKDOWN.md §3.3
+// Champion identities and gameplay roles are documented in docs/02_CHAMPIONS_AND_SKILLS.md.
 //
 //   ensureMobaLooks(scene)                 idempotent; draws every procedural texture (canvas, once per game)
 //   unitTextureKey(kind, campId = '')      minion / camp variant / pet / epic → texture key (falls back to bug PNGs)
@@ -108,6 +108,11 @@ hat('beret', (ctx) => {                                      // Pixel — artist
   ell(ctx, 18.5, 10, 12, 4.8, -0.14); paint(ctx, '#ff4fa3');
   ell(ctx, 18, 11.5, 9, 2, -0.14); paint(ctx, '#c23278', null);
   line(ctx, 17.5, 5.6, 16.5, 2.4, INK, 1.8);
+  rr(ctx, 23.2, 6.7, 5.2, 5.2, 0.6); paint(ctx, INK, null);
+  ctx.fillStyle = '#39c2ff'; ctx.fillRect(24, 7.5, 1.8, 1.8);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(26.2, 7.5, 1.8, 1.8);
+  ctx.fillStyle = '#ff4fa3'; ctx.fillRect(24, 9.7, 1.8, 1.8);
+  ctx.fillStyle = '#39c2ff'; ctx.fillRect(26.2, 9.7, 1.8, 1.8);
   ctx.globalAlpha = 0.5; ell(ctx, 14, 8, 4, 1.4, -0.14); paint(ctx, '#ffffff', null); ctx.globalAlpha = 1;
 });
 hat('hardhat', (ctx) => {                                    // Stack — construction hardhat
@@ -268,7 +273,8 @@ function outfitHoodie(main, accent) {
 outfit('turtleneck', (ctx) => {
   torso(ctx, '#39c2ff');
   rr(ctx, 8.6, 0, 8.8, 5, 2.2); paint(ctx, '#1e8fc8', INK, 1);
-  for (const [x, y, c] of [[9, 14, '#ff4fa3'], [12, 17, '#ffd23f'], [15, 14, '#ff4fa3'], [12, 11, '#ffffff']]) { ctx.fillStyle = c; ctx.fillRect(x, y, 2.6, 2.6); }
+  rr(ctx, 9, 10, 9.5, 9.5, 1); paint(ctx, INK, null);
+  for (const [x, y, c] of [[10, 11, '#39c2ff'], [14, 11, '#ff4fa3'], [10, 15, '#ff4fa3'], [14, 15, '#39c2ff']]) { ctx.fillStyle = c; ctx.fillRect(x, y, 3.2, 3.2); }
 });
 outfit('armor', (ctx) => {
   torso(ctx, '#3b7a2a', { sw: 9, hw: 7.4 });
@@ -398,9 +404,10 @@ outfit('hoodie-oncall', outfitHoodie(0x2b2d42, 0xff5252));   // Pager — 3 a.m.
 const prop = (name, w, h, ox, oy, draw) => spec(`look-prop-${name}`, w, h, ox, oy, draw, { res: 3 });
 prop('stylus', 8, 32, 0.5, 0.78, (ctx) => {
   ctx.shadowColor = '#ff4fa3'; ctx.shadowBlur = 4; dot(ctx, 4, 2.4, 1.8, '#ffe1f0', null); ctx.shadowBlur = 0;
-  poly(ctx, [4, 1.5, 6, 6, 2, 6]); paint(ctx, '#dddddd', INK, 0.9);
-  rr(ctx, 2, 6, 4, 23, 1.6); paint(ctx, '#39c2ff', INK, 1);
-  ctx.fillStyle = '#ff4fa3'; ctx.fillRect(2, 13, 4, 2.2);
+  poly(ctx, [2, 1.5, 6, 1.5, 6, 5.5, 4, 7.5, 2, 5.5]); paint(ctx, '#ffe1f0', INK, 0.9);
+  rr(ctx, 1.2, 7, 5.6, 21, 0.8); paint(ctx, '#39c2ff', INK, 1);
+  ctx.fillStyle = '#ff4fa3'; ctx.fillRect(1.2, 13, 5.6, 2.6);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(1.2, 20, 2, 2);
 });
 prop('database', 22, 32, 0.5, 0.9, (ctx) => {
   rr(ctx, 9.4, 12, 3.2, 19, 1.2); paint(ctx, '#6b4a2b', INK, 1);

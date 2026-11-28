@@ -554,7 +554,7 @@ const RECONNECT_ATTEMPT_MS = 5000;   // a hung reconnect (offline) counts as fai
 const NO_RECONNECT_CODES = new Set([1000, 4000, 4010]); // 4010 = Pass 2: replaced by another tab (PLAY HERE)
 
 // ---- Atlas (optional) — Mixamo-rendered 8-direction frames ----
-// Frame name format: `{action}_{dir}_{frame:04d}` (see MIXAMO_ATLAS_BREAKDOWN).
+// Frame name format: `{action}_{dir}_{frame:04d}` (see assets/characters/atlas/README.md).
 // If the atlas isn't loaded, the player render falls back to SVG textures.
 const ATLAS_KEY = 'devstick';
 const ATLAS_DIRS = ['e', 'se', 's', 'sw', 'w', 'nw', 'n', 'ne']; // angle bucket order from 0 → 2π

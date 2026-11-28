@@ -59,8 +59,8 @@ const EPIC_MIN_ALLIES = 3;
 const DEADLINE_MIN_AVG_LEVEL = 6;
 const GOLDEN_MIN_AVG_LEVEL = 3;
 const EPIC_GIVE_UP_MS = 60000;
-// EP-05 early-game pacing (bots-only sims: first kill ~5:20, first tower ~8:30, 3 kills by 9:00,
-// 18.8-min matches → see EXPERIENCE_PASS_BREAKDOWN.md EP-05 for the before/after numbers).
+// Early-game pacing is tuned from bots-only simulations; see docs/01_GAME_RULES_AND_MECHANICS.md
+// for current match targets.
 const GANK_EVERY_MS = [12000, 20000];
 const FIRST_GANK_MS = [40000, 60000]; // first jungle gank right after the first camp (was 2:30–3:30)
 const GANK_MIN_LEVEL = 1;             // (was 3)

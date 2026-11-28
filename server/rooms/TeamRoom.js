@@ -1,5 +1,5 @@
 // TeamRoom — Team Mode "Office Siege": a server-authoritative 5v5 office MOBA.
-// Contract: .claude/context/tasks/TEAM_MODE_BREAKDOWN.md §3 (frozen).
+// Rules and message contracts: docs/01_GAME_RULES_AND_MECHANICS.md and docs/05_MAP_VISION_SPELLS_AND_NETWORK.md.
 //
 // 🚀 Startup (blue, bottom-left) vs 🏢 MegaCorp (red, top-right). Bots fill
 // every empty slot. Phases: lobby (30–45 s, or everyone READY) → select → loading →
@@ -16,18 +16,18 @@
 // Every number comes from shared/moba/*.js; server-only knobs live in
 // server/game/moba/tuning.js, copy in server/game/moba/lines.js.
 //
-// v2 "Walls & New Hires" (TEAM_MODE_V2_BREAKDOWN.md): every walker moves
+// Navigation: every walker moves
 // through Mover (cached findPath routes, wall pushOut), knockbacks displace
 // over KNOCKBACK_MS (+ wallStun), and champions with a `pet` get an
 // untargetable, invulnerable companion unit (kind 'pet', TeamUnit.owner).
 //
-// v3 "Draft Day" (TEAM_MODE_V3_BREAKDOWN.md): lobby (queue) → select (room
+// Lobby/selection flow: lobby (queue) → select (room
 // locked; 10 draft seats in this.slots, bots draft at random times, humans
 // pick / lock / spells) → loading (LOADING_MS, frozen at the fountain) →
 // playing (champion records, bot brains and pets are created from the seats)
 // → ended. Summoner spells (`spell` D/F, shared/moba/spells.js) live in _doSpell.
 //
-// Pass 2 (PASS2_BREAKDOWN.md): player ids (join option `pid` → public id) — one live session per
+// Player ids (join option `pid` → public id) — one live session per
 // player (Presence: DUP_TAB / IN_MATCH), seats held for the WHOLE match (manual reconnection, the
 // client keeps the token) with an abandon timer, ranked results at the end (Ranking), `sell`, and
 // a longer quick-play queue with a ready check (`ready` / startNow).
@@ -267,7 +267,7 @@ export class TeamRoom extends Room {
     this.onMessage('startNow', (client) => this._doStartNow(client.sessionId));
     this.onMessage('side', (client, msg) => this._doSide(client, msg));
     this.onMessage('botLevel', (client, msg) => this._doBotLevel(client.sessionId, msg));
-    // v3 champion select (TEAM_MODE_V3_BREAKDOWN.md §3.3)
+    // Champion select messages.
     this.onMessage('pick', (client, msg) => this._doPick(client.sessionId, msg));
     this.onMessage('lock', (client) => this._doLock(client.sessionId));
     this.onMessage('spells', (client, msg) => this._doSpells(client.sessionId, msg));
@@ -1443,7 +1443,7 @@ export class TeamRoom extends Room {
 
   // ───────────────────────── EP-04: rollback (concede) vote ─────────────────────────
   /**
-   * vote {yes:boolean} — EXPERIENCE_PASS_BREAKDOWN.md §3.3. A `yes` with no open vote on your
+   * vote {yes:boolean}. A `yes` with no open vote on your
    * team starts one (playing, match clock ≥ ROLLBACK_FROM_MS, team not in cooldown); otherwise
    * it is your ballot in the open vote. Denials go to the sender only:
    *   voteDeny {reason:'phase'}    not playing (lobby / select / loading / ended)
