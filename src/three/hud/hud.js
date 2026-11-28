@@ -11,7 +11,9 @@ import { createMinimap } from './minimap.js';
 import { createFeed } from './feed.js';
 import { createTarget } from './target.js';
 import { createExtras } from './extras.js';
-import { createTooltip } from './tooltip.js';
+import { createTooltip, skillCardHtml, spellCardHtml, champCardHtml, itemCardHtml, esc } from './tooltip.js';
+import { AudioManager } from '../../core/AudioManager.js';
+import { clearMatch } from '../../core/Identity.js';
 import { createShop } from './shop.js';
 import { createScoreboard } from './scoreboard.js';
 import { createAugments } from './augments.js';
@@ -73,6 +75,11 @@ export function createHud({ source, project, mode, opts = {} }) {
     const box = el(s, 'div', 'bsh-sbox', '<span class="ic bsh-stroke"></span><div class="dim"></div><div class="nm"></div><div class="lock"></div><div class="cd"></div><div class="hold"></div><span class="key"></span><span class="mana"></span><span class="chg"></span>');
     box.style.pointerEvents = 'auto'; box.style.cursor = 'pointer';
     box.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); const inp = opts.input; if (!inp) return; if (sp) inp.spell(k, true); else inp.cast(k, true); });
+    if (!sp) {
+      const rel = (e) => { const inp = opts.input; if (inp && typeof inp.release === 'function') { e.stopPropagation(); inp.release(k); } };
+      box.addEventListener('pointerup', rel);
+      box.addEventListener('pointercancel', rel);
+    }
     const o = { s, box, id: null, spec: null, cdTotal: 300, prev: undefined, ready: false };
     for (const c of ['ic', 'dim', 'nm', 'lock', 'cd', 'hold', 'key', 'mana', 'chg']) o[c] = box.querySelector(`.${c}`);
     o.key.textContent = k.toUpperCase(); o.nm.hidden = o.lock.hidden = o.hold.hidden = o.chg.hidden = true;
@@ -94,7 +101,21 @@ export function createHud({ source, project, mode, opts = {} }) {
 
   const nameplates = createNameplates({ source, project, root });
   const rootEl = root;
-  const fit = () => { const w = innerWidth, h = innerHeight, compact = w < 900 || matchMedia('(pointer: coarse)').matches || root.classList.contains('bsx-touch'); root.classList.toggle('bsh-compact', compact); const hs = compact ? Math.max(0.6, Math.min(1, w / 900, h / 460)) : Math.max(0.72, Math.min(1.3, w / 1280, h / 720)); rootEl.style.setProperty('--hs', hs.toFixed(3)); };
+  const SCALE_KEY = 'bugsmash.hud.scale';
+  let userScale = 1.0;
+  try { const sv = parseFloat(localStorage.getItem(SCALE_KEY)); if (Number.isFinite(sv)) userScale = Math.max(0.7, Math.min(1.25, sv)); } catch (_) { /* ignore */ }
+  const fit = () => { const w = innerWidth, h = innerHeight, compact = w < 900 || matchMedia('(pointer: coarse)').matches || root.classList.contains('bsx-touch'); root.classList.toggle('bsh-compact', compact); const base = compact ? Math.max(0.6, Math.min(1, w / 900, h / 460)) : Math.max(0.72, Math.min(1.3, w / 1280, h / 720)); const hs = Math.max(0.5, Math.min(1.6, base * userScale)); rootEl.style.setProperty('--hs', hs.toFixed(3)); };
+  const scaleBox = el(panel, 'div', 'bsh-scale');
+  const bScaleUp = el(scaleBox, 'button', 'bsh-scb', '+'); bScaleUp.title = 'Increase HUD size';
+  const bScaleDn = el(scaleBox, 'button', 'bsh-scb', '−'); bScaleDn.title = 'Decrease HUD size';
+  const setUserScale = (delta) => {
+    userScale = Math.round(Math.max(0.7, Math.min(1.25, userScale + delta)) * 100) / 100;
+    try { localStorage.setItem(SCALE_KEY, String(userScale)); } catch (_) { /* ignore */ }
+    fit(); AudioManager.uiClick?.();
+    feeds.toast(`HUD size: ${Math.round(userScale * 100)}%`, '#ffd23f', 1200);
+  };
+  bScaleUp.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); setUserScale(0.1); });
+  bScaleDn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); setUserScale(-0.1); });
   let fitted = false; fit(); addEventListener('resize', fit);
 
   // ---- C8 panels: tooltip + shop + scoreboard (TAB) + augment picker + end screen ----
@@ -104,9 +125,114 @@ export function createHud({ source, project, mode, opts = {} }) {
   const shop = createShop({ root, source, toast: (m, c) => feeds.toast(m, c), tooltip });
   const sbd = createScoreboard({ root, source });
   const augs = createAugments({ root, source, toast: (m, c, ms) => feeds.toast(m, c, ms) });
-  const endScr = createEndScreen({ root, source, hooks: hooksOut });
-  const extras = createExtras({ root, source, opts, hudApi: { toast: (m, c) => feeds.toast(m, c), setScoreboard: (on) => sbd.set(on), scoreboardOpen: () => sbd.isOpen(), shop } });
-  const modalOpen = () => augs.isOpen() || endScr.isOpen();
+  const endScr = createEndScreen({ root, source, hooks: hooksOut, toast: (m, c, ms) => feeds.toast(m, c, ms) });
+  const extras = createExtras({ root, source, opts, hudApi: { toast: (m, c) => feeds.toast(m, c), setScoreboard: (on) => sbd.set(on), scoreboardOpen: () => sbd.isOpen(), shop, onExit: () => (hooksOut.onExit ? hooksOut.onExit() : (location.href = location.pathname + '?scene=menu&renderer=3d')) } });
+  const modalOpen = () => augs.isOpen() || endScr.isOpen() || extras.pauseOpen();
+
+  // ---- Waiting / Lobby phase overlay (online lobby / select / loading) ----
+  const lobbyEl = el(root, 'div', 'bsx-lobby bsh-pop'); lobbyEl.hidden = true;
+  let lobbySig = '';
+  lobbyEl.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-la]'); if (!t) return;
+    AudioManager.uiClick?.();
+    if (t.dataset.la === 'start') { try { source.send('startNow', {}); } catch (_) { /* closed */ } }
+    else if (t.dataset.la === 'leave') {
+      clearMatch();
+      if (typeof hooksOut.onExit === 'function') hooksOut.onExit();
+      else location.href = location.pathname + '?scene=menu&renderer=3d';
+    }
+  });
+  function updateLobby(st, phase, srvNow) {
+    const show = phase === 'lobby' || phase === 'select' || phase === 'loading';
+    setHidden(lobbyEl, !show);
+    if (!show || !st) { lobbySig = ''; return; }
+    const rows = [];
+    if (st.champions && st.champions.forEach) st.champions.forEach((c, id) => rows.push({ id, c }));
+    const leftMs = st.phaseEndsAt ? Math.max(0, st.phaseEndsAt - srvNow) : 0;
+    const sec = Math.ceil(leftMs / 1000);
+    const sig = `${phase}|${sec}|${rows.map((r) => `${r.id}:${r.c.champ}:${r.c.team}:${r.c.ready ? 1 : 0}`).join(',')}`;
+    if (sig === lobbySig) return; lobbySig = sig;
+    const title = phase === 'loading' ? '⏳ LOADING INTO THE OFFICE…' : phase === 'select' ? '🎯 CHAMPION SELECT IN PROGRESS' : '☕ WAITING IN LOBBY';
+    const listHtml = rows.map(({ id, c }) => {
+      const d = CHAMPIONS[c.champ];
+      const tc = c.team === 'red' ? '#ff5e5e' : '#39c2ff';
+      return `<div class="lob-r" style="--tc:${tc}"><span>${d ? d.emoji : '🐞'} <b>${esc(c.name || id)}</b> <small>${d ? esc(d.name) : ''}</small></span><span>${c.isBot ? '🤖 bot' : (c.ready ? '✅ ready' : '…')}</span></div>`;
+    }).join('') || '<div class="lob-empty">Connecting coworkers…</div>';
+    lobbyEl.innerHTML = `<div class="lob-box"><div class="lob-t">${title}</div>`
+      + (sec > 0 ? `<div class="lob-cd">Starting in ${sec}s</div>` : '')
+      + `<div class="lob-list">${listHtml}</div>`
+      + `<div class="lob-acts">${phase === 'lobby' ? '<button class="bsh-btn yes" data-la="start">▶ START NOW</button>' : ''}<button class="bsh-btn no" data-la="leave">🚪 LEAVE</button></div></div>`;
+  }
+
+  // ---- First-session coach tips ----
+  const coachSeen = new Set();
+  let coachAt = 0;
+  function tickCoach(me, st, srvNow, now, canShop, phase) {
+    if (!me || phase !== 'playing' || now < coachAt) return;
+    coachAt = now + 1500;
+    const say = (id, msg, ms = 5500) => { if (coachSeen.has(id)) return false; coachSeen.add(id); feeds.tip(msg, ms); return true; };
+    if (me.dead) { say('dead_shop', '💡 Tip: Shop (P) is open while dead — spend your gold before respawning!'); return; }
+    if ((me.maxHp || 0) > 0 && me.hp / me.maxHp < 0.28 && !canShop) { if (say('low_hp', '💡 Low HP! Press B to Recall to your break room and heal up.')) return; }
+    if ((me.level || 1) >= ULT_UNLOCK_LEVEL) { if (say('ult', '💡 Level 6 reached! Your Ultimate (R) is now unlocked.')) return; }
+    if (canShop && (me.gold | 0) >= 350) { if (say('fountain_gold', '💡 You have gold in the break room — press P to open the Office Supply Store!')) return; }
+    const epSoon = (at) => at > srvNow && at - srvNow <= 30000;
+    if (st && (epSoon(st.epicGoldenAt || 0) || epSoon(st.epicDeadlineAt || 0))) { if (say('epic_soon', '💡 An Epic objective spawns in the river in <30s! Group with your team.')) return; }
+    if (st && st.startedAt && srvNow - st.startedAt > 18000) { say('space_atk', '💡 Tip: Hold SPACE to attack the nearest enemy or tower, TAB for Standup Board.'); }
+  }
+
+  // ---- Rich hover tooltips & bottom HUD interactions ----
+  let meRef = null;
+  const setHoverSlot = (slot) => {
+    const inp = opts.input; if (!inp) return;
+    if (typeof inp.setHoverSlot === 'function') inp.setHoverSlot(slot);
+    else if (typeof inp.hoverSlot === 'function') inp.hoverSlot(slot);
+  };
+  for (const k of SLOTS) {
+    const sl = slots[k];
+    sl.box.addEventListener('pointerenter', () => {
+      const me = meRef, def = me && CHAMPIONS[me.champ]; if (!def) return;
+      const stance = kitTags && kitTags.stance, sk = resolveSkill(def, k, stance); if (!sk) return;
+      tooltip.show(skillCardHtml(def, k, stance, me), sl.box, { above: true, color: hex(sk.color == null ? 0x39c2ff : sk.color) });
+      setHoverSlot(k);
+    });
+    sl.box.addEventListener('pointerleave', () => { tooltip.hide(); setHoverSlot(null); });
+  }
+  for (const k of SPELL_SLOTS) {
+    const sl = slots[k];
+    sl.box.addEventListener('pointerenter', () => {
+      const me = meRef, sp = sl.id && SPELLS[sl.id]; if (!sp) return;
+      tooltip.show(spellCardHtml(sp, k, (me && me.level) || 1), sl.box, { above: true, color: hex(sp.color == null ? 0x39c2ff : sp.color) });
+      setHoverSlot(k);
+    });
+    sl.box.addEventListener('pointerleave', () => { tooltip.hide(); setHoverSlot(null); });
+  }
+  who.style.pointerEvents = 'auto'; who.style.cursor = 'pointer';
+  who.addEventListener('pointerenter', () => {
+    const me = meRef, def = me && CHAMPIONS[me.champ]; if (!def) return;
+    tooltip.show(champCardHtml(def, me), who, { above: true });
+  });
+  who.addEventListener('pointerleave', () => { tooltip.hide(); });
+  items.forEach((d, i) => {
+    d.style.pointerEvents = 'auto';
+    d.addEventListener('pointerenter', () => {
+      if (!d._id || !meRef) return;
+      tooltip.show(itemCardHtml(d._id, toArr(meRef.items), meRef.gold | 0, (meRef._boughtAt && meRef._boughtAt[i]) || 0, Date.now()), d, { above: true });
+    });
+    d.addEventListener('pointerleave', () => { tooltip.hide(); });
+    d.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const it = d._id && ITEMS[d._id];
+      if (it && (it.active || it.consumable)) {
+        try { source.send('active', {}); } catch (_) { /* closed */ }
+        AudioManager.uiClick?.();
+      } else {
+        AudioManager.uiClick?.();
+        extras.toggleShop();
+      }
+    });
+  });
+  goldEl.style.pointerEvents = 'auto'; goldEl.style.cursor = 'pointer'; goldEl.title = 'Open Shop (P)';
+  goldEl.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); AudioManager.uiClick?.(); extras.toggleShop(); });
 
   // gold pop pool (world-anchored at spawn)
   const goldPool = []; let goldI = 0;
@@ -134,7 +260,7 @@ export function createHud({ source, project, mode, opts = {} }) {
   function applySpec(slot, sk) {
     const sl = slots[slot]; sl.spec = sk;
     setText(sl.ic, sk.icon || '✨'); setText(sl.mana, String(sk.mana)); setStyle(sl.box, '--c', hex(sk.color == null ? 0x3a4a66 : sk.color));
-    sl.box.title = `${sk.name || ''} [${slot.toUpperCase()}] · ${sk.mana} mana · ${sk.cd}s`;
+    sl.box.title = '';
   }
 
   function updateKit(me, def, now) {
@@ -219,7 +345,7 @@ export function createHud({ source, project, mode, opts = {} }) {
     }
     for (const slot of SPELL_SLOTS) {
       const sl = slots[slot], K = slot.toUpperCase(), id = me['spell' + K] || '', sp = SPELLS[id] || null;
-      if (sl.id !== id) { sl.id = id; setText(sl.ic, (sp && sp.icon) || '·'); setStyle(sl.box, '--c', hex(sp ? sp.color : 0x3a4a66)); sl.box.title = sp ? `${sp.name || id}` : ''; }
+      if (sl.id !== id) { sl.id = id; setText(sl.ic, (sp && sp.icon) || '·'); setStyle(sl.box, '--c', hex(sp ? sp.color : 0x3a4a66)); sl.box.title = ''; }
       const readyAt = me['cd' + K] || 0, left = readyAt > srvNow ? readyAt - srvNow : 0;
       const hasCh = !!(sp && sp.maxCharges > 1), chg = hasCh ? (me['charges' + K] == null ? sp.maxCharges : me['charges' + K]) : 0;
       setHidden(sl.chg, !hasCh); if (hasCh) { setText(sl.chg, String(chg)); setStyle(sl.chg, 'color', chg > 0 ? '#ffd23f' : '#ff6b6b'); }
@@ -244,7 +370,7 @@ export function createHud({ source, project, mode, opts = {} }) {
     setText(lvEl, String(lv)); setStyle(ring, '--p', String(lv >= MAX_LEVEL || hi <= lo ? 100 : Math.round(Math.max(0, Math.min(1, (xp - lo) / (hi - lo))) * 100)));
     if (def) updateSlots(me, def, srvNow, ctx);
     const its = toArr(me.items);
-    items.forEach((d, i) => { const id = its[i] || ''; if (d._id !== id) { d._id = id; d.textContent = (ITEMS[id] && ITEMS[id].emoji) || ''; d.title = (ITEMS[id] && ITEMS[id].name) || ''; d.classList.toggle('on', !!id); } });
+    items.forEach((d, i) => { const id = its[i] || ''; if (d._id !== id) { d._id = id; d.textContent = (ITEMS[id] && ITEMS[id].emoji) || ''; d.title = ''; d.classList.toggle('on', !!id); } });
     setText(goldEl, `🪙 ${me.gold | 0}`); goldEl.classList.toggle('shop', !!ctx.canShop);
     setText(kdaEl, `⚔ ${me.kills | 0} / ${me.deaths | 0} / ${me.assists | 0}   🐛 ${me.cs | 0}`);
     setText(statCells.ad, String(me.ad | 0)); setText(statCells.ap, String(me.ap | 0)); setText(statCells.ar, String(me.armor | 0)); setText(statCells.as, Number(me.as || 0).toFixed(2)); setText(statCells.rg, String(me.range | 0)); setText(statCells.ms, String(me.ms | 0));
@@ -267,6 +393,7 @@ export function createHud({ source, project, mode, opts = {} }) {
     feeds.update(phase, srvNow);
     if (!st) return;
     const me = ctx.me || (st.champions && st.champions.get && st.champions.get(myId)) || null, myTeam = me && me.team;
+    meRef = me;
     setText(kb, `${TEAM_INFO.blue.emoji} ${st.blueKills | 0}`); setText(kr, `${st.redKills | 0} ${TEAM_INFO.red.emoji}`);
     const t = phase === 'playing' && st.startedAt ? srvNow - st.startedAt : (phase === 'ended' && st.startedAt ? (endClock == null ? (endClock = srvNow - st.startedAt) : endClock) : 0);
     setText(clockEl, fmtTime(t));
@@ -286,18 +413,22 @@ export function createHud({ source, project, mode, opts = {} }) {
     const selId = ctx.selectedId || (me && me.targetId) || null;
     target.update(st, selId, myTeam);
     if (me) updatePanel(me, srvNow, c2);
+    if (!me && !panel.hidden) tooltip.hide();
     panel.hidden = !me;
     extras.update(me, c2);
     shop.update(me, c2); augs.update(me, c2); sbd.update(now); endScr.update(st, phase, srvNow);
+    updateLobby(st, phase, srvNow);
+    tickCoach(me, st, srvNow, now, !!ctx.canShop, phase);
   }
 
   return {
     setScoreboard(on) { sbd.set(on); }, scoreboardOpen: () => sbd.isOpen() || modalOpen(), // scoreboardOpen doubles as the input-block flag (Renderer.input.isBlocked reads it)
     blocked: modalOpen, onPlayAgain: (f) => { hooksOut.onPlayAgain = f; }, onExit: (f) => { hooksOut.onExit = f; },
-    toggleShop: extras.toggleShop, openShop: shop.open, toggleInfo: extras.toggleInfo, closePanels: extras.closePanels, panelOpen: extras.panelOpen,
+    toggleShop: extras.toggleShop, openShop: shop.open, toggleInfo: extras.toggleInfo, togglePause: extras.togglePause, pauseOpen: extras.pauseOpen, closePanels: extras.closePanels, panelOpen: extras.panelOpen,
     update, toast: feeds.toast, tip: feeds.tip, setStatus: feeds.setStatus, setTarget: target.set, setMinimapAim: mm.setAim,
     dispose() {
       if (disposed) return; disposed = true; offs.forEach((o) => { try { o(); } catch (_) { /* ignore */ } });
+      tooltip.hide(); lobbyEl.remove();
       nameplates.dispose(); removeEventListener('resize', fit); extras.dispose(); shop.dispose(); sbd.dispose(); augs.dispose(); endScr.dispose(); tooltip.dispose(); feeds.dispose(); mm.dispose(); target.dispose(); root.remove();
     },
   };

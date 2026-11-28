@@ -139,7 +139,7 @@ export function createBugs({ scene, source } = {}) {
         sc *= 1 + 0.045 * Math.sin(t * 3.2 + e.ph); py = 0; top = 1.35; w = 1.1;
         if (u.hp < u.maxHp * 0.5) px += Math.sin(t * 40) * 0.012; // it is hurting
         B.nest.add(px, py, pz, 0.3, sc, sc, sc, TINT, fl);
-        hp.add(px, top, pz, w, 0.1, u.maxHp > 0 ? u.hp / u.maxHp : 0, 0xb084ff);
+        if (!window.__three?.hud?.hideChampBars) hp.add(px, top, pz, w, 0.1, u.maxHp > 0 ? u.hp / u.maxHp : 0, 0xb084ff);
         return;
       }
       if (look === 'leak') sc *= (1 + Math.min(0.5, e.age * 0.03)) * (1 + 0.08 * Math.sin(e.ph * 0.7)); // swells over time
@@ -152,7 +152,7 @@ export function createBugs({ scene, source } = {}) {
         if (Math.sin(t * 1.8 + e.ph) > -0.2) B.heis.add(px, py + 0.04, pz, e.yaw, sc, sc, sc, TINT, fl);
         else B.ghostH.add(px, py + 0.04, pz, e.yaw, sc, sc, sc, 0xd8c8ff, 0);
       } else B[look].add(px, py, pz, e.yaw, sc, sc, sc, TINT, fl);
-      if (u.hp < u.maxHp) hp.add(px, top, pz, w, 0.07, u.maxHp > 0 ? u.hp / u.maxHp : 0, 0xff4f5f);
+      if (u.hp < u.maxHp && !window.__three?.hud?.hideChampBars) hp.add(px, top, pz, w, 0.07, u.maxHp > 0 ? u.hp / u.maxHp : 0, 0xff4f5f);
     });
     // squashed: a unit that is gone and flagged dead in the real state leaves a splat (fog-hidden ones just vanish)
     for (const [id, e] of bugs) {

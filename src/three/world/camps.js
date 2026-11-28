@@ -51,11 +51,15 @@ export function makeCamps(world) {
           let seen = false; st.champions.forEach((ch) => { if (!seen && ch.team === team && !ch.dead && Math.hypot(ch.x - cp.x, ch.y - cp.y) < SIGHT) seen = true; });
           if (seen) down[i] = 1;
         }
+        if (shown[i] !== 1) { const r = (RAD[cp.type] || 90) * S * 1.2; ring.setMatrixAt(i, m.compose(p.set(cp.x * S, 0.04, cp.y * S), q, s.set(r, 1, r))); ring.instanceMatrix.needsUpdate = true; shown[i] = 1; }
         if (down[i]) {
-          const k = 0.6;
-          if (shown[i] !== 1) { const r = (RAD[cp.type] || 90) * S * 1.2; ring.setMatrixAt(i, m.compose(p.set(cp.x * S, 0.04, cp.y * S), q, s.set(r, 1, r))); ring.instanceMatrix.needsUpdate = true; shown[i] = 1; }
-          ring.setColorAt(i, c.setRGB(k, 0.45 * k, 0.1 * k)); ring.instanceColor.needsUpdate = true;
-        } else if (shown[i] !== 0) { ring.setMatrixAt(i, hide); ring.instanceMatrix.needsUpdate = true; shown[i] = 0; }
+          const k = 0.36 + 0.16 * Math.sin(t * 2.8 + i * 1.3);
+          ring.setColorAt(i, c.setRGB(k, 0.46 * k, 0.08 * k));
+        } else {
+          const k = 0.28 + 0.14 * Math.sin(t * 2.1 + i * 1.1);
+          ring.setColorAt(i, c.setRGB(0.32 * k, 0.85 * k, 0.52 * k));
+        }
+        ring.instanceColor.needsUpdate = true;
       }
     },
   };

@@ -4055,6 +4055,10 @@ export default class MultiPlayScene extends Phaser.Scene {
       const cur = this.room?.state?.event;
       if (cur) this._overlay.setEvent(this._eventDefs[cur] || { title: cur });
     });
+    on('time', (m) => {
+      const rtt = Date.now() - m.t;
+      if (Number.isFinite(m.t) && rtt >= 0 && rtt <= 30000) window.__bsPerf?.setPing(rtt);
+    });
     on('feed', (m) => this._overlay.feed({
       text: m.text, color: m.color, mine: !!this.localId && (m.a === this.localId || m.b === this.localId),
     }));
@@ -4656,6 +4660,7 @@ export default class MultiPlayScene extends Phaser.Scene {
     // Set the shutdown flag FIRST so any Colyseus callbacks firing during
     // the async room.leave() disconnect window become no-ops.
     this._shuttingDown = true;
+    window.__bsPerf?.clearPing();
     clearTimeout(this._sessionTimer);
     this._endReconnectTimers();
     this._flushPlayTime();

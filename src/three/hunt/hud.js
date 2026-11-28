@@ -35,6 +35,9 @@ const CSS = `
 .hx-talk{display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;justify-content:center}
 .hx-bub{background:#fff;color:#111;border:3px solid #000;border-radius:10px;padding:8px 12px;max-width:260px;font-size:14px;text-align:left}
 .hx-bub b{display:inline-block;color:#fff;border-radius:4px;padding:0 6px;margin-right:6px;font-size:11px}
+.hx-guide{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(0,0,0,.85);pointer-events:auto;cursor:pointer;padding:24px}
+.hx-guide img{max-width:calc(100vw - 80px);max-height:calc(100vh - 140px);object-fit:contain;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.hx-guide .cap{font:14px Consolas,'Courier New',monospace;color:#ccc}
 @media (max-width:700px){.hx-time{font-size:20px}.hx-big{font-size:16px}.hx-hint{display:none}.hx-coach .p{font-size:15px}.hx-chip{width:104px}}
 `;
 
@@ -59,11 +62,11 @@ export function createHuntHud({ level, onPause, onMute }) {
   const coach = el('div', 'hx-coach', root); coach.style.display = 'none';
   const coachN = el('div', 'n hx-mono hx-txt', coach); const coachP = el('div', 'p hx-txt', coach);
   const toast = el('div', 'hx-toast hx-txt', root);
-  el('div', 'hx-hint hx-mono', root, '[hold] smash  [P] pause  [M] mute  [ESC] menu');
+  el('div', 'hx-hint hx-mono', root, '[hold] smash  [P] pause  [H] guide  [M] mute  [ESC] menu');
   const pb = el('div', 'hx-pause', root, '||'); pb.setAttribute('aria-label', 'pause');
   pb.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); onPause && onPause(); });
   const layer = el('div', '', root); layer.style.cssText = 'position:absolute;inset:0;pointer-events:none';
-  let modal = null, toastT = 0, lastChips = '', lastCoach = '';
+  let modal = null, guide = null, toastT = 0, lastChips = '', lastCoach = '';
 
   function update(sim, tMs) {
     const pct = Math.max(0, sim.timeLeftMs / sim.level.timeLimitMs);
@@ -108,6 +111,16 @@ export function createHuntHud({ level, onPause, onMute }) {
   }
   function showToast(text, color = '#ffd23f') { toast.textContent = text; toast.style.color = color; toast.style.opacity = 1; toastT = 1400; }
   function clearModal() { if (modal) { modal.remove(); modal = null; } }
+  function closeGuide() { if (guide) { guide.remove(); guide = null; } }
+  function showGuide(onClose) {
+    closeGuide();
+    guide = el('div', 'hx-guide', root);
+    const img = el('img', '', guide);
+    img.src = 'assets/ai_skills_icons/image.png';
+    img.alt = 'AI Skills Guide';
+    el('div', 'cap', guide, 'press H, ESC, or click anywhere to close');
+    guide.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); if (onClose) onClose(); else closeGuide(); });
+  }
   function hideGameplay() { for (const e of [top, left, right, combo, chips, coach, pb]) e.style.display = 'none'; }
   function showGameplay() { for (const e of [top, left, right, chips, pb]) e.style.display = ''; }
 
@@ -154,7 +167,7 @@ export function createHuntHud({ level, onPause, onMute }) {
     talk(modal, r.talk);
     buttons(modal, [{ label: 'RETRY (R)', color: '#f5a623', action: a.retry }, { label: 'MENU (ESC)', color: '#2d6cdf', action: a.menu }]);
   }
-  function dispose() { root.remove(); }
+  function dispose() { closeGuide(); root.remove(); }
   void onMute;
-  return { root, layer, update, showToast, showPause, showWin, showLose, clearModal, showGameplay, hideGameplay, dispose, get modalOpen() { return !!modal; } };
+  return { root, layer, update, showToast, showPause, showWin, showLose, showGuide, closeGuide, clearModal, showGameplay, hideGameplay, dispose, get modalOpen() { return !!modal; }, get guideOpen() { return !!guide; } };
 }

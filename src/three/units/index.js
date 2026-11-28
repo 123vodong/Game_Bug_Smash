@@ -19,10 +19,44 @@ export function createUnits({ scene, source } = {}) {
   const b = makeBatches(scene), hp = new HpBars(scene), icons = new ChampIcons(scene);
   const batchList = Object.values(b), seen = new Set(), seenU = new Set(); // reused every frame
   const champs = new Map(), minions = new Map(), flashes = new Map(), lunges = new Map();
-  let models = null, disposed = false;
+  let models = null, disposed = false, hoverId = null, hoverRel = '', hoverScale = 0.62;
+  const hoverRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.82, 1.0, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xff4a4a, transparent: true, opacity: 0.88, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }),
+  );
+  hoverRing.position.y = 0.05;
+  hoverRing.renderOrder = 12;
+  hoverRing.visible = false;
+  root.add(hoverRing);
   const ready = loadChampionModels().then((m) => { if (!disposed) models = m; }).catch((e) => console.warn('[units] champion models failed', e));
 
   const myTeam = (st) => { const me = st.champions && st.champions.get && st.champions.get(source.localId); return me ? me.team : 'blue'; };
+  const entity = (id) => { const st = source.state(); return st && ((st.champions && st.champions.get(id)) || (st.units && st.units.get(id)) || (st.structures && st.structures.get(id))); };
+  const lunge = (id) => { lunges.set(id, 0.18); };
+  const HOVER_COL = { enemy: 0xff4a4a, ally: 0x5fe36a, neutral: 0xffd23f };
+  const HOVER_R = { champ: 0.62, core: 1.45, tower: 1.0, deadline: 1.3, golden: 0.9 };
+
+  function setHover(info) {
+    if (hoverId && (!info || info.id !== hoverId)) {
+      const prev = champs.get(hoverId);
+      if (prev) prev.setHover('');
+    }
+    if (info && info.id) {
+      hoverId = info.id;
+      hoverRel = info.rel || 'enemy';
+      hoverScale = HOVER_R[info.kind] || 0.5;
+      const cv = champs.get(hoverId);
+      if (cv) cv.setHover(hoverRel);
+      hoverRing.material.color.setHex(HOVER_COL[hoverRel] || HOVER_COL.enemy);
+      hoverRing.position.set(info.x * S, 0.05, info.y * S);
+      hoverRing.scale.setScalar(hoverScale);
+      hoverRing.visible = true;
+    } else {
+      hoverId = null;
+      hoverRel = '';
+      hoverRing.visible = false;
+    }
+  }
 
   function sync(st, dt = 0.016, t = 0, pred = null) {
     if (disposed || !st) return;
@@ -63,7 +97,11 @@ export function createUnits({ scene, source } = {}) {
       const col = u.team === 'blue' ? TEAM_COL.blue : u.team === 'red' ? TEAM_COL.red : 0xb18cff;
       let top = 1.2, w = 0.55;
       if (u.kind === 'melee' || u.kind === 'ranged') b[u.kind].add(px, bob, pz, ms.yaw, 1.25, 1.25, 1.25, col, fl);
-      else if (u.kind === 'pet') { b.duck.add(px, bob * 1.5, pz, ms.yaw, 1.3, 1.3, 1.3, 0xffffff, fl); top = 0.7; w = 0.3; } // rubber duck
+      else if (u.kind === 'pet') {
+        const isDrone = !!(u.owner && st.champions && st.champions.get && st.champions.get(u.owner)?.champ === 'tester');
+        if (isDrone) { b.drone.add(px, 0.25 + Math.sin(ms.ph * 3) * 0.04, pz, ms.yaw, 1.2, 1.2, 1.2, 0xffd28a, fl); top = 1.0; w = 0.4; }
+        else { b.duck.add(px, bob * 1.5, pz, ms.yaw, 1.3, 1.3, 1.3, 0xffffff, fl); top = 0.7; w = 0.3; }
+      }
       else if (u.kind === 'ward') { b.ward.add(px, 0, pz, ms.yaw, 1.2, 1.2, 1.2, col, fl); top = 0.9; w = 0.3; } // CCTV eye
       else if (u.kind === 'dummy') { b.dummy.add(px, 0, pz, 0.4, 1.4, 1.4, 1.4, 0xffffff, fl); top = 1.8; w = 0.6; } // training dummy w/ bug sticker
       else if (u.kind === 'siege') { b.siege.add(px, bob * 0.3, pz, ms.yaw, 1.2, 1.2, 1.2, col, fl); top = 0.9; w = 0.7; }
@@ -73,6 +111,7 @@ export function createUnits({ scene, source } = {}) {
         const k = { small: 1.2, medium: 1.3, big: 1.5, golden: 1.8, deadline: 2.6 }[u.kind];
         const wob = u.kind === 'small' ? 0.12 + Math.sin(ms.ph * 3) * 0.04 : bob * 0.6;
         b[key].add(px, wob, pz, ms.yaw, k, k, k, 0xe6e6e6, fl); top = 1.1 * k; w = 0.5 * k + 0.2;
+      } else if (u.kind === 'obj') { top = 0.9; w = 0.4; // kit objects (turret, barricade...) are drawn by fx/objects.js; only the bar here
       } else if (u.team === 'neutral' || u.kind === 'small' || u.kind === 'medium' || u.kind === 'big') {
         const k = { small: 0.8, medium: 1.1, big: 1.5 }[u.kind] || (u.maxHp > 3000 ? 2.4 : 1.7);
         const hue = { small: 0x7ed957, medium: 0xb18cff, big: 0xff9a4a }[u.kind] || 0xff5ad8;
@@ -82,6 +121,20 @@ export function createUnits({ scene, source } = {}) {
     });
     for (const id of minions.keys()) if (!seenU.has(id)) { minions.delete(id); lunges.delete(id); }
     syncStructures(st, b, hp, flashes, dt, t, team, COLS);
+    if (hoverId) {
+      const he = entity(hoverId);
+      if (!he || he.dead || he.alive === false || (he.stealthed && he.team !== team)) {
+        setHover(null);
+      } else {
+        const cv = champs.get(hoverId);
+        if (cv) cv.setHover(hoverRel);
+        const hx = pred && hoverId === myId && !he.dead ? pred.x : he.x;
+        const hy = pred && hoverId === myId && !he.dead ? pred.y : he.y;
+        hoverRing.position.set(hx * S, 0.05, hy * S);
+        hoverRing.scale.setScalar(hoverScale * (1 + Math.sin(t * 8) * 0.06));
+        hoverRing.visible = true;
+      }
+    }
     for (let i = 0; i < batchList.length; i++) batchList[i].end();
     hp.end(); icons.end();
   }
@@ -92,20 +145,51 @@ export function createUnits({ scene, source } = {}) {
     const team = myTeam(st); let best = null, bd = 1e9;
     const test = (e, key, r, ok) => { if (!ok) return; const d = Math.hypot(e.x - x, e.y - y); if (d < r && d < bd) { bd = d; best = e.id || key; } };
     each(st.champions, (c, k) => test(c, k, 90, c.team !== team && !c.dead && !(c.stealthed)));
-    each(st.units, (u, k) => test(u, k, 70, u.team !== team && u.alive !== false && u.kind !== 'pet' && u.kind !== 'obj'));
+    each(st.units, (u, k) => test(u, k, 70, u.team !== team && u.alive !== false && u.kind !== 'pet' && !u.invulnerable));
     each(st.structures, (s, k) => test(s, k, s.kind === 'core' ? 150 : 110, s.team !== team && s.alive !== false));
     return best;
   }
 
+  /** nearest alive visible champion / unit / structure (any team) around a sim-space point -> {id, rel, kind, x, y, r} | null */
+  function pickAny(x, y) {
+    const st = source.state(); if (!st) return null;
+    const team = myTeam(st); let best = null, bd = 1e9;
+    const relOf = (e) => (e.team === team ? 'ally' : e.team === 'neutral' ? 'neutral' : 'enemy');
+    const test = (e, key, r, kind, ok) => {
+      if (!ok) return;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d < r && d < bd) { bd = d; best = { id: e.id || key, rel: relOf(e), kind, x: e.x, y: e.y, r }; }
+    };
+    each(st.champions, (c, k) => test(c, k, 90, 'champ', !c.dead && !(c.stealthed && c.team !== team)));
+    each(st.units, (u, k) => {
+      const r = u.kind === 'deadline' || u.kind === 'golden' ? 115 : 70;
+      test(u, k, r, u.kind || 'unit', u.alive !== false && u.kind !== 'pet');
+    });
+    each(st.structures, (s, k) => test(s, k, s.kind === 'core' ? 150 : 110, s.kind === 'core' ? 'core' : 'tower', s.alive !== false));
+    return best;
+  }
+
+  function attack(attackerId, targetId) {
+    const t = entity(targetId);
+    if (champs.has(attackerId)) {
+      champs.get(attackerId).attack(t?.x, t?.y);
+    } else if (minions.has(attackerId)) {
+      const ms = minions.get(attackerId);
+      if (t) ms.yaw = Math.atan2(t.x - ms.x, t.y - ms.y);
+      lunge(attackerId);
+    }
+  }
+
   return {
-    ready, sync, pick,
+    ready, sync, pick, pickAny, setHover, attack,
     flash(id) { const v = champs.get(id); if (v) v.flash(); else flashes.set(id, 0.14); },
-    lunge(id) { lunges.set(id, 0.18); },
-    entity(id) { const st = source.state(); return st && ((st.champions && st.champions.get(id)) || (st.units && st.units.get(id)) || (st.structures && st.structures.get(id))); },
+    lunge,
+    entity,
     dispose() {
       disposed = true;
       for (const v of champs.values()) v.dispose();
       champs.clear(); minions.clear();
+      hoverRing.geometry.dispose(); hoverRing.material.dispose(); root.remove(hoverRing);
       for (const x of Object.values(b)) x.dispose();
       hp.dispose(); icons.dispose(); disposeTree(root);
     },

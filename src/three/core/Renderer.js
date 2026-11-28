@@ -18,9 +18,12 @@ import * as THREE from 'three';
 import { Quality, SHADOW_SIZE, qualityFromUrl, IS_MOBILE } from './Quality.js';
 import { FrameClock } from './Clock.js';
 import { FOUNTAIN_RADIUS as FOUNTAIN_R } from '../../../shared/moba/rules.js'; // read-only shared rule
+import { AudioManager } from '../../core/AudioManager.js';
 
 const S = 0.01; // sim px -> world units (same scale as the spike: world y maps to scene z)
 const noop = () => {};
+const CAST_FX = new Set(['proj', 'circle', 'dash', 'blink', 'zone', 'cone', 'line', 'arc', 'tgt', 'buff', 'heal', 'obj', 'serve', 'deliver', 'rewind']);
+const OFFENSIVE_FX = new Set(['proj', 'circle', 'dash', 'zone', 'cone', 'line', 'arc', 'tgt', 'obj', 'serve', 'deliver']);
 
 async function opt(path, names) {
   try {
@@ -112,32 +115,104 @@ export function createRenderer({ canvas, source, mode = 'team', opts = {} }) {
     if (mods.fx && mods.fx.setViewport) mods.fx.setViewport(sz.h * gl.getPixelRatio(), camBox.camera.fov);
     // Input before HUD: the HUD buttons / minimap call into it.
     if (cI) mods.input = guard(() => cI({ canvas, source, pick, project, camera: camBox.camera, mode }));
-    if (cH && opts.hud !== false) mods.hud = guard(() => cH({ source, project, mode, opts: { ...opts, input: mods.input, camera: camBox } }));
+    if (cH && opts.hud !== false) mods.hud = guard(() => cH({ source, project, mode, opts: { ...opts, input: mods.input, camera: camBox, setQuality: (q) => quality.set(q), getQuality: () => quality.level } }));
     mods.cam = camBox;
     wire();
     applyQuality(quality.settings, 'modules');
   })();
   // Glue between modules (kept here so the modules stay independent of each other).
   const offs = [];
+  let endSfxPlayed = false, lastAtkAt = 0, deadFilter = false;
+  function checkPhaseEndSfx(st) {
+    if (endSfxPlayed || !st) return;
+    if (st.phase !== 'ended' && !st.winner) return;
+    endSfxPlayed = true;
+    try {
+      const me = st.champions && st.champions.get && st.champions.get(source.localId);
+      const won = !!(me && st.winner && me.team === st.winner);
+      if (won) AudioManager.victory?.();
+      else AudioManager.failure?.();
+    } catch (_) { /* ignore */ }
+  }
   function wire() {
+    try { AudioManager.applySaved?.(); } catch (_) { /* ignore */ }
     const { input, hud, units } = mods;
     if (input && hud) {
       input.isBlocked = () => { const a = document.activeElement; return !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) || !!(hud.scoreboardOpen && hud.scoreboardOpen()); }; // shop/info panels do not block hotkeys (P / C / Esc must be able to close them)
       input.hooks.toast = (m) => hud.toast && hud.toast(m);
       input.hooks.scoreboard = (on) => hud.setScoreboard && hud.setScoreboard(on);
-      input.hooks.escape = () => { if (hud.setScoreboard) hud.setScoreboard(false); if (hud.closePanels) hud.closePanels(); };
+      input.hooks.escape = () => {
+        if (hud.isPauseOpen && hud.isPauseOpen()) { hud.togglePause?.(); return; }
+        const sbOpen = !!(hud.scoreboardOpen && hud.scoreboardOpen());
+        const panOpen = !!(hud.panelOpen && hud.panelOpen());
+        if (sbOpen || panOpen) {
+          if (hud.setScoreboard) hud.setScoreboard(false);
+          if (hud.closePanels) hud.closePanels();
+        } else {
+          hud.togglePause?.();
+        }
+      };
       input.hooks.shop = () => hud.toggleShop && hud.toggleShop();
       input.hooks.info = () => hud.toggleInfo && hud.toggleInfo();
-      input.hooks.ping = (p) => hud.toast && hud.toast(p.enemy ? 'Danger here! (bug spotted)' : 'Ping: look at this commit', p.enemy ? '#ff8a8a' : '#9fdcff', 900);
       // chat: Enter is handled by hud/feed.js itself (window keydown), so no hooks.chat here.
     } else if (input) input.hooks.toast = (m) => toast(m);
-    if (units && source.on) {
+    if (input) {
+      input.hooks.clickMark = (x, y, attack) => mods.fx?.clickMark?.(x, y, attack);
+      input.hooks.ping = (p) => {
+        mods.fx?.pingWorld?.(p.x, p.y, p.enemy);
+        try { AudioManager.uiClick?.(); } catch (_) { /* ignore */ }
+        if (hud && hud.toast) hud.toast(p.enemy ? '⚔ Danger here! (bug spotted)' : '📍 On my way!', p.enemy ? '#ff8a8a' : '#9fdcff', 1100);
+      };
+    }
+    if (input && units) {
+      input.hooks.hoverPick = (x, y) => units.pickAny(x, y);
+      input.hooks.setHover = (info) => units.setHover(info);
+    }
+    if (source.on) {
+      const sfxAt = Object.create(null);
+      const sfx = (key, minMs, fn) => {
+        const nowMs = performance.now();
+        if (nowMs - (sfxAt[key] || -1e9) < minMs) return;
+        sfxAt[key] = nowMs;
+        try { fn(); } catch (_) { /* ignore */ }
+      };
       const sub = (t, fn) => { const o = source.on(t, (m) => { if (!disposed) { try { fn(m); } catch (e) { console.error('[Renderer] glue', t, e); } } }); if (typeof o === 'function') offs.push(o); };
-      sub('atk', (arr) => { if (!Array.isArray(arr)) return; for (const a of arr) { if (!a) continue; if (!a.r) units.lunge(a.f); units.flash(a.t); } });
+      sub('atk', (arr) => {
+        if (!Array.isArray(arr)) return;
+        for (const a of arr) {
+          if (!a) continue;
+          if (units) { units.attack(a.f, a.t); units.flash(a.t); }
+          if (a.f === source.localId) {
+            lastAtkAt = Date.now();
+            sfx('atk', 120, () => AudioManager.smashHit?.());
+          }
+        }
+      });
       sub('fx', (m) => {
         if (!m) return;
-        if ((m.k === 'hit' || m.k === 'knock') && m.id != null) units.flash(m.id);
-        else if (m.k === 'dash' && m.sid != null) units.lunge(m.sid);
+        if (units) {
+          if ((m.k === 'hit' || m.k === 'knock') && m.id != null) units.flash(m.id);
+          else if (m.k === 'dash' && m.sid != null) units.lunge(m.sid);
+        }
+        if (m.sid === source.localId && OFFENSIVE_FX.has(m.k)) lastAtkAt = Date.now();
+        if (m.sid === source.localId && CAST_FX.has(m.k)) {
+          sfx('cast', 120, () => {
+            if (m.k === 'buff' || m.k === 'heal') AudioManager.skillPickup?.('buff');
+            else AudioManager.uiClick?.();
+          });
+        }
+        if (m.k === 'hit' && m.id === source.localId) {
+          sfx('hit', 180, () => (AudioManager.hit ? AudioManager.hit() : AudioManager.smashHit?.()));
+        }
+      });
+      sub('gold', (m) => {
+        if (m && m.n > 0) sfx('gold', 250, () => AudioManager.reward?.());
+      });
+      sub('announce', (m) => {
+        if (!m) return;
+        const st = source.state && source.state();
+        if (st && (st.phase === 'ended' || st.winner)) { checkPhaseEndSfx(st); return; }
+        sfx('announce', 200, () => (m.big ? AudioManager.combo?.(2) : AudioManager.uiClick?.()));
       });
     }
   }
@@ -159,6 +234,20 @@ export function createRenderer({ canvas, source, mode = 'team', opts = {} }) {
     const f = source.world && source.world.fountain && source.world.fountain[me.team]; const p = (mods.input && mods.input.pred) || me;
     return !!f && Math.hypot(p.x - f.x, p.y - f.y) <= FOUNTAIN_R;
   }
+  function bushHidden(state, me) {
+    if (!me || !me.inBush || me.dead) return null;
+    const mp = (mods.input && mods.input.pred) || me;
+    let enemyNear = false;
+    if (state && state.champions && state.champions.forEach) {
+      state.champions.forEach((c) => {
+        if (enemyNear || !c || c.dead || c.team === me.team || !c.inBush) return;
+        if (Math.hypot(c.x - mp.x, c.y - mp.y) <= 260) enemyNear = true;
+      });
+    }
+    if (enemyNear) return 'enemy';
+    if (Date.now() - lastAtkAt < 1500) return 'attacked';
+    return 'hidden';
+  }
   function guard(fn) { try { return fn(); } catch (e) { console.warn('[Renderer] module init failed', e); return null; } }
 
   const call = (m, fn, a, b, c, d) => { if (m && typeof m[fn] === 'function') { try { m[fn](a, b, c, d); } catch (e) { console.error('[Renderer]', fn, e); } } };
@@ -177,6 +266,7 @@ export function createRenderer({ canvas, source, mode = 'team', opts = {} }) {
       const dt = Math.min(opts.fixedDt ? 100 : 50, Math.max(0, dtMs || 0)), dtS = dt / 1000;
       clock.t += dt;
       const state = source.state();
+      checkPhaseEndSfx(state);
       call(mods.input, 'update', dtS);
       camBox.update(dtS, (mods.fx && mods.fx.shakeAmt) || 0);
       ctx.state = state; ctx.srvNow = source.srvNow(); ctx.dtSec = dtS; ctx.t = clock.t / 1000; ctx.camera = camBox.camera;
@@ -185,11 +275,18 @@ export function createRenderer({ canvas, source, mode = 'team', opts = {} }) {
       call(mods.units, 'sync', state, dtS, ctx.t, pred);
       call(mods.fx, 'update', dtS);
       hudAcc += dt;
-      if (hudAcc >= HUD_MS && mods.hud) {
+      if (hudAcc >= HUD_MS) {
         hudAcc = 0;
         const me = (state && state.champions && state.champions.get && state.champions.get(source.localId)) || null;
-        call(mods.hud, 'update', { st: state, me, mePos: (mods.input && mods.input.pred) || null, view: cameraView(), selectedId: mods.input ? mods.input.selectedId : null,
-          canShop: canShop(me), phase: state && state.phase, hidden: null, held: null, srvNow: ctx.srvNow, now: Date.now(), myId: source.localId, mode });
+        const wantGray = !!(me && me.dead && state && state.phase === 'playing');
+        if (wantGray !== deadFilter) {
+          deadFilter = wantGray;
+          canvas.style.filter = wantGray ? 'grayscale(0.85) brightness(0.84)' : '';
+        }
+        if (mods.hud) {
+          call(mods.hud, 'update', { st: state, me, mePos: (mods.input && mods.input.pred) || null, view: cameraView(), selectedId: mods.input ? mods.input.selectedId : null,
+            canShop: canShop(me), phase: state && state.phase, hidden: bushHidden(state, me), held: mods.input && mods.input.heldInfo ? mods.input.heldInfo() : null, srvNow: ctx.srvNow, now: Date.now(), myId: source.localId, mode });
+        }
       }
       gl.render(scene, camBox.camera);
       quality.update(dtS, Math.max(dtMs || 0, performance.now() - t0)); // raw frame interval, like the spike's avgMs
@@ -199,6 +296,7 @@ export function createRenderer({ canvas, source, mode = 'team', opts = {} }) {
     setDoor(id, state) { call(mods.world, 'setDoor', id, state); },
     dispose() {
       if (disposed) return; disposed = true;
+      canvas.style.filter = ''; deadFilter = false;
       removeEventListener('resize', onResize);
       offs.forEach((o) => { try { o(); } catch (_) { /* ignore */ } });
       for (const k of ['input', 'hud', 'fx', 'units', 'world']) call(mods[k], 'dispose');

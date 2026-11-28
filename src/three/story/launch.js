@@ -10,6 +10,7 @@ import { OfflineSource } from '../core/SimSource.js';
 import { StorySim } from '../../story2/StorySim.js';
 import { makeWorld } from '../../entities/moba/world.js';
 import { SaveManager } from '../../core/SaveManager.js';
+import { CHAMPIONS, CHAMPION_IDS } from '../../../shared/moba/champions.js';
 import F1 from '../../story2/floors/f1.js';
 import { createFloor } from './floor.js';
 import { createBugs } from './bugs.js';
@@ -29,7 +30,7 @@ function makeCanvas() {
 /** StorySim on a floor, offline. Same world construction as StoryWorldScene._makeWorld. */
 export function createStorySource({ floor = 'f1', champ = 'dev', name = 'Intern', spells = null } = {}) {
   const f = FLOORS[floor] || F1;
-  const world = makeWorld({ id: f.id, w: f.w, h: f.h, bushes: f.bushes, fountain: { blue: f.breakRoom }, walls: f.walls.map((w, i) => ({ ...w, id: w.id || `${f.id}_w${i}` })) });
+  const world = makeWorld({ id: f.id, w: f.w, h: f.h, bushes: f.bushes, doors: f.doors || [], fountain: { blue: f.breakRoom }, walls: f.walls.map((w, i) => ({ ...w, id: w.id || `${f.id}_w${i}` })) });
   let src = null;
   const sim = new StorySim({ floor: f, world, champ, name, spells, hat: getHat(), emit: (type, m) => { if (src) src._dispatch(type, m ?? {}); } });
   src = new OfflineSource(sim);
@@ -37,13 +38,65 @@ export function createStorySource({ floor = 'f1', champ = 'dev', name = 'Intern'
   return { source: src, floorDef: f };
 }
 
+function openStoryChampPicker(currentChamp, onPick) {
+  const prev = document.getElementById('bs3d-story-pick');
+  if (prev) prev.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'bs3d-story-pick';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(4,7,14,.84);padding:16px;font:14px Consolas,"Courier New",monospace;color:#eef3ff';
+  const box = document.createElement('div');
+  box.style.cssText = 'width:min(760px,96vw);max-height:90vh;overflow:auto;background:#090f1d;border:3px solid #ffd23f;border-radius:10px;padding:18px 16px;text-align:center;box-sizing:border-box';
+  const h = document.createElement('h2');
+  h.textContent = '📖 CHOOSE STORY CHAMPION';
+  h.style.cssText = 'margin:0 0 4px;font:900 22px Arial,sans-serif;color:#ffd23f';
+  const sub = document.createElement('div');
+  sub.textContent = 'Pick any of the 18 office heroes to run Floor 1 in 3D';
+  sub.style.cssText = 'font-size:12px;color:#9fb0d0;margin-bottom:14px';
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:8px;margin-bottom:14px';
+  const close = () => { window.removeEventListener('keydown', onEsc); wrap.remove(); };
+  const onEsc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  window.addEventListener('keydown', onEsc);
+  for (const id of CHAMPION_IDS) {
+    const c = CHAMPIONS[id];
+    const col = c.color ? '#' + Number(c.color).toString(16).padStart(6, '0') : '#39c2ff';
+    const cur = id === currentChamp;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = `display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 6px;border-radius:8px;cursor:pointer;background:${cur ? '#192a48' : '#0f172b'};border:2px solid ${cur ? '#ffd23f' : col};color:#eef3ff;font:inherit`;
+    const em = document.createElement('span');
+    em.textContent = c.emoji || '🐞';
+    em.style.fontSize = '26px';
+    const nm = document.createElement('span');
+    nm.textContent = c.name || id;
+    nm.style.cssText = 'font:700 13px Arial,sans-serif;color:#fff';
+    const rl = document.createElement('span');
+    rl.textContent = c.role || '';
+    rl.style.cssText = 'font-size:11px;color:#9fb0d0';
+    btn.append(em, nm, rl);
+    btn.onclick = () => { close(); onPick(id); };
+    grid.appendChild(btn);
+  }
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = 'CANCEL (ESC)';
+  cancel.style.cssText = 'padding:9px 20px;border-radius:6px;border:2px solid #556280;background:#121b30;color:#cfd8f0;font:700 13px Arial,sans-serif;cursor:pointer';
+  cancel.onclick = close;
+  box.append(h, sub, grid, cancel);
+  wrap.appendChild(box);
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  document.body.appendChild(wrap);
+  return close;
+}
+
 export async function launchStory(opts = {}, deps = {}, onStop = null, ctl = {}) {
   const { Renderer } = deps;
   const { source, floorDef } = createStorySource(opts);
   const canvas = makeCanvas();
   const qs = new URLSearchParams(location.search);
-  const renderer = Renderer.createRenderer({ canvas, source, mode: 'story', opts: { quality: qs.get('q') || 'low' } });
-  let handle = null;
+  const quality = qs.get('q') || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'low' : 'med');
+  const renderer = Renderer.createRenderer({ canvas, source, mode: 'story', opts: { quality } });
+  let handle = null, closePicker = null;
   const stopTo = (fn) => () => { const h = handle; if (h) h.stop(); fn && fn(); };
 
   const floorV = createFloor({ scene: renderer.scene, floor: floorDef });
@@ -52,15 +105,21 @@ export async function launchStory(opts = {}, deps = {}, onStop = null, ctl = {})
   const ui = createStoryUi({
     source, floor: floorDef, project: (x, y) => renderer.project(x, y),
     onAgain: stopTo(() => launchStory(opts, deps, onStop, ctl)),
-    onChampion: stopTo(() => { if (ctl.onChampion) ctl.onChampion(); else if (onStop) onStop(); }),
-    onMenu: () => { try { location.href = location.pathname + '?renderer=2d'; } catch (_) { /* ignore */ } },
+    onChampion: () => {
+      closePicker = openStoryChampPicker(opts.champ || 'dev', (id) => {
+        closePicker = null;
+        try { SaveManager.setStory2Pick?.(id, opts.spells || null); } catch (_) { /* ignore */ }
+        stopTo(() => launchStory({ ...opts, champ: id }, deps, onStop, ctl))();
+      });
+    },
+    onMenu: () => { try { location.href = location.pathname + '?scene=menu&renderer=3d'; } catch (_) { /* ignore */ } },
   });
   const offDoor = source.on('story', (m) => { if (m && m.k === 'door') { floorV.setDoor(m.id, m.state); } });
 
   await renderer.ready; // modules exist from here: hide story units from units/index.js, take over picking
   const units = renderer.modules.units, hud = renderer.modules.hud;
   if (units && units.sync) {
-    const origSync = units.sync, origPick = units.pick, fm = new Map(); // fm: reused filtered units map (pets only)
+    const origSync = units.sync, origPick = units.pick, origPickAny = units.pickAny, fm = new Map(); // fm: reused filtered units map (pets only)
     let cur = null;
     const view = new Proxy({}, { get: (_, k) => (k === 'units' ? fm : cur && cur[k]) });
     units.sync = function (st, dt, t, pred) {
@@ -71,6 +130,17 @@ export async function launchStory(opts = {}, deps = {}, onStop = null, ctl = {})
       return origSync.call(units, view, dt, t, pred);
     };
     units.pick = function (x, y) { return bugs.pick(x, y) || (origPick ? origPick.call(units, x, y) : null); };
+    units.pickAny = function (x, y) {
+      const bid = bugs.pick(x, y);
+      if (bid) {
+        const st = source.state();
+        const u = st && st.units && st.units.get ? st.units.get(bid) : null;
+        if (u && u.alive !== false) {
+          return { id: bid, rel: 'enemy', kind: u.kind === 'nest' ? 'tower' : 'unit', x: u.x, y: u.y, r: u.kind === 'nest' ? 110 : 75 };
+        }
+      }
+      return origPickAny ? origPickAny.call(units, x, y) : null;
+    };
   }
   try { hud && hud.setStatus && hud.setStatus(`📖 STORY MODE · ${floorDef.clock} · ${floorDef.name}`, '#ffd23f'); } catch (_) { /* optional */ }
 
@@ -93,6 +163,7 @@ export async function launchStory(opts = {}, deps = {}, onStop = null, ctl = {})
     renderer, source, canvas, ui, bugs, pickups, floor: floorV,
     stop() {
       if (dead) return; dead = true; cancelAnimationFrame(raf);
+      if (closePicker) { try { closePicker(); } catch (_) { /* ignore */ } closePicker = null; }
       try { offDoor(); ui.dispose(); bugs.dispose(); pickups.dispose(); floorV.dispose(); } catch (_) { /* ignore */ }
       try { renderer.dispose(); } catch (_) { /* ignore */ }
       try { source.dispose(); } catch (_) { /* ignore */ }

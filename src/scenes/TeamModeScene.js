@@ -723,6 +723,7 @@ export default class TeamModeScene extends Phaser.Scene {
       case 'time': {
         const now = Date.now(), rtt = now - m.t;
         if (!Number.isFinite(m.serverNow) || !Number.isFinite(m.t) || rtt < 0 || rtt > 30000) break;
+        window.__bsPerf?.setPing(rtt);
         if (rtt < this._bestRtt) { this._bestRtt = rtt; this._clockOffset = m.serverNow + rtt / 2 - now; this._clockSet = true; }
         break;
       }
@@ -3004,6 +3005,7 @@ export default class TeamModeScene extends Phaser.Scene {
       _cleanup() {
         if (this._cleanedVisit === this._visit) return;
         this._cleanedVisit = this._visit;
+        window.__bsPerf?.clearPing();
         if (this._pracLangUnsub) { this._pracLangUnsub(); this._pracLangUnsub = null; }
         if (this._pracBar) { for (const b of this._pracBar.all) b.destroy(); this._pracBar = null; }
         this._setHoverOutline?.(null, '');

@@ -22,7 +22,7 @@
 import { scaledAmount } from '../../../shared/moba/rules.js';
 import { skillDamageType, CC_TUNING } from '../../../shared/moba/champions.js';
 import { CHAMP_RADIUS, clampToMap, distToSeg } from '../../../shared/moba/map.js';
-import { clipMove, nearestFree, isBlocked } from '../../../shared/moba/nav.js';
+import { clipMove, nearestFree, isBlocked, blinkLanding } from '../../../shared/moba/nav.js';
 import { MAX_FAN_COUNT, MIN_ZONE_TICK_MS } from './tuning.js';
 
 /** Spec keys handled by CC_HANDLERS (classifySkill lists the ones a spec carries). */
@@ -383,7 +383,7 @@ export class SkillEngine {
     this.room._fx({ k: 'tgt', sid: ch.id, slot, x0: round(x0), y0: round(y0), x1: round(t.x), y1: round(t.y), color: spec.color });
     if (spec.behindTarget) {
       const behind = clampToMap(t.x + ux * (t.radius + CHAMP_RADIUS + 14), t.y + uy * (t.radius + CHAMP_RADIUS + 14));
-      const end = nearestFree(behind.x, behind.y, CHAMP_RADIUS);
+      const end = blinkLanding(x0, y0, behind.x, behind.y, CHAMP_RADIUS);
       this.room._teleport(ch, end.x, end.y);
       this.room._fx({ k: 'blink', sid: ch.id, x0: round(x0), y0: round(y0), x1: round(ch.x), y1: round(ch.y) });
     }
@@ -420,7 +420,7 @@ export class SkillEngine {
       const bc = this.room.objects.clip(x0, y0, clip.x, clip.y, CHAMP_RADIUS); // v6: dashes stop at a barricade edge
       if (bc.hit) clip = bc;
     }
-    end = spec.behindTarget ? nearestFree(end.x, end.y, CHAMP_RADIUS) : { x: clip.x, y: clip.y };
+    end = spec.behindTarget ? blinkLanding(x0, y0, end.x, end.y, CHAMP_RADIUS) : { x: clip.x, y: clip.y };
     const hits = [];
     const hitR = spec.hitRadius || 0;
     if (target) {
@@ -479,9 +479,9 @@ export class SkillEngine {
       }
     }
     let land = null;
-    if (stop < 0 && runStart >= 0) { // the path ends inside a block: find a free landing close by, else stop short
-      const e = pts[n], f = nearestFree(e.x, e.y, r);
-      if ((n + 1 - runStart) * step <= maxWall && Math.hypot(f.x - e.x, f.y - e.y) <= CC_TUNING.PHASE_LAND_SEARCH_PX && !objs.solidAt(f.x, f.y, r)) land = f;
+    if (stop < 0 && runStart >= 0) { // the path ends inside a block: cross to the far side if thin enough, else stop short
+      const e = pts[n], f = blinkLanding(x0, y0, e.x, e.y, r, maxWall);
+      if ((n + 1 - runStart) * step <= maxWall && !isBlocked(f.x, f.y, r) && Math.hypot(f.x - e.x, f.y - e.y) <= maxWall && !objs.solidAt(f.x, f.y, r)) land = f;
       else stop = runStart - 1;
     }
     const upto = stop >= 0 ? stop : n;
@@ -505,7 +505,7 @@ export class SkillEngine {
     const { dx, dy, d } = aimDir(ch, aim.x, aim.y);
     const reach = d > 0 ? Math.min(spec.range, d) : spec.range;
     const aimed = clampToMap(x0 + dx * reach, y0 + dy * reach);
-    const end = nearestFree(aimed.x, aimed.y, CHAMP_RADIUS);
+    const end = blinkLanding(x0, y0, aimed.x, aimed.y, CHAMP_RADIUS);
     this.room._teleport(ch, end.x, end.y);
     ch.faceX = dx; ch.faceY = dy;
     if (spec.invisMs > 0) ch._stealthUntil = now + spec.invisMs;

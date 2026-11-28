@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { CODE_SNIPPETS, SYNTAX_HEX } from './snippets.js';
 import { hatById } from '../../data/cosmetics.js';
 import { qualityFromUrl, IS_MOBILE } from '../core/Quality.js';
+import { AudioManager } from '../../core/AudioManager.js';
+
+const sfx = (fn, ...a) => { try { AudioManager[fn] && AudioManager[fn](...a); } catch (_) { /* audio optional */ } };
 
 export const S = 0.01;
 const WORLD_W = 6000, WORLD_H = 3375;
@@ -127,13 +130,13 @@ export function createArenaView({ canvas, source, quality = qualityFromUrl() }) 
     const hat = mkSprite(null, 0.34, 0.5, 0); hat.visible = false; root.add(hat);
     const crown = mkSprite(emojiTex('👑'), 0.4, 0.5, 0); crown.visible = false; root.add(crown);
     const status = mkSprite(emojiTex('💫'), 0.34, 0.5, 0); status.visible = false; root.add(status);
-    const hpB = new THREE.Sprite(hpBackMat), hpF = new THREE.Sprite(hpFillMat); hpB.center.set(0.5, 0.5); hpF.center.set(0, 0.5);
+    const hpB = new THREE.Sprite(hpBackMat), hpF = new THREE.Sprite(hpFillMat.clone()); hpB.center.set(0.5, 0.5); hpF.center.set(0, 0.5);
     hpB.renderOrder = 11; hpF.renderOrder = 12; root.add(hpB, hpF);
     const r = { sid, root, body, mat, torso, head, armL, armR, legL, legR, lap, lapScreen, shield, label, lcv, ltex, hat, hatId: '', crown, status, hpB, hpF, labelKey: '', seen: 0,
       x: p.x, y: p.y, lx: p.x, ly: p.y, face: 0, actSeq: p.action_seq | 0, actT: -9, actKind: '', brokenSeq: p.broken_seq | 0, scale: 1, hit: 0, ringT: -9 };
     scene.add(root); return r;
   }
-  function paintLabel(r, p, isMe, bounty) {
+  function paintLabel(r, p, isMe, bounty, away) {
     const g = r.lcv.getContext('2d'); g.clearRect(0, 0, 320, 80);
     const nm = (p.isBot ? '' : '') + (p.name || '?');
     g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -143,8 +146,8 @@ export function createArenaView({ canvas, source, quality = qualityFromUrl() }) 
     g.fillStyle = 'rgba(8,12,22,0.72)'; g.beginPath(); g.roundRect(x0 - 10, 8, total + 20, 40, 10); g.fill();
     if (tag) { g.fillStyle = '#39c2ff'; g.beginPath(); g.roundRect(x0, 14, 48, 28, 6); g.fill(); g.fillStyle = '#06121f'; g.font = 'bold 20px monospace'; g.fillText(tag, x0 + 24, 29); }
     g.font = 'bold 28px "Segoe UI",system-ui,sans-serif'; g.fillStyle = isMe ? '#ffd23f' : p.broken ? '#ff8a8a' : '#ffffff'; g.fillText(nm, x0 + tw + w / 2, 29);
-    g.font = '18px monospace'; g.fillStyle = bounty ? '#ffd700' : '#9fb0d0';
-    g.fillText(bounty ? `TECH LEAD  +${bounty} XP bounty` : `Lv${p.level | 0} ${levelTitle(p.level)}`, 160, 64);
+    g.font = '18px monospace'; g.fillStyle = away ? '#ff9800' : bounty ? '#ffd700' : '#9fb0d0';
+    g.fillText(away ? '📶 lagging…' : bounty ? `TECH LEAD  +${bounty} XP bounty` : `Lv${p.level | 0} ${levelTitle(p.level)}`, 160, 64);
     r.ltex.needsUpdate = true;
   }
   const stN = { now: 0 };
@@ -189,14 +192,14 @@ export function createArenaView({ canvas, source, quality = qualityFromUrl() }) 
     const stunned = (p.stunnedUntil || 0) > source.srvNow();
     r.status.visible = stunned || broken; if (r.status.visible) { r.status.material.map = emojiTex(broken ? '💥' : '💫'); r.status.position.y = top + 0.02; r.status.material.rotation = broken ? 0 : tNow * 3; }
     const bounty = crowned ? st.bounty : 0;
-    const key = `${p.name}|${p.isBot ? 1 : 0}|${p.level}|${isMe ? 1 : 0}|${broken ? 1 : 0}|${bounty}`;
-    if (key !== r.labelKey) { r.labelKey = key; paintLabel(r, p, isMe, bounty); }
+    const away = !isMe && !!p.away;
+    const key = `${p.name}|${p.isBot ? 1 : 0}|${p.level}|${isMe ? 1 : 0}|${broken ? 1 : 0}|${bounty}|${away ? 1 : 0}`;
+    if (key !== r.labelKey) { r.labelKey = key; paintLabel(r, p, isMe, bounty, away); }
     const hp = p.maxHealth ? p.health / p.maxHealth : 1, showHp = isMe || hp < 0.999;
     r.hpB.visible = r.hpF.visible = showHp && !broken;
     if (showHp) { r.hpB.position.set(0, top + 0.12, 0); r.hpB.scale.set(0.74, 0.1, 1); r.hpF.position.set(-0.35, top + 0.12, 0); r.hpF.scale.set(0.7 * Math.max(0.001, hp), 0.07, 1); r.hpF.material.color.setHex(hp > 0.5 ? 0x59e08a : hp > 0.25 ? 0xffd23f : 0xff5252); }
     r.blobS = s; r.blobWas = 0;
   }
-  const hpColorOwner = hpFillMat; // (single shared fill material: colour is set per frame by the last drawn bar; bars are tiny)
 
   // ---------- bugs ----------
   const bugs = new Map();
@@ -319,7 +322,7 @@ export function createArenaView({ canvas, source, quality = qualityFromUrl() }) 
     frame++;
     st.players.forEach(fP); st.bugs.forEach(fB); st.pickups.forEach(fPick); st.clouds.forEach(fCloud); st.obstacles.forEach(fObs);
     boss = null; st.bosses.forEach(fBoss);
-    sweep(players, (r) => { scene.remove(r.root); r.mat.dispose(); r.ltex.dispose(); r.label.material.dispose(); r.hat.material.dispose(); r.crown.material.dispose(); r.status.material.dispose(); });
+    sweep(players, (r) => { scene.remove(r.root); r.mat.dispose(); r.ltex.dispose(); r.label.material.dispose(); r.hat.material.dispose(); r.crown.material.dispose(); r.status.material.dispose(); r.hpF.material.dispose(); });
     sweep(bugs, (r) => { scene.remove(r.spr); r.m.dispose(); splat(r.lastX, r.lastY, r.golden); });
     sweep(pickups, (r) => { scene.remove(r.s); r.s.material.dispose(); });
     sweep(clouds, (r) => { scene.remove(r.m); scene.remove(r.sk); r.sk.material.dispose(); });
@@ -401,6 +404,27 @@ export function createArenaView({ canvas, source, quality = qualityFromUrl() }) 
     gl.render(scene, camera);
   }
 
+  // ---------- audio hooks ----------
+  const sfxOffs = [
+    source.on('kill', (m) => {
+      sfx('bugKill');
+      const c = m && (m.combo | 0);
+      if (c === 3 || c === 5 || c === 10) sfx('combo', c >= 10 ? 3 : c >= 5 ? 2 : 1);
+    }),
+    source.on('pickup', () => sfx('skillPickup', 'buff')),
+    source.on('reward', () => sfx('reward')),
+    source.on('bossSlam', () => sfx('bossRoar')),
+    source.on('bossSlamHit', () => sfx('slamImpact')),
+    source.on('ko', () => sfx('failure')),
+    source.on('brokenBy', () => sfx('failure')),
+    source.on('announce', (m) => {
+      if (!m || m.kind !== 'event') return;
+      if (m.id === 'deadline_boss') sfx('bossRoar');
+      else if (m.id === 'prod_down') sfx('alarm');
+      else sfx('paChime');
+    }),
+  ];
+
   const api = {
     scene, camera, renderer: gl, localPos, lock, update, resize, pickGround, pickTarget, project, entityPos,
     get boss() { return boss; },
@@ -412,8 +436,10 @@ export function createArenaView({ canvas, source, quality = qualityFromUrl() }) 
     shockwave(xpx, ypx, rpx, color = 0xffd23f) { ring(xpx, ypx, rpx, 450, 1, color); },
     moveMarker(x, y) { marker.position.x = x * S; marker.position.z = y * S; markerState.t0 = tNow; },
     /** local swing/skill pose for the local player (server echo only drives REMOTE players). */
-    localAct(kind) { const r = players.get(meId); if (r) { r.actKind = kind; r.actT = tNow; } },
+    localAct(kind) { const r = players.get(meId); if (r) { r.actKind = kind; r.actT = tNow; } sfx(kind === 'smash' ? 'smashHit' : 'hit'); },
     dispose() {
+      sfxOffs.forEach((f) => { try { f(); } catch (_) { /* ignore */ } });
+      for (const r of players.values()) { try { r.hpF.material.dispose(); } catch (_) { /* ignore */ } }
       for (const t of Object.values(bugTex)) t.dispose();
       bossTex.dispose(); tileTex.dispose(); gl.dispose(); emojiCache.forEach((t) => t.dispose()); emojiCache.clear();
     },
