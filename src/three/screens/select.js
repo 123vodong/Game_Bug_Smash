@@ -85,12 +85,14 @@ async function runMatch(source, { Renderer, mode = 'team' }, onStop, matchOpts =
   });
   window.__three = { renderer, source };
   let raf = 0, last = performance.now(), dead = false;
-  const minGap = IS_MOBILE ? 30 : 0; // mobile UA: cap at ~30 fps
+  // The default Low preset targets weak machines: cap rendering at 30 FPS.
+  // Input and server state remain responsive; only visual frames are throttled.
   const loop = (now) => {
     if (dead) return;
     raf = requestAnimationFrame(loop);
     if (document.hidden) { last = now; return; } // tab hidden: do not simulate or render
     const dt = now - last;
+    const minGap = renderer.quality?.level === 'low' || IS_MOBILE ? 1000 / 30 : 0;
     if (dt < minGap) return;
     last = now;
     try { source.update(dt); renderer.frame(dt); } catch (e) { console.error('[three] frame', e); }

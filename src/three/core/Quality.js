@@ -2,7 +2,7 @@
 // Pure state machine: the Renderer applies `settings` to the WebGLRenderer / lights.
 export const PRESETS = {
   // lite: cheap shaders/materials (no normal maps, no point lights, anisotropy 1). particles/flips/teles: pool caps.
-  low: { shadow: 'off', bloom: false, pr: 0.6, lite: true, particles: 600, flips: 18, teles: 10 },
+  low: { shadow: 'off', bloom: false, pr: 0.45, lite: true, particles: 250, flips: 8, teles: 6 },
   med: { shadow: 'low', bloom: false, pr: 1, lite: false, particles: 1500, flips: 50, teles: 20 },
   high: { shadow: 'medium', bloom: true, pr: 1.5, lite: false, particles: 2500, flips: 70, teles: 28 },
 };
@@ -38,7 +38,7 @@ export class Quality {
     const s = this.settings;
     if (s.shadow === 'high') s.shadow = 'medium'; else if (s.shadow === 'medium') s.shadow = 'low';
     else if (s.pr > 0.75) s.pr = Math.max(0.6, s.pr - 0.25);
-    else if (s.pr > 0.45) s.pr = Math.max(0.45, s.pr - 0.1);
+    else if (s.pr > 0.4) s.pr = Math.max(0.4, s.pr - 0.1);
     else if (s.bloom) s.bloom = false;
     else if (s.shadow !== 'off') s.shadow = 'off';
     else return false;

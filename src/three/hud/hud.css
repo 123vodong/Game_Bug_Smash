@@ -149,9 +149,7 @@
 }
 @media (prefers-reduced-motion: reduce) { #bsh-root * { animation-duration: .01s !important; } }
 
-/* ---- extras: action buttons, sandbox toolbar, shop / info panel, touch controls ---- */
-.bsx-acts { position: absolute; right: 10px; bottom: 172px; display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; max-width: 60vw; }
-.bsx-acts .bsh-btn { font-size: 12px; padding: 4px 9px; }
+/* ---- extras: sandbox toolbar, shop / info panel, touch controls ---- */
 .bsx-sbx { position: absolute; right: 10px; top: 8px; max-width: min(520px, 62vw); padding: 5px 7px; background: rgba(10,15,24,.72); border: 1.5px solid #ffb347; border-radius: 6px; }
 .bsx-sbx-t { font: 700 10px Consolas, monospace; color: #ffb347; margin-bottom: 4px; }
 .bsx-sbx-row { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -185,7 +183,6 @@
 .bsx-touch .bsh-right { display: none; }
 .bsx-touch .bsh-panel { width: 600px; grid-template-columns: 92px 1fr; }
 .bsx-touch .bsx-sbx { max-width: 44vw; padding: 3px 5px; } .bsx-touch .bsx-sb { font-size: 10px; padding: 2px 5px; }
-.bsx-touch .bsx-acts { bottom: 210px; }
 .bsx-touch .bsh-slots .bsh-sbox { pointer-events: none; }
 @media (pointer: coarse), (max-width: 900px) { .bsx-sbx { max-width: 50vw; } .bsx-sbx .bsx-sbx-t { display: none; } }
 
@@ -257,10 +254,12 @@
 
 /* Pause modal, Quick-Buy nudge, Lobby overlay, Info grid, Clickable recipes, Touch chat */
 .bsx-pause { position: fixed; inset: 0; z-index: 105; display: grid; place-items: center; background: rgba(5,8,18,.78); }
-.bsx-pause-box { width: min(380px, 92vw); padding: 18px 20px; background: rgba(11,16,32,.97); border: 2px solid #c8aa6e; border-radius: 10px; box-shadow: 0 12px 36px #000c; display: flex; flex-direction: column; gap: 12px; }
+.bsx-pause-box { width: min(440px, 92vw); padding: 18px 20px; background: rgba(11,16,32,.97); border: 2px solid #c8aa6e; border-radius: 10px; box-shadow: 0 12px 36px #000c; display: flex; flex-direction: column; gap: 12px; }
 .bsx-pause-t { font: 700 18px "Segoe UI", sans-serif; color: #ffd23f; text-align: center; letter-spacing: .5px; }
 .bsx-pause-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 600 13px "Segoe UI", sans-serif; color: #dce6f7; }
 .bsx-qgrp { display: flex; gap: 4px; } .bsx-qgrp .bsh-btn.on { background: #264170; border-color: #ffd23f; color: #ffd23f; }
+.bsx-pause-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.bsx-pause-tools .bsh-btn { min-height: 34px; }
 .bsx-pause-acts { display: flex; gap: 10px; justify-content: center; margin-top: 6px; }
 .bsx-pause-acts .bsh-btn { flex: 1; padding: 9px 12px; font-weight: 700; }
 .bsx-pause-acts .bsh-btn.yes { background: #17391d; border-color: #7ed957; color: #b7ff9a; }
@@ -288,5 +287,6 @@
 .sk-cd { margin-left: auto; padding: 1px 6px; border-radius: 4px; font: 700 10px Consolas, monospace; }
 .sk-cd.ok { background: #14331b; color: #7ed957; } .sk-cd.wait { background: #332410; color: #ffd23f; } .sk-cd.lock { background: #222a3a; color: #8fa0c4; }
 .bsx-chatbtn { position: absolute; left: 16px; bottom: 168px; width: 42px; height: 42px; border-radius: 50%; font-size: 18px; display: grid; place-items: center; }
+.bsx-menubtn { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); width: 42px; height: 42px; border-radius: 50%; font-size: 20px; display: grid; place-items: center; }
 .end-shift { margin: 8px 0; padding: 8px 10px; background: #0d1526; border: 1px solid #2b3c5e; border-radius: 6px; text-align: left; font-size: 12px; }
 @media (max-width: 700px) { .bsx-info-grid { grid-template-columns: 1fr; } }

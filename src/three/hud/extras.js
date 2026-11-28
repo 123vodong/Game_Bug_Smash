@@ -1,6 +1,6 @@
 // hud/extras.js - the HUD parts that the Phaser MobaHud/TeamModeScene had but the first 3D HUD lacked:
 //   * sandbox toolbar (SWAP CHAMP, 0s CD, NO MANA, NO DMG, +LV, +5000g, +30s, +DUMMY, CLEAR)   [offline sandbox only]
-//   * action buttons: SHOP (P), INFO (C), SCORE (TAB), RECALL (B)
+//   * pause-menu actions: SHOP (P), INFO (C), SCORE (TAB), RECALL (B), camera and audio
 //   * shop panel (items from shared/moba/items.js, buy / sell through source.send, same place rules as the sim)
 //   * info panel (champion + skill descriptions, C)
 //   * touch controls (virtual joystick left, Q/W/E/R/D/F + attack right) on touch devices only
@@ -13,6 +13,7 @@ import { SPELLS, spellCooldownMs } from '../../../shared/moba/spells.js';
 import { AudioManager } from '../../core/AudioManager.js';
 import { SaveManager } from '../../core/SaveManager.js';
 import { clearMatch } from '../../core/Identity.js';
+import { getLang, toggleLang } from '../../core/I18n.js';
 
 const el = (parent, tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
 const setText = (e, v) => { if (e._v !== v) { e._v = v; e.textContent = v; } };
@@ -49,37 +50,21 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
     else if (opts.camera && typeof opts.camera.locked === 'boolean') opts.camera.locked = !opts.camera.locked;
     AudioManager.uiClick?.();
     const locked = getCamLocked();
-    setText(bCam, locked ? '🔒 CAM (Y)' : '🔓 FREE (Y)');
     syncPauseUi();
     toast(locked ? '🔒 Camera locked (Y)' : '🔓 Free camera (Y)', '#9fdcff');
   }
   function doToggleMute() {
     const m = AudioManager.toggleMute();
     SaveManager.setMuted(m);
-    setText(bMute, m ? '🔇' : '🔊');
     syncPauseUi();
     if (!m) AudioManager.uiClick?.();
     toast(m ? '🔇 Sound muted' : '🔊 Sound unmuted', m ? '#ff8a8a' : '#7ed957');
   }
 
-  // ---------- action buttons (above the bottom panel, right side) ----------
-  const acts = el(root, 'div', 'bsx-acts bsh-pop');
-  const bShop = el(acts, 'button', 'bsh-btn', '🛒 SHOP (P)'), bInfo = el(acts, 'button', 'bsh-btn', 'ℹ INFO (C)');
-  const bScore = el(acts, 'button', 'bsh-btn', '📊 TAB'), bRecall = el(acts, 'button', 'bsh-btn bsx-recall', '🏠 RECALL (B)');
-  const bCam = el(acts, 'button', 'bsh-btn', getCamLocked() ? '🔒 CAM (Y)' : '🔓 FREE (Y)');
-  bCam.title = 'Toggle Camera Lock (Y)';
-  const bMute = el(acts, 'button', 'bsh-btn', AudioManager.isMuted() ? '🔇' : '🔊');
-  bMute.title = 'Toggle Sound (M)';
-  bShop.onclick = () => { AudioManager.uiClick?.(); toggleShop(); };
-  bInfo.onclick = () => { AudioManager.uiClick?.(); toggleInfo(); };
-  bScore.onclick = () => { AudioManager.uiClick?.(); hudApi.setScoreboard && hudApi.setScoreboard(!(hudApi.scoreboardOpen && hudApi.scoreboardOpen())); };
-  bRecall.onclick = () => { AudioManager.uiClick?.(); if (input) input.recall(); else send('recall', {}); };
-  bCam.onclick = doToggleCam;
-  bMute.onclick = doToggleMute;
-
   // ---------- sandbox toolbar ----------
   let sbx = null; const sbxBtns = {};
   if (sandbox) {
+    root.classList.add('bsx-sandbox');
     sbx = el(root, 'div', 'bsx-sbx bsh-pop');
     el(sbx, 'div', 'bsx-sbx-t', 'PRACTICE MODE · sandbox');
     const row = el(sbx, 'div', 'bsx-sbx-row');
@@ -103,17 +88,24 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
     + `<div class="bsx-pause-row"><span>FX Quality</span><div class="bsx-qgrp">`
     + `<button class="bsh-btn" data-q="low">LOW</button><button class="bsh-btn" data-q="med">MED</button><button class="bsh-btn" data-q="high">HIGH</button>`
     + `</div></div>`
+    + `<div class="bsx-pause-tools">`
+    + `<button class="bsh-btn" data-pa="shop">SHOP (P)</button><button class="bsh-btn" data-pa="info">INFO (C)</button>`
+    + `<button class="bsh-btn" data-pa="score">SCOREBOARD (TAB)</button><button class="bsh-btn" data-pa="recall">RECALL (B)</button>`
+    + `</div>`
     + `<div class="bsx-pause-row"><span>Camera</span><button class="bsh-btn" data-pa="cam"></button></div>`
     + `<div class="bsx-pause-row"><span>Audio</span><button class="bsh-btn" data-pa="mute"></button></div>`
+    + `<div class="bsx-pause-row"><span>Language</span><button class="bsh-btn" data-pa="lang"></button></div>`
     + `<div class="bsx-pause-acts"><button class="bsh-btn yes" data-pa="resume">▶ RESUME</button><button class="bsh-btn no" data-pa="leave">🚪 LEAVE MATCH</button></div>`
     + `</div>`;
   const pCamBtn = pauseEl.querySelector('[data-pa="cam"]');
   const pMuteBtn = pauseEl.querySelector('[data-pa="mute"]');
+  const pLangBtn = pauseEl.querySelector('[data-pa="lang"]');
   const pQBtns = Array.from(pauseEl.querySelectorAll('[data-q]'));
   function syncPauseUi() {
     const locked = getCamLocked();
     setText(pCamBtn, locked ? '🔒 LOCKED (Y)' : '🔓 FREE (Y)');
     setText(pMuteBtn, AudioManager.isMuted() ? '🔇 MUTED' : '🔊 SOUND ON');
+    setText(pLangBtn, getLang().toUpperCase());
     for (const b of pQBtns) b.classList.toggle('on', b.dataset.q === curQuality);
   }
   syncPauseUi();
@@ -130,8 +122,13 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
     }
     const pa = e.target.closest('[data-pa]'); if (!pa) return;
     const act = pa.dataset.pa;
-    if (act === 'cam') doToggleCam();
+    if (act === 'shop') { togglePause(false); AudioManager.uiClick?.(); toggleShop(); }
+    else if (act === 'info') { togglePause(false); AudioManager.uiClick?.(); toggleInfo(); }
+    else if (act === 'score') { togglePause(false); AudioManager.uiClick?.(); hudApi.setScoreboard?.(true); }
+    else if (act === 'recall') { togglePause(false); AudioManager.uiClick?.(); if (input) input.recall(); else send('recall', {}); }
+    else if (act === 'cam') doToggleCam();
     else if (act === 'mute') doToggleMute();
+    else if (act === 'lang') { toggleLang(); AudioManager.uiClick?.(); syncPauseUi(); }
     else if (act === 'resume') togglePause(false);
     else if (act === 'leave') {
       AudioManager.uiClick?.();
@@ -297,6 +294,9 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
       AudioManager.uiClick?.();
       try { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })); } catch (_) { /* ignore */ }
     });
+    const menuBtn = el(touch, 'button', 'bsh-btn bsx-menubtn bsh-pop', '☰');
+    menuBtn.title = 'Open Menu';
+    press(menuBtn, () => togglePause());
     // action buttons (right)
     const pad = el(touch, 'div', 'bsx-pad');
     const atk = el(pad, 'button', 'bsx-abtn bsx-atk bsh-pop', '⚔'); press(atk, () => { if (input) input.attackNearest(); });
@@ -321,8 +321,6 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
   function update(me, ctx) {
     if (disposed) return;
     meRef = me || null; nowMs = ctx.now || Date.now(); srvNowMs = ctx.srvNow || nowMs; canShopNow = !!ctx.canShop;
-    if (opts.camera) setText(bCam, getCamLocked() ? '🔒 CAM (Y)' : '🔓 FREE (Y)');
-    setText(bMute, AudioManager.isMuted() ? '🔇' : '🔊');
     if (touchTick) touchTick(nowMs);
     if (sbx && sim) {
       setText(sbxBtns.cd, `0s CD: ${sim.noCd ? 'ON' : 'OFF'}`); setText(sbxBtns.mana, `NO MANA: ${sim.noMana ? 'ON' : 'OFF'}`); setText(sbxBtns.god, `NO DMG: ${sim.godMode ? 'ON' : 'OFF'}`);
@@ -356,6 +354,6 @@ export function createExtras({ root, source, opts = {}, hudApi = {} }) {
 
   return {
     update, toggleShop, toggleInfo, openSwap, togglePause, pauseOpen, closePanels: close, panelOpen: () => !panel.hidden || !!(shopApi && shopApi.isOpen()),
-    dispose() { disposed = true; cleanup.forEach((f) => { try { f(); } catch (_) { /* ignore */ } }); for (const n of [acts, sbx, panel, pauseEl, touch]) if (n) n.remove(); },
+    dispose() { disposed = true; cleanup.forEach((f) => { try { f(); } catch (_) { /* ignore */ } }); for (const n of [sbx, panel, pauseEl, touch]) if (n) n.remove(); },
   };
 }

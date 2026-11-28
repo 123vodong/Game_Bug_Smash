@@ -153,11 +153,12 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
     }
   }
 
-  // shared effects (all sizes in scene units)
+  // Shared mechanics, champion-specific visual grammar. Gameplay messages can stay
+  // generic while the visible head/impact silhouette comes from each champion.
   function impact(x, y, color, size = 1, big = false, fl = FL0) {
     const wx = x * S, wz = y * S, r = size * (big ? 1.5 : 0.9);
     sh.add({ type: SH.FLASH, x: wx, y: wz, z: 0.6, sx: r, dur: big ? 0.35 : 0.24, color: 0xffffff, alpha: 0.9, prio: big ? 1 : 0 });
-    sh.add({ type: SH.RAYS, x: wx, y: wz, z: 0.62, sx: r * 1.3, rot: rnd(3), dur: big ? 0.4 : 0.28, color, prio: big ? 1 : 0 });
+    sh.add({ type: fl.head || SH.RAYS, x: wx, y: wz, z: 0.62, sx: r * 1.3, sz: r * 1.3, rot: rnd(3), dur: big ? 0.4 : 0.28, color: fl.c2 || color, prio: big ? 1 : 0 });
     if (big) sh.add({ type: SH.RING, x: wx, y: wz, sx: r * 1.5, dur: 0.4, color });
     pburst(wx, 0.6, wz, color, fl, big ? 18 : 8, big ? 3.4 : 2.2, 0.11, 0.5);
     light(wx, 1.0, wz, color, big ? 14 : 6, 0.25);
@@ -185,7 +186,7 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
     sh.add({ type: SH.RING, x: wx, y: wz, sx: R * 1.05, dur: 0.5, color: col });
     sh.add({ type: SH.RING, x: wx, y: wz, sx: R * 0.7, dur: 0.4, delay: 0.06, color: fl.c2, alpha: 0.8 });
     sh.add({ type: SH.FLASH, x: wx, y: wz, z: 0.5, sx: Math.max(0.8, R * 0.9), dur: 0.4, color: col });
-    sh.add({ type: SH.RAYS, x: wx, y: wz, z: 0.55, sx: Math.max(0.9, R), rot: rnd(3), dur: 0.5, color: fl.c2 });
+    sh.add({ type: fl.head || SH.RAYS, x: wx, y: wz, z: 0.55, sx: Math.max(0.9, R), sz: Math.max(0.9, R), rot: rnd(3), dur: 0.5, color: fl.c2 });
     pburst(wx, 0.3, wz, col, fl, Math.min(30, 12 + Math.round(R * 12)), R * 3, 0.12, 0.7);
     light(wx, 1.2, wz, col, 12, 0.3); addShake(R > 1.4 ? 0.12 : 0.05);
   }
@@ -228,7 +229,7 @@ export function createFx({ THREE, scene, source, camera, mode, quality }) {
           const ox = m.x * S, oz = m.y * S, cx = Math.cos(ang), cz = Math.sin(ang);
           if (cone) { for (let k = 1; k <= 3; k++) sh.add({ type: SH.CHEVRON, x: ox + cx * len * k * 0.3, y: oz + cz * len * k * 0.3, z: 0.5, rot: ang, sx: len * 0.22 * (0.6 + k * 0.25), sz: len * 0.22 * k * 0.6, dur: 0.35, delay: k * 0.04, color: k % 2 ? col : fl.c2 }); }
           else { sh.add({ type: SH.STREAK, x: ox + cx * len * 0.5, y: oz + cz * len * 0.5, z: 0.5, rot: ang, sx: len * 0.5, sz: Math.max(0.3, wd), dur: 0.35, color: col }); sh.add({ type: SH.STREAK, x: ox + cx * len * 0.5, y: oz + cz * len * 0.5, z: 0.52, rot: ang, sx: len * 0.5, sz: Math.max(0.15, wd * 0.4), dur: 0.28, color: 0xffffff, alpha: 0.8 }); }
-          sh.add({ type: SH.RAYS, x: ox + cx * len * 0.85, y: oz + cz * len * 0.85, z: 0.5, sx: Math.max(0.8, wd * 1.2), dur: 0.35, color: fl.c2 });
+          sh.add({ type: fl.head || SH.RAYS, x: ox + cx * len * 0.85, y: oz + cz * len * 0.85, z: 0.5, sx: Math.max(0.8, wd * 1.2), sz: Math.max(0.8, wd * 1.2), dur: 0.35, color: fl.c2 });
           for (let i = 0; i < 20; i++) { const t = Math.random(); parts.puff(ox + cx * len * t + rnd(-wd, wd) * 0.6, 0.4, oz + cz * len * t + rnd(-wd, wd) * 0.6, cx * 3, rnd(0.3, 1.5), cz * 3, 0.5, 0.16 * fl.sz, mix(col, fl.c2), 1, fl.g, 1); }
           light(ox + cx * len * 0.5, 1, oz + cz * len * 0.5, col, 10, 0.25); addShake(0.08); landStyle(st, m, m.x + Math.cos(ang) * len / S * 0.5, m.y + Math.sin(ang) * len / S * 0.5);
         } }); break;

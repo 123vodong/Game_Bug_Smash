@@ -1155,6 +1155,26 @@ export default class TeamModeScene extends Phaser.Scene {
         { label: t('prac.swap'), color: 0xffb347, fn: () => this._openChampSwapModal() },
       );
     }
+    const closeThen = (fn) => {
+      this.hud.closeModal();
+      fn?.();
+    };
+    const audioLbl = () => (AudioManager.isMuted() ? 'AUDIO: MUTED (M)' : 'AUDIO: ON (M)');
+    btns.push(
+      { label: `${t('hud.shop')} (P)`, color: 0xffd23f, fn: () => closeThen(() => this._toggleShop()) },
+      { label: `${t('hud.info')} (C)`, color: 0x7ed957, fn: () => closeThen(() => this._toggleInfo()) },
+      { label: 'SCOREBOARD (TAB)', color: 0x39c2ff, fn: () => closeThen(() => this._setScoreboard(true)) },
+      { label: `${t('hud.base')} (B)`, color: 0x9fdcff, fn: () => closeThen(() => this._recall()) },
+      {
+        label: audioLbl(), color: 0xb084ff,
+        fn: (btn) => {
+          const muted = AudioManager.toggleMute();
+          SaveManager.setMuted(muted);
+          btn?._label?.setText(audioLbl());
+          if (!muted) AudioManager.uiClick?.();
+        },
+      },
+    );
     btns.push(
       {
         label: langLbl(), color: 0xb084ff,

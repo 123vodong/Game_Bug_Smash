@@ -102,7 +102,9 @@ export function createHud({ source, project, mode, opts = {} }) {
   const nameplates = createNameplates({ source, project, root });
   const rootEl = root;
   const SCALE_KEY = 'bugsmash.hud.scale';
-  let userScale = 1.0;
+  // Start at the smallest supported HUD size. The minimap has its own fixed
+  // medium-size CSS token and deliberately does not use this scale.
+  let userScale = 0.7;
   try { const sv = parseFloat(localStorage.getItem(SCALE_KEY)); if (Number.isFinite(sv)) userScale = Math.max(0.7, Math.min(1.25, sv)); } catch (_) { /* ignore */ }
   const fit = () => { const w = innerWidth, h = innerHeight, compact = w < 900 || matchMedia('(pointer: coarse)').matches || root.classList.contains('bsx-touch'); root.classList.toggle('bsh-compact', compact); const base = compact ? Math.max(0.6, Math.min(1, w / 900, h / 460)) : Math.max(0.72, Math.min(1.3, w / 1280, h / 720)); const hs = Math.max(0.5, Math.min(1.6, base * userScale)); rootEl.style.setProperty('--hs', hs.toFixed(3)); };
   const scaleBox = el(panel, 'div', 'bsh-scale');
@@ -417,6 +419,7 @@ export function createHud({ source, project, mode, opts = {} }) {
     panel.hidden = !me;
     extras.update(me, c2);
     shop.update(me, c2); augs.update(me, c2); sbd.update(now); endScr.update(st, phase, srvNow);
+    nameplates.setHidden(modalOpen() || extras.panelOpen() || shop.isOpen() || sbd.isOpen());
     updateLobby(st, phase, srvNow);
     tickCoach(me, st, srvNow, now, !!ctx.canShop, phase);
   }
@@ -424,7 +427,9 @@ export function createHud({ source, project, mode, opts = {} }) {
   return {
     setScoreboard(on) { sbd.set(on); }, scoreboardOpen: () => sbd.isOpen() || modalOpen(), // scoreboardOpen doubles as the input-block flag (Renderer.input.isBlocked reads it)
     blocked: modalOpen, onPlayAgain: (f) => { hooksOut.onPlayAgain = f; }, onExit: (f) => { hooksOut.onExit = f; },
-    toggleShop: extras.toggleShop, openShop: shop.open, toggleInfo: extras.toggleInfo, togglePause: extras.togglePause, pauseOpen: extras.pauseOpen, closePanels: extras.closePanels, panelOpen: extras.panelOpen,
+    toggleShop: extras.toggleShop, openShop: shop.open, toggleInfo: extras.toggleInfo, togglePause: extras.togglePause,
+    pauseOpen: extras.pauseOpen, isPauseOpen: extras.pauseOpen,
+    closePanels: extras.closePanels, panelOpen: extras.panelOpen,
     update, toast: feeds.toast, tip: feeds.tip, setStatus: feeds.setStatus, setTarget: target.set, setMinimapAim: mm.setAim,
     dispose() {
       if (disposed) return; disposed = true; offs.forEach((o) => { try { o(); } catch (_) { /* ignore */ } });

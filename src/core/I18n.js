@@ -74,7 +74,7 @@ const EN = {
   'prac.gold': '+5000g',
   'prac.dummy': '+DUMMY',
   'prac.clearDummy': 'CLEAR',
-  'prac.status': 'PRACTICE MODE · sandbox controls top-right / ESC',
+  'prac.status': 'PRACTICE MODE · sandbox controls top-left / ESC',
   // Main Menu & Settings
   'main.play': 'PLAY',
   'main.multiplayer': 'TEAM & ONLINE',
