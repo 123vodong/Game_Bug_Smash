@@ -56,10 +56,10 @@ export function makeBushes(world, lite = false) {
   const im = new THREE.InstancedMesh(geo, mat, pts.length);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), s = new THREE.Vector3();
   pts.forEach(([x, y], i) => {
-    const r = 0.30 + rnd() * 0.22;
-    m.compose(p.set(x * S, r * 0.55, y * S), q.setFromAxisAngle(up, rnd() * 6), s.set(r, r * 0.8, r));
+    const r = 0.21 + rnd() * 0.13;
+    m.compose(p.set(x * S, r * 0.45, y * S), q.setFromAxisAngle(up, rnd() * 6), s.set(r, r * 0.85, r));
     im.setMatrixAt(i, m);
-    im.setColorAt(i, c.setHSL(0.28 + rnd() * 0.07, 0.50, 0.11 + rnd() * 0.10));
+    im.setColorAt(i, c.setHSL(0.27 + rnd() * 0.06, 0.52, 0.16 + rnd() * 0.09));
   });
   im.castShadow = true; im.receiveShadow = true; im.userData.uni = uni;
   // bush fx: per champion track inBush; a burst (kick) on enter/leave decays over ~0.6s, occupied bushes keep a soft tint+wobble,

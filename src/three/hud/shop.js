@@ -6,6 +6,7 @@ import { CHAMPIONS } from '../../../shared/moba/champions.js';
 import { ITEMS, SHOP_ORDER, recipePlan, buyBlocker } from '../../../shared/moba/items.js';
 import { sellValue, INVENTORY_SLOTS, SELL_UNDO_MS, SELL_REFUND_PCT } from '../../../shared/moba/rules.js';
 import { AudioManager } from '../../core/AudioManager.js';
+import { t, getLang, onLangChange } from '../../core/I18n.js';
 import { itemCardHtml, esc, TIER_CSS, buildsInto } from './tooltip.js';
 
 const el = (parent, tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
@@ -41,7 +42,7 @@ export function createShop({ root, source, toast = () => {}, tooltip = null }) {
     return b && now - b <= UNDO_MS ? it.cost : sellValue(it.cost, b, now);
   };
   const rowInfo = (id) => { const it = ITEMS[id], items = inv(), gold = meRef ? meRef.gold | 0 : 0, plan = recipePlan(items, id), cost = it.consumable ? it.cost : plan.cost, why = buyBlocker(items, id); return { it, cost, why, afford: gold >= cost, canShop: !!ctxRef.canShop, gold, plan }; };
-  const reason = (r) => (!r.canShop ? '🛒 Walk back to your fountain (or die) to shop' : r.why ? `🛒 ${r.why[0].toUpperCase() + r.why.slice(1)}` : r.gold < r.cost ? `🛒 Need ${r.cost - r.gold} more gold. Ship more bugs.` : '');
+  const reason = (r) => (!r.canShop ? `🛒 ${t('shop.returnShop')}` : r.why ? `🛒 ${r.why[0].toUpperCase() + r.why.slice(1)}` : r.gold < r.cost ? `🛒 ${t('shop.needGold', { gold: r.cost - r.gold })}` : '');
 
   function syncBoughtAt(me) {
     if (!me) { prevItems = null; prevChamp = ''; localBoughtAt.fill(0); return; }
@@ -68,7 +69,7 @@ export function createShop({ root, source, toast = () => {}, tooltip = null }) {
     send('buy', { item: id }); sig = '';
   }
   function sell(slot) {
-    if (!ctxRef.canShop) { AudioManager.failure?.(); toast('🛒 Sell in your break room (or while dead)', '#ff8a8a'); return; }
+    if (!ctxRef.canShop) { AudioManager.failure?.(); toast(`🛒 ${t('shop.returnSell')}`, '#ff8a8a'); return; }
     if (!inv()[slot]) return;
     AudioManager.uiClick?.();
     send('sell', { slot }); selSlot = -1; sig = '';
@@ -111,6 +112,7 @@ export function createShop({ root, source, toast = () => {}, tooltip = null }) {
     if (id && ITEMS[id]) tooltip.show(itemCardHtml(id, inv(), 0), t); else tooltip.hide();
   });
   on(panel, 'pointerleave', () => tooltip && tooltip.hide());
+  cleanup.push(onLangChange(() => { sig = ''; nudgeTxt = ''; if (open) render(); else updateNudge(); }));
   closeBtn.onclick = () => { AudioManager.uiClick?.(); close(); };
   undoBtn.onclick = () => { if (lastUndoSlot >= 0) sell(lastUndoSlot); };
   nudge.onclick = () => { AudioManager.uiClick?.(); if (nudgeItem) selItem = nudgeItem; openIt(); };
@@ -167,10 +169,10 @@ export function createShop({ root, source, toast = () => {}, tooltip = null }) {
     if (!selItem && selSlot < 0) selItem = nextRec || 'mouse';
     const def = me && CHAMPIONS[me.champ];
     const rows = SHOP_ORDER.filter((id) => ITEMS[id]).map((id) => rowInfo(id));
-    const s = [items.join(','), gold >= 0 ? rows.map((r) => (r.afford ? 1 : 0) + (r.why ? 'x' : '') + r.cost).join('') : '', canShop ? 1 : 0, selItem, selSlot, u, u >= 0 ? Math.floor((now - ub) / 1000) : '', me && me.champ].join('|');
-    title.textContent = `🛒 SHOP · 🪙 ${gold}${canShop ? '' : '  · away from base'}`;
+    const s = [getLang(), items.join(','), gold >= 0 ? rows.map((r) => (r.afford ? 1 : 0) + (r.why ? 'x' : '') + r.cost).join('') : '', canShop ? 1 : 0, selItem, selSlot, u, u >= 0 ? Math.floor((now - ub) / 1000) : '', me && me.champ].join('|');
+    title.textContent = `🛒 ${t('shop.title')} · 🪙 ${gold}${canShop ? '' : `  · ${t('shop.outBase')}`}`;
     if (undoBtn.hidden === (u >= 0)) undoBtn.hidden = u < 0;
-    if (u >= 0) undoBtn.textContent = `↶ UNDO ${ITEMS[items[u]].emoji} +${refund(u)}g (${Math.max(0, Math.ceil((UNDO_MS - (now - ub)) / 1000))}s)`;
+    if (u >= 0) undoBtn.textContent = `↶ ${t('shop.undo')} ${ITEMS[items[u]].emoji} +${refund(u)}g (${Math.max(0, Math.ceil((UNDO_MS - (now - ub)) / 1000))}s)`;
     if (s === sig) return; sig = s;
     // grid
     let h = '';
@@ -187,24 +189,24 @@ export function createShop({ root, source, toast = () => {}, tooltip = null }) {
     left.innerHTML = h;
     // detail + action
     const showId = selSlot >= 0 ? items[selSlot] : selItem;
-    detail.innerHTML = showId ? itemCardHtml(showId, items, gold) : '<div class="ic-d">Pick an item. Your wallet is watching.</div>';
+    detail.innerHTML = showId ? itemCardHtml(showId, items, gold) : `<div class="ic-d">${esc(t('shop.pickHint'))}</div>`;
     if (showId) wireRecipeClicks(showId);
     const pct = Math.round((SELL_REFUND_PCT || 0.75) * 100);
     if (selSlot >= 0 && items[selSlot]) {
-      actRow.innerHTML = `<button class="bsh-btn bsx-sellb" data-act="sell" data-v="${selSlot}">SELL +${refund(selSlot)}g${undoable(selSlot) ? ' (UNDO, full refund)' : ` (${pct}%)`}</button>`;
+      actRow.innerHTML = `<button class="bsh-btn bsx-sellb" data-act="sell" data-v="${selSlot}">${esc(t('shop.sell'))} +${refund(selSlot)}g${undoable(selSlot) ? ` (${esc(t('shop.undo'))})` : ` (${pct}%)`}</button>`;
     } else if (showId) {
       const r = rowInfo(showId), why = reason(r);
-      actRow.innerHTML = `<button class="bsh-btn bsx-buyb${why ? ' off' : ''}" data-act="buy" data-v="${showId}">BUY 🪙 ${r.cost}</button>${why ? `<div class="bsx-why">${esc(why.replace('🛒 ', ''))}</div>` : '<div class="bsx-hint">Click to inspect · Double-click or BUY to purchase</div>'}`;
+      actRow.innerHTML = `<button class="bsh-btn bsx-buyb${why ? ' off' : ''}" data-act="buy" data-v="${showId}">${esc(t('shop.buy'))} 🪙 ${r.cost}</button>${why ? `<div class="bsx-why">${esc(why.replace('🛒 ', ''))}</div>` : `<div class="bsx-hint">${esc(t('shop.hint'))}</div>`}`;
     } else actRow.innerHTML = '';
     // inventory
-    let ih = `<div class="lab">INVENTORY ${items.filter(Boolean).length}/${INVENTORY_SLOTS} <small>(click = select, right-click = sell)</small></div><div class="row">`;
+    let ih = `<div class="lab">${esc(t('shop.inventory'))} ${items.filter(Boolean).length}/${INVENTORY_SLOTS} <small>(${esc(t('shop.sellHint'))})</small></div><div class="row">`;
     for (let i = 0; i < INVENTORY_SLOTS; i++) {
       const it = ITEMS[items[i]];
       ih += it ? `<button class="bsx-slot on${selSlot === i ? ' sel' : ''}${undoable(i) ? ' undo' : ''}" data-act="slot" data-v="${i}">${it.emoji}<small>${refund(i)}g</small></button>` : '<div class="bsx-slot"></div>';
     }
     invWrap.innerHTML = ih + '</div>';
     // recommended
-    recWrap.innerHTML = rec.length ? `<div class="lab">⭐ RECOMMENDED · ${def ? def.emoji + ' ' + esc(def.name) : ''}</div><div class="row">${rec.map((id) => `<button class="bsx-slot rcm${owns(id) ? ' have' : ''}${id === nextRec ? ' next' : ''}" data-act="pick" data-v="${id}" title="${esc(ITEMS[id].name)}">${ITEMS[id].emoji}<small>${owns(id) ? '✓' : recipePlan(items, id).cost}</small></button>`).join('')}</div>` + (nextRec ? `<div class="bsx-why">next: ${ITEMS[nextRec].emoji} ${esc(ITEMS[nextRec].name)}</div>` : '') : '';
+    recWrap.innerHTML = rec.length ? `<div class="lab">⭐ ${esc(t('shop.recommended'))} · ${def ? def.emoji + ' ' + esc(def.name) : ''}</div><div class="row">${rec.map((id) => `<button class="bsx-slot rcm${owns(id) ? ' have' : ''}${id === nextRec ? ' next' : ''}" data-act="pick" data-v="${id}" title="${esc(ITEMS[id].name)}">${ITEMS[id].emoji}<small>${owns(id) ? '✓' : recipePlan(items, id).cost}</small></button>`).join('')}</div>` + (nextRec ? `<div class="bsx-why">next: ${ITEMS[nextRec].emoji} ${esc(ITEMS[nextRec].name)}</div>` : '') : '';
   }
 
   function close() { if (!open) return; open = false; panel.hidden = true; if (tooltip) tooltip.hide(); updateNudge(); }

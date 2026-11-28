@@ -442,8 +442,8 @@ export function createInput({ canvas, source, pick, project, camera, mode = 'tea
     const code = ev.code;
     keys.add(code);
     if (code === 'Escape') { if (held) { cancelHeld(); return; } hooks.escape && hooks.escape(); return; }
+    if (code === 'Tab') { ev.preventDefault(); if (!ev.repeat && !(input.isBlocked && input.isBlocked())) hooks.scoreboard && hooks.scoreboard(true); return; }
     if (input.isBlocked && input.isBlocked()) return;
-    if (code === 'Tab') { ev.preventDefault(); hooks.scoreboard && hooks.scoreboard(true); return; }
     if (code === 'Enter') { hooks.chat && hooks.chat(); return; }
     if (ev.ctrlKey && (code === 'KeyQ' || code === 'KeyW' || code === 'KeyE' || code === 'KeyR')) {
       ev.preventDefault(); ev.stopPropagation();
@@ -481,9 +481,9 @@ export function createInput({ canvas, source, pick, project, camera, mode = 'tea
   const onKeyUp = (ev) => {
     keys.delete(ev.code);
     if (held && (ev.code === 'KeyQ' || ev.code === 'KeyW' || ev.code === 'KeyE' || ev.code === 'KeyR')) release(ev.code[3].toLowerCase());
-    if (ev.code === 'Tab') hooks.scoreboard && hooks.scoreboard(false);
+    if (ev.code === 'Tab') { ev.preventDefault(); hooks.scoreboard && hooks.scoreboard(false); }
   };
-  const onBlur = () => { cancelHeld(); aimSess = null; keys.clear(); rightHeld = touchHeld = false; };
+  const onBlur = () => { cancelHeld(); aimSess = null; keys.clear(); rightHeld = touchHeld = false; hooks.scoreboard && hooks.scoreboard(false); };
 
   // ---------------- prediction (copy of _predict) ----------------
   function snapPred(x, y) {

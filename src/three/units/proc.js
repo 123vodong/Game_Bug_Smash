@@ -93,7 +93,13 @@ export class ProcRig {
     this.hips.position.y = (run ? Math.abs(Math.cos(this.ph)) * 0.09 : idle * 0.018);
     if (this.kd > 0) {
       this.kt += dt; const p = Math.min(1, this.kt / this.kd), s = Math.sin(p * Math.PI);
-      if (this.kind === 'cast') { ax = bx = -2.5 * s; lean = -0.1 * s; up = 0.06 * s; } else if (this.kind === 'dash') { lean = 0.5 * s; ax = bx = 0.9 * s; } else { bx = -2.4 * s + 0.4 * p; ax = 0.8 * s; tw = 0.5 * s - 0.2 * p; lean = 0.18 * s; }
+      if (this.kind === 'cast') { ax = bx = -2.5 * s; lean = -0.1 * s; up = 0.06 * s; }
+      else if (this.kind === 'dash') { lean = 0.5 * s; ax = bx = 0.9 * s; }
+      else if (this.kind === 'thrust') { bx = -1.65 * s; ax = 0.45 * s; tw = 0.42 * s; lean = 0.26 * s; }
+      else if (this.kind === 'slam') { bx = -2.8 * Math.sin(Math.min(1, p * 1.4) * Math.PI * 0.5) + 2.4 * Math.max(0, p - 0.5); ax = -0.8 * s; lean = 0.34 * s; up = -0.05 * s; }
+      else if (this.kind === 'spin') { tw = p * Math.PI * 2; ax = -1.1 * s; bx = -1.4 * s; lean = 0.14 * s; }
+      else if (this.kind === 'raise') { ax = -2.2 * s; bx = -2.2 * s; lean = -0.08 * s; up = 0.08 * s; }
+      else { bx = -2.4 * s + 0.4 * p; ax = 0.8 * s; tw = 0.5 * s - 0.2 * p; lean = 0.18 * s; }
       if (p >= 1) this.kd = 0;
     }
     this.armL.rotation.x = ax; this.armR.rotation.x = bx; this.legL.rotation.x = lx; this.legR.rotation.x = rx;

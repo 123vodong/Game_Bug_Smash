@@ -5,6 +5,7 @@ import { ITEMS, SHOP_ORDER, recipePlan } from '../../../shared/moba/items.js';
 import { resolveSkill, nextStance } from '../../../shared/moba/champions.js';
 import { ULT_UNLOCK_LEVEL } from '../../../shared/moba/rules.js';
 import { spellCooldownMs } from '../../../shared/moba/spells.js';
+import { t, tText } from '../../core/I18n.js';
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 export const TIER_CSS = { consumable: '#7ed957', basic: '#7ec8ff', core: '#ffd23f' };
@@ -119,6 +120,8 @@ export function skillMechanics(sk, def) {
 export function skillCardHtml(def, slot, stance, me) {
   const sk = resolveSkill(def, slot, stance);
   if (!sk) return '';
+  const cid = (me && me.champ) || (def && def.id) || '';
+  const desc = cid ? tText(`skill.${cid}.${slot}`, sk.desc || '') : (sk.desc || '');
   const isVariant = !!(def?.skills && sk !== def.skills[slot] && stance);
   const range = sk.at === 'pet' ? ` · radius ${sk.radius}` : sk.range ? ` · range ${sk.range}${sk.radius ? ` · radius ${sk.radius}` : ''}` : (sk.radius ? ` · radius ${sk.radius}` : '');
   const nextSt = sk.type === 'stance' && stance ? ` · Next: ${nextStance(sk, stance)}` : '';
@@ -126,17 +129,18 @@ export function skillCardHtml(def, slot, stance, me) {
   const ultBadge = slot === 'r' ? `<span class="sk-badge">Lv ${ULT_UNLOCK_LEVEL}+</span>` : '';
   const stBadge = isVariant ? `<span class="sk-badge st">${esc(stance)}</span>` : '';
   return `<div class="ic-h"><span class="e">${esc(sk.icon || '✨')}</span><div><div class="ic-n">${esc(sk.name || '')} <span class="sk-badge">[${esc(slot.toUpperCase())}]</span>${ultBadge}${stBadge}</div><div class="sk-meta">${sk.mana || 0} mana · ${sk.cd || 0}s CD${esc(range)}${esc(nextSt)}</div></div></div>`
-    + (sk.desc ? `<div class="sk-desc">${esc(sk.desc)}</div>` : '')
+    + (desc ? `<div class="sk-desc">${esc(desc)}</div>` : '')
     + (mech.length ? `<div class="sk-mech">${mech.map((m) => `<div>${esc(m)}</div>`).join('')}</div>` : '');
 }
 
 export function spellCardHtml(sp, slot, lv) {
   if (!sp) return '';
+  const desc = sp.id ? tText(`spell.${sp.id}`, sp.desc || '') : (sp.desc || '');
   const cdSec = +(spellCooldownMs(sp, lv || 1) / 1000).toFixed(1);
   const chg = sp.maxCharges > 1 ? ` · ${sp.maxCharges} charges (${sp.castCd || 10}s cast CD)` : '';
   const rng = sp.range ? ` · range ${sp.range}` : (sp.radius ? ` · radius ${sp.radius}` : '');
   return `<div class="ic-h"><span class="e">${esc(sp.icon || '✨')}</span><div><div class="ic-n">${esc(sp.name || sp.id || '')} <span class="sk-badge">[${esc(slot.toUpperCase())}]</span></div><div class="sk-meta">${cdSec}s CD${esc(chg)}${esc(rng)}</div></div></div>`
-    + (sp.desc ? `<div class="sk-desc">${esc(sp.desc)}</div>` : '');
+    + (desc ? `<div class="sk-desc">${esc(desc)}</div>` : '');
 }
 
 export function champCardHtml(def, me) {
@@ -168,7 +172,7 @@ export function champCardHtml(def, me) {
 function recipeHtml(it, items) {
   if (!it.recipe) return '';
   const pool = items.slice(), comp = it.recipe.map((c) => { const ci = ITEMS[c], k = pool.indexOf(c), have = k >= 0; if (have) pool[k] = null; return `<span class="rc${have ? ' have' : ''}" title="${esc(ci && ci.name)} (${ci ? ci.cost : 0}g)">${ci ? ci.emoji : '?'}<i>${have ? '✓' : (ci ? ci.cost : '')}</i></span>`; }).join('<u>+</u>');
-  return `<div class="ic-rec"><span class="lab">RECIPE</span>${comp}<u>=</u><span class="rc fin">${it.emoji}</span></div>`;
+  return `<div class="ic-rec"><span class="lab">${esc(t('shop.requires'))}</span>${comp}<u>=</u><span class="rc fin">${it.emoji}</span></div>`;
 }
 
 export function itemCardHtml(id, items, gold, boughtAt, now) {
@@ -178,11 +182,12 @@ export function itemCardHtml(id, items, gold, boughtAt, now) {
   const eff = it.effect ? `<div class="ic-pas">Use: heal ${it.effect.heal || 0} HP, ${it.effect.mana || 0} mana over ${(it.effect.ms || 0) / 1000}s</div>` : '';
   const pas = it.passive ? `<div class="ic-pas">${it.active ? '⚡ ' : '✦ '}${esc(it.passive.desc)}</div>` : '';
   const into = !it.consumable && it.tier !== 'core' ? buildsInto(id) : [];
-  const intoHtml = into.length ? `<div class="ic-rec"><span class="lab">BUILDS INTO</span>${into.map((o) => `<span class="rc" title="${esc(ITEMS[o].name)}">${ITEMS[o].emoji}</span>`).join('')}</div>` : '';
+  const intoHtml = into.length ? `<div class="ic-rec"><span class="lab">${esc(t('shop.buildsInto'))}</span>${into.map((o) => `<span class="rc" title="${esc(ITEMS[o].name)}">${ITEMS[o].emoji}</span>`).join('')}</div>` : '';
   const tier = it.tier === 'consumable' ? 'CONSUMABLE' : it.tier === 'basic' ? 'BASIC' : 'CORE' + (it.group ? ' · ' + it.group.toUpperCase() : '');
+  const desc = tText(`item.${id}`, it.desc || '');
   return `<div class="ic-h"><span class="e">${it.emoji}</span><div><div class="ic-n">${esc(it.name)}</div><div class="ic-t" style="color:${TIER_CSS[it.tier] || '#fff'}">${tier}</div></div><div class="ic-c">🪙 ${cost}${plan.discount ? ` <s>${it.cost}</s>` : ''}</div></div>`
     + (stats ? `<div class="ic-st">${stats}</div>` : '') + eff + pas + recipeHtml(it, items) + intoHtml
-    + `<div class="ic-d">${esc(it.desc || '')}</div>`;
+    + `<div class="ic-d">${esc(desc)}</div>`;
 }
 
 export function createTooltip(root) {

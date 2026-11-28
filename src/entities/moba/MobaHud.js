@@ -608,7 +608,8 @@ export class MobaHud {
     const size = this.touch ? 168 : 200;
     // 2026-11-25: the floor size comes from the world (Story Mode floors are not 6000 square)
     const WW = this.o.world?.w || MAP_W, WH = this.o.world?.h || MAP_H;
-    this.mm = { x: 10, y: 10, size, k: size / Math.max(WW, WH), ww: WW, wh: WH };
+    // Anchored bottom-right to match 3D LoL HUD layout
+    this.mm = { x: this.W - size - 12, y: this.H - size - 12, size, k: size / Math.max(WW, WH), ww: WW, wh: WH };
     // Static minimap baked once into a small texture (Graphics would re-tessellate every frame).
     if (map) {
       const g = s.make.graphics({}, false);
@@ -711,7 +712,7 @@ export class MobaHud {
     this.death.add([this.deathBand, this.deathTitle, this.deathCount, this.deathHint]);
     this._layoutDeath();
 
-    this.status = this._t(this.mm.x, this.mm.y + this.mm.size + 8, '', { fontFamily: MONO, fontSize: 12, color: '#7ec8ff' }, 0, 0).setDepth(50);
+    this.status = this._t(12, 74, '', { fontFamily: MONO, fontSize: 12, color: '#7ec8ff' }, 0, 0).setDepth(50);
 
     // v4: "you are hidden in a bush" pill just above the panel.
     this.hideBox = s.add.container(this.px, this.pt - 22).setScrollFactor(0).setDepth(52).setVisible(false);
@@ -719,14 +720,14 @@ export class MobaHud {
     this.hideTxt = s.add.text(0, 0, '', { fontFamily: FONT, fontSize: 13, color: '#9dffb4', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
     this.hideBox.add([this.hideBg, this.hideTxt]);
     this._hideState = null;
-    // Target Info Panel (next to minimap — replaces old FX/CAM buttons which moved into ESC menu).
+    // Target Info Panel (top-left below Practice bar — synchronized with 3D HUD).
     this._buildTargetPanel();
     this._buildExtras();
   }
 
   _buildTargetPanel() {
     const s = this.s;
-    const x = this.mm.x + this.mm.size + 10, y = this.mm.y, w = 232, h = 112;
+    const x = 12, y = 94, w = 232, h = 112;
     const c = s.add.container(x, y).setScrollFactor(0).setDepth(51).setVisible(false);
     const bg = s.add.rectangle(0, 0, w, h, 0x0a0f18, 0.94).setOrigin(0).setStrokeStyle(2, 0x39c2ff, 0.9);
     const title = s.add.text(10, 8, '', { fontFamily: FONT, fontSize: 13, color: '#ffffff', stroke: '#000', strokeThickness: 3 });
@@ -793,10 +794,10 @@ export class MobaHud {
   // ───────────────────────── Experience Pass 1 widgets ─────────────────────────
   _buildExtras() {
     const s = this.s;
-    const colX = 10, colY = this.mm.y + this.mm.size + 32; // left column under the minimap + status line
+    const colX = 12, colY = 214; // left column below top-left Practice & Target panels (clear of bottom-right minimap)
     this._colX = colX; this._colY = colY;
-    // EP-08: 🏳 ROLLBACK (visible from ROLLBACK_FROM_MS online; the scene decides).
-    this.rbBtn = this._button(this.mm.x + this.mm.size + 56, this.mm.y + 128, 86, 24, '🏳 ROLLBACK', 0xffb347, () => this.o.onRollback?.(), 50, 10);
+    // EP-08: 🏳 ROLLBACK (visible from ROLLBACK_FROM_MS online; anchored bottom-left).
+    this.rbBtn = this._button(55, this.H - 22, 86, 24, '🏳 ROLLBACK', 0xffb347, () => this.o.onRollback?.(), 50, 10);
     this.rbBtn.setVisible(false);
     // EP-08: team vote panel.
     const vw = 300, vh = 128;

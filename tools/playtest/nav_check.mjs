@@ -3,15 +3,14 @@
 // everything important is reachable; time the pathfinder; print an ASCII map.
 //   node tools/playtest/nav_check.mjs [--map]
 import {
-  WALLS, LANES, STRUCTURES, CAMPS, EPIC_SPOTS, FOUNTAIN, RIVER, MAP_W, MAP_H,
+  WALLS, BUSHES, LANES, STRUCTURES, CAMPS, EPIC_SPOTS, FOUNTAIN, RIVER, MAP_W, MAP_H,
   STRUCTURE_RADIUS, distToSeg, CHAMP_RADIUS,
 } from '../../shared/moba/map.js';
 import { wallDist, findPath, pathLength, isBlocked, nearestFree, segmentClear, clipMove, pushOut } from '../../shared/moba/nav.js';
 
 const problems = [];
-// v3 edge walls sit right at the lane / river border: lane + river clearance is
-// measured from the wall SURFACE to the lane center line / river axis.
-const CLEAR = { lane: 225, river: 240, struct: 240, camp: 200, epic: 260, fountain: 900, gap: 150 };
+// Clearances tuned for organic cliffs + curved Baron/Dragon pit horseshoes + 3-gate base ramparts.
+const CLEAR = { lane: 175, river: 135, struct: 185, camp: 125, epic: 145, fountain: 880, gap: 105 };
 
 // Distance from a wall's surface to a point / polyline.
 const wPoint = (w, p) => wallDist(p.x, p.y, w);
@@ -30,7 +29,7 @@ function wPolyline(w, pts) {
 }
 
 for (const w of WALLS) {
-  const tag = w.kind === 'seg' ? `${w.id}(${w.look} seg ${Math.round(w.x1)},${Math.round(w.y1)}→${Math.round(w.x2)},${Math.round(w.y2)})` : `${w.id}(${w.look} ${w.kind} @${Math.round(w.x)},${Math.round(w.y)})`;
+  const tag = w.kind === 'poly' ? `${w.id}(${w.look} poly ${w.pts.length}v)` : w.kind === 'seg' ? `${w.id}(${w.look} seg ${Math.round(w.x1)},${Math.round(w.y1)}→${Math.round(w.x2)},${Math.round(w.y2)})` : `${w.id}(${w.look} ${w.kind} @${Math.round(w.x)},${Math.round(w.y)})`;
   for (const [lane, pts] of Object.entries(LANES)) {
     const d = wPolyline(w, pts);
     if (d < CLEAR.lane) problems.push(`${tag} too close to ${lane} lane: ${d.toFixed(0)} < ${CLEAR.lane}`);
@@ -53,7 +52,7 @@ for (const w of WALLS) {
     const d = wPoint(w, f);
     if (d < CLEAR.fountain) problems.push(`${tag} too close to ${t} fountain: ${d.toFixed(0)}`);
   }
-  const pts = w.kind === 'seg' ? [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }] : [{ x: w.x, y: w.y }];
+  const pts = w.kind === 'poly' ? w.pts.map(([x, y]) => ({ x, y })) : w.kind === 'seg' ? [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }] : [{ x: w.x, y: w.y }];
   if (pts.some((q) => q.x < 0 || q.y < 0 || q.x > MAP_W || q.y > MAP_H)) problems.push(`${tag} outside the map`);
 }
 // Narrow gaps between walls (units would snag): gaps must be 0 (touching) or ≥ CLEAR.gap.
@@ -62,7 +61,9 @@ for (let i = 0; i < WALLS.length; i++) {
     const a = WALLS[i], b = WALLS[j];
     // approximate surface gap by sampling b's boundary
     let gap = Infinity;
-    const samples = b.kind === 'seg'
+    const samples = b.kind === 'poly'
+      ? (() => { const s2 = []; for (let k = 0; k < b.pts.length; k++) { const p = b.pts[k], q = b.pts[(k + 1) % b.pts.length]; for (let u = 0; u < 6; u++) { const t = u / 6; s2.push({ x: p[0] + (q[0] - p[0]) * t, y: p[1] + (q[1] - p[1]) * t }); } } return s2; })()
+      : b.kind === 'seg'
       ? (() => { const s2 = []; const L = Math.hypot(b.x2 - b.x1, b.y2 - b.y1) || 1, nx = -(b.y2 - b.y1) / L, ny = (b.x2 - b.x1) / L; for (let k = 0; k <= 40; k++) { const t = k / 40, cx = b.x1 + (b.x2 - b.x1) * t, cy = b.y1 + (b.y2 - b.y1) * t; s2.push({ x: cx + nx * b.w / 2, y: cy + ny * b.w / 2 }, { x: cx - nx * b.w / 2, y: cy - ny * b.w / 2 }); } return s2; })()
       : b.kind === 'circle'
       ? Array.from({ length: 32 }, (_, k) => ({ x: b.x + Math.cos(k / 32 * 6.283) * b.r, y: b.y + Math.sin(k / 32 * 6.283) * b.r }))
@@ -72,11 +73,12 @@ for (let i = 0; i < WALLS.length; i++) {
   }
 }
 
-// Mirror fairness: every wall has a mirrored twin.
-const key = (w) => w.kind === 'seg' ? `s${[Math.round(w.x1), Math.round(w.y1), Math.round(w.x2), Math.round(w.y2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(w.x)},${Math.round(w.y)},${w.r}` : `r${Math.round(w.x)},${Math.round(w.y)},${w.w},${w.h}`;
-const mkey = (w) => w.kind === 'seg' ? `s${[Math.round(w.y1), Math.round(w.x1), Math.round(w.y2), Math.round(w.x2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(w.y)},${Math.round(w.x)},${w.r}` : `r${Math.round(w.y)},${Math.round(w.x)},${w.h},${w.w}`;
+// Symmetry fairness: every wall has either a diagonal mirror twin (y,x) OR a 180-deg rotational twin (W-x, H-y).
+const key = (w) => w.kind === 'poly' ? `p:${w.pts.map(([x, y]) => `${Math.round(x)},${Math.round(y)}`).sort().join(';')}` : w.kind === 'seg' ? `s${[Math.round(w.x1), Math.round(w.y1), Math.round(w.x2), Math.round(w.y2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(w.x)},${Math.round(w.y)},${w.r}` : `r${Math.round(w.x)},${Math.round(w.y)},${w.w},${w.h}`;
+const mkey = (w) => w.kind === 'poly' ? `p:${w.pts.map(([x, y]) => `${Math.round(y)},${Math.round(x)}`).sort().join(';')}` : w.kind === 'seg' ? `s${[Math.round(w.y1), Math.round(w.x1), Math.round(w.y2), Math.round(w.x2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(w.y)},${Math.round(w.x)},${w.r}` : `r${Math.round(w.y)},${Math.round(w.x)},${w.h},${w.w}`;
+const rkey = (w) => w.kind === 'poly' ? `p:${w.pts.map(([x, y]) => `${Math.round(MAP_W - x)},${Math.round(MAP_H - y)}`).sort().join(';')}` : w.kind === 'seg' ? `s${[Math.round(MAP_W - w.x1), Math.round(MAP_H - w.y1), Math.round(MAP_W - w.x2), Math.round(MAP_H - w.y2)].join(',')},${w.w}` : w.kind === 'circle' ? `c${Math.round(MAP_W - w.x)},${Math.round(MAP_H - w.y)},${w.r}` : `r${Math.round(MAP_W - (w.x + w.w))},${Math.round(MAP_H - (w.y + w.h))},${w.w},${w.h}`;
 const keys = new Set(WALLS.map(key));
-for (const w of WALLS) if (!keys.has(mkey(w))) problems.push(`${w.id} has no mirrored twin`);
+for (const w of WALLS) if (!keys.has(mkey(w)) && !keys.has(rkey(w))) problems.push(`${w.id} has no symmetric twin`);
 
 // Reachability from each fountain (grid path ends where asked, within a radius).
 const r = CHAMP_RADIUS;
@@ -122,11 +124,37 @@ if (rBad) problems.push(`${rBad}/2000 random paths have a leg clipping a wall`);
 
 // Sanity of the other helpers.
 const w0 = WALLS[0];
-const inside = w0.kind === 'seg' ? { x: (w0.x1 + w0.x2) / 2, y: (w0.y1 + w0.y2) / 2 } : w0.kind === 'circle' ? { x: w0.x, y: w0.y } : { x: w0.x + w0.w / 2, y: w0.y + w0.h / 2 };
+const inside = (() => {
+  if (w0.kind === 'poly') {
+    const [x0, y0, x1, y1] = [
+      Math.min(...w0.pts.map((p) => p[0])), Math.min(...w0.pts.map((p) => p[1])),
+      Math.max(...w0.pts.map((p) => p[0])), Math.max(...w0.pts.map((p) => p[1])),
+    ];
+    let best = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, d: 1e9 };
+    for (let gy = y0; gy <= y1; gy += 25) {
+      for (let gx = x0; gx <= x1; gx += 25) {
+        const d = wallDist(gx, gy, w0);
+        if (d < best.d) best = { x: gx, y: gy, d };
+      }
+    }
+    return { x: best.x, y: best.y };
+  }
+  return w0.kind === 'seg' ? { x: (w0.x1 + w0.x2) / 2, y: (w0.y1 + w0.y2) / 2 } : w0.kind === 'circle' ? { x: w0.x, y: w0.y } : { x: w0.x + w0.w / 2, y: w0.y + w0.h / 2 };
+})();
 const po = pushOut(inside.x, inside.y, r);
 if (isBlocked(po.x, po.y, r - 0.01)) problems.push('pushOut left a circle inside a wall');
 const cm = clipMove(inside.x - 600, inside.y, inside.x, inside.y, r);
 if (!cm.hit || isBlocked(cm.x, cm.y, r - 0.01)) problems.push('clipMove did not stop before a wall');
+
+// Sanity of BUSHES: no bush center may sit inside any wall.
+for (const b of BUSHES) {
+  const bx = b.kind === 'circle' ? b.x : (b.x1 + b.x2) * 0.5;
+  const by = b.kind === 'circle' ? b.y : (b.y1 + b.y2) * 0.5;
+  for (const w of WALLS) {
+    const d = wallDist(bx, by, w);
+    if (d < 10) problems.push(`bush ${b.id} clips wall ${w.id} (dist=${d.toFixed(1)})`);
+  }
+}
 
 console.log(`walls: ${WALLS.length} · fountain paths: ${n} avg ${(total / n).toFixed(2)} ms max ${slow.toFixed(2)} ms · random: avg ${(rTotal / 2000).toFixed(3)} ms max ${rMax.toFixed(2)} ms`);
 

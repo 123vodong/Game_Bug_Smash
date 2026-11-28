@@ -23,7 +23,8 @@ const CSS = `
 .bsa-feed{position:absolute;left:10px;top:132px;display:flex;flex-direction:column;gap:2px;font:12px monospace;text-shadow:0 1px 2px #000;max-width:46vw}
 .bsa-feed div{background:rgba(10,14,24,.5);padding:1px 6px;border-radius:4px;transition:opacity .6s}.bsa-feed .mine{outline:1px solid #ffd23f}
 .bsa-chat{position:absolute;left:10px;bottom:10px;width:min(360px,60vw);display:flex;flex-direction:column;gap:3px;font:12px monospace}
-.bsa-chat .log{display:flex;flex-direction:column;gap:2px;max-height:150px;overflow:hidden;text-shadow:0 1px 2px #000}.bsa-chat .log div{background:rgba(10,14,24,.5);padding:1px 6px;border-radius:4px;word-break:break-word}
+.bsa-chat .log{display:flex;flex-direction:column;gap:2px;max-height:150px;overflow:hidden;scrollbar-width:none;text-shadow:0 1px 2px #000}.bsa-chat .log div{background:rgba(10,14,24,.5);padding:1px 6px;border-radius:4px;word-break:break-word}
+.bsa-chat .log::-webkit-scrollbar{display:none}
 .bsa-chat input{pointer-events:auto;width:100%;background:rgba(10,14,24,.85);color:#fff;border:1px solid #39c2ff;border-radius:6px;padding:5px 8px;font:12px monospace;display:none}
 .bsa-chatbtn{pointer-events:auto;align-self:flex-start;background:rgba(10,14,24,.72);border:1px solid #2b3347;color:#9fb0d0;border-radius:8px;padding:3px 9px;font:11px monospace;cursor:pointer}
 .bsa-ev{position:absolute;left:50%;top:10px;transform:translateX(-50%);min-width:240px;text-align:center;background:rgba(10,14,24,.78);border:2px solid var(--c,#ff9800);border-radius:10px;padding:4px 14px;display:none}
