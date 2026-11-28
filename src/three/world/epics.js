@@ -34,15 +34,17 @@ export function makeEpics(world) {
         float ring = smoothstep(0.80, 0.86, r) * (1.0 - smoothstep(0.93, 1.0, r));
         float ang = atan(vUv.y, vUv.x) / 6.2831853 + 0.5;
         float pulse = 0.8 + 0.2 * sin(uTime * s.z * 0.4);
+        float warnPulse = 0.5 + 0.5 * sin(uTime * s.z * 0.75);
+        vec3 col = mix(base, vec3(1.0, 0.95, 0.7), (1.0 - s.x) * s.y * 0.38 * warnPulse);
         float a;
         if (s.x > 0.5) a = ring * (0.7 + 0.5 * pulse) + (1.0 - smoothstep(0.0, 0.8, r)) * 0.18 * pulse;
-        else a = ring * (0.12 + 0.85 * step(ang, s.y) * pulse);
-        gl_FragColor = vec4(base * a, a);
+        else a = ring * (0.22 + 0.08 * warnPulse + 0.78 * step(ang, s.y) * pulse) + (1.0 - smoothstep(0.0, 0.8, r)) * 0.08 * s.y * warnPulse;
+        gl_FragColor = vec4(col * a, a);
       }`,
   });
   const pad = new THREE.Mesh(geo, mat); pad.name = 'epic-pad'; pad.frustumCulled = false;
   const group = new THREE.Group(); group.add(decor, pad);
-  const set = (v, at, now) => { if (at > now) { const rem = at - now; v.set(0, Math.max(0, Math.min(1, 1 - rem / WARN)), rem < WARN ? 10 : 2, 0); } else v.set(1, 1, 3, 0); };
+  const set = (v, at, now) => { if (at > now) { const rem = at - now, pr = Math.max(0, Math.min(1, 1 - rem / WARN)); v.set(0, pr, rem < WARN ? 5 + 9 * pr : 2.5, 0); } else v.set(1, 1, 3, 0); };
   return {
     group,
     update(ctx) {

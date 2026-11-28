@@ -24,8 +24,10 @@ export function makeRelics() {
       for (let i = 0; i < n; i++) {
         const rl = list[i], x = rl.x * S, z = rl.y * S;
         if ((rl.upAt || 0) <= now) {
-          const k = 0.45, r = 0.32;
-          chip.setMatrixAt(i, m.compose(p.set(x, 0.3, z), qy.setFromAxisAngle(up, i), s.set(1, 1, 1)));
+          const pulse = 0.5 + 0.5 * Math.sin(t * 3.2 + i * 1.7);
+          const bob = Math.sin(t * 2.6 + i * 1.3) * 0.07;
+          const k = 0.42 + 0.24 * pulse, r = 0.3 + 0.045 * pulse;
+          chip.setMatrixAt(i, m.compose(p.set(x, 0.34 + bob, z), qy.setFromAxisAngle(up, t * 1.8 + i), s.set(1, 1, 1)));
           disc.setMatrixAt(i, m.compose(p.set(x, 0.04, z), q, s.set(r, 1, r)));
           disc.setColorAt(i, c.setRGB(0.2 * k, k, 0.25 * k));
         } else {

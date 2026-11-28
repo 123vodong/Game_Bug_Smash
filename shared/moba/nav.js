@@ -215,6 +215,42 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
     return { x, y };
   }
 
+  /**
+   * LoL-style blink landing: if (tx, ty) is free, return it; if it lands inside a thin wall,
+   * march forward along (x0, y0) -> (tx, ty) up to `maxWall` px past (tx, ty) in 16px steps.
+   * Crosses cleanly to the far side when total blocked span <= maxWall; else falls back to nearestFree.
+   */
+  function blinkLanding(x0, y0, tx, ty, r = 0, maxWall = 200) {
+    if (!fin(x0, y0, tx, ty)) return nearestFree(tx, ty, r);
+    if (!isBlocked(tx, ty, r)) return { x: tx, y: ty };
+    const dx = tx - x0, dy = ty - y0, dist = Math.hypot(dx, dy);
+    if (!(dist >= 1)) return nearestFree(tx, ty, r);
+    const ux = dx / dist, uy = dy / dist;
+    const step = 16;
+    const pad = Math.max(r, 1);
+    let backBlocked = 0;
+    const maxBack = Math.min(dist, maxWall + step);
+    for (let b = step; b <= maxBack; b += step) {
+      if (!isBlocked(tx - ux * b, ty - uy * b, r)) break;
+      backBlocked = b;
+    }
+    for (let f = step; f <= maxWall; f += step) {
+      const px = tx + ux * f, py = ty + uy * f;
+      if (px < pad || py < pad || px > width - pad || py > height - pad) break;
+      if (!isBlocked(px, py, r)) {
+        if (backBlocked + f <= maxWall) {
+          const out = pushOut(px, py, r);
+          return {
+            x: Math.max(pad, Math.min(width - pad, out.x)),
+            y: Math.max(pad, Math.min(height - pad, out.y)),
+          };
+        }
+        break;
+      }
+    }
+    return nearestFree(tx, ty, r);
+  }
+
   // ── grid ──
   const grids = new Map(); // radius → Uint8Array (1 = blocked)
   function gridFor(r) {
@@ -396,7 +432,7 @@ export function createNav({ walls = [], w: width = MAP_W, h: height = MAP_H } = 
   return {
     w: width, h: height,
     get walls() { return WALLS_; },
-    isBlocked, pushOut, segmentClear, clipMove, nearestFree, findPath, pathLength, setDynamic,
+    isBlocked, pushOut, segmentClear, clipMove, nearestFree, blinkLanding, findPath, pathLength, setDynamic,
     hasDynamic: (id) => dyn.has(id),
   };
 }
@@ -408,4 +444,5 @@ export const pushOut = NAV_5V5.pushOut;
 export const segmentClear = NAV_5V5.segmentClear;
 export const clipMove = NAV_5V5.clipMove;
 export const nearestFree = NAV_5V5.nearestFree;
+export const blinkLanding = NAV_5V5.blinkLanding;
 export const findPath = NAV_5V5.findPath;

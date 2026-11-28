@@ -128,19 +128,24 @@ export function createArenaHud({ source, view, input, root: parent = document.bo
     modal.appendChild(box); modal.style.display = 'flex';
   }
   const closeModal = () => { modal.style.display = 'none'; modal.innerHTML = ''; };
-  function showExitConfirm() { showModal('Break room', 'Clock out and leave the arena?\nYour laptop stays here. Probably.', [{ label: 'KEEP SMASHING', fn: closeModal }, { label: 'CLOCK OUT', fn: () => { closeModal(); onExit && onExit(); } }]); }
+  const goMenu = () => {
+    closeModal();
+    if (onExit) onExit();
+    else try { location.href = location.pathname + '?scene=menu&renderer=3d'; } catch (_) { /* ignore */ }
+  };
+  function showExitConfirm() { showModal('Break room', 'Clock out and leave the arena?\nYour laptop stays here. Probably.', [{ label: 'KEEP SMASHING', fn: closeModal }, { label: 'CLOCK OUT', fn: goMenu }]); }
   function dupTab() {
     showModal('Replaced by another tab', 'You joined the arena from another tab or window, so this one was closed.\nOnly one live tab per player.', [
       { label: 'PLAY HERE', fn: async () => { showModal('Closing the other tab...', '', []); await takeover(); setTimeout(() => location.reload(), 400); } },
-      { label: 'MENU', fn: () => { closeModal(); onExit && onExit(); } }]);
+      { label: 'MENU', fn: goMenu }]);
   }
   offs.push(source.onConnection((o) => {
     if (dead) return;
     if (o.state === 'connecting') { connEl.textContent = 'connecting...'; connEl.style.display = 'block'; }
     else if (o.state === 'ok' || o.state === 'back') { connEl.style.display = 'none'; if (o.state === 'back') toast('Reconnected. Your laptop kept your seat warm.', '#7ed957'); closeModal(); }
     else if (o.state === 'stalled') { connEl.textContent = 'connection stalled... (Wi-Fi vs. the deadline)'; connEl.style.display = 'block'; }
-    else if (o.state === 'lost') showModal('Connection lost', `Reconnecting... ${o.left}s\n(the server keeps your seat)`, [{ label: 'GIVE UP', fn: () => { closeModal(); onExit ? onExit() : location.reload(); } }]);
-    else if (o.state === 'dead') { if (o.code === 4010) dupTab(); else showModal('Disconnected', `Lost the arena server (code ${o.code}).`, [{ label: 'RELOAD', fn: () => location.reload() }, { label: 'MENU', fn: () => { closeModal(); onExit && onExit(); } }]); }
+    else if (o.state === 'lost') showModal('Connection lost', `Reconnecting... ${o.left}s\n(the server keeps your seat)`, [{ label: 'GIVE UP', fn: goMenu }]);
+    else if (o.state === 'dead') { if (o.code === 4010) dupTab(); else showModal('Disconnected', `Lost the arena server (code ${o.code}).`, [{ label: 'RELOAD', fn: () => location.reload() }, { label: 'MENU', fn: goMenu }]); }
   }));
 
   // ---- server messages ----

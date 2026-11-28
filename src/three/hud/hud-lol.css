@@ -65,9 +65,12 @@
 #bsh-root .bsh-bar > u { position: absolute; inset: 0; --tk: 20px; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--tk) - 1px), rgba(0,0,0,.7) calc(var(--tk) - 1px), rgba(0,0,0,.7) var(--tk)); }
 #bsh-root .bsh-bar > b { font-size: 14px; line-height: 18px; } #bsh-root .bsh-bar.mp { height: 16px; } #bsh-root .bsh-bar.mp > b { font-size: 12px; line-height: 12px; }
 #bsh-root .bsh-right { gap: 5px; }
-#bsh-root .bsh-gold-t { order: 0; font-size: 20px; } #bsh-root .bsh-items { order: 1; grid-template-columns: repeat(3, 1fr); gap: 4px; } #bsh-root .bsh-kda { order: 2; font-size: 14px; font-weight: 600; white-space: nowrap; }
-#bsh-root .bsh-item { position: relative; height: 36px; font-size: 22px; background: radial-gradient(circle at 50% 30%, #223a63, #0b1020); border: 1px solid #4a4030; border-radius: 5px; } #bsh-root .bsh-item.on { border-color: var(--gold); }
+#bsh-root .bsh-gold-t { order: 0; font-size: 20px; cursor: pointer; pointer-events: auto; } #bsh-root .bsh-gold-t:hover { filter: brightness(1.18); } #bsh-root .bsh-items { order: 1; grid-template-columns: repeat(3, 1fr); gap: 4px; } #bsh-root .bsh-kda { order: 2; font-size: 14px; font-weight: 600; white-space: nowrap; }
+#bsh-root .bsh-item { position: relative; height: 36px; font-size: 22px; background: radial-gradient(circle at 50% 30%, #223a63, #0b1020); border: 1px solid #4a4030; border-radius: 5px; cursor: pointer; pointer-events: auto; } #bsh-root .bsh-item.on { border-color: var(--gold); cursor: pointer; pointer-events: auto; } #bsh-root .bsh-item.on:hover { box-shadow: 0 0 8px rgba(200,170,110,.6); }
 #bsh-root .bsh-item::after { content: attr(data-k); position: absolute; left: 2px; top: 0; font: 700 10px Consolas, monospace; color: #cbd5e6; }
+#bsh-root .bsh-scale { right: -30px; gap: 5px; }
+#bsh-root .bsh-scb { width: 24px; height: 24px; font-size: 15px; color: var(--gold); background: var(--glass); border: 1.5px solid var(--gold); border-radius: 5px; box-shadow: 0 2px 8px #000a; }
+#bsh-root .bsh-scb:hover { color: #fff; border-color: #ffe9a8; background: linear-gradient(180deg, rgba(42,64,106,.96), rgba(16,24,48,.98)); }
 
 /* things stacked above the panel (offsets scale with --hs) */
 #bsh-root .bsh-ccrow { bottom: calc(162px * var(--hs) + var(--sa-b)); } #bsh-root .bsh-kit { bottom: calc(214px * var(--hs) + var(--sa-b)); font-size: 13px; }

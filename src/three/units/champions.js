@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import { CHAMPIONS } from '../../../shared/moba/champions.js';
+import { CHAMPIONS, parseKitTags } from '../../../shared/moba/champions.js';
+import { HATS } from '../../data/cosmetics.js';
 import { S, TEAM_COL, asset } from '../world/ground.js';
 import { gearGeometry, gearMaterial } from './gear.js';
 import { ProcRig } from './proc.js';
@@ -12,6 +13,24 @@ const SKEL = new Set(['Skeleton_Warrior', 'Skeleton_Mage', 'Skeleton_Rogue', 'Sk
 
 const CHAMP_SCALE = 0.72;
 const TELEPORT_PX = 500; // a one-frame jump bigger than this (respawn, recall, blink) is not "running"
+const STANCE_TINT = { hotfix: 0xffb0d0, feature: 0xb8f5a0, bucket: 0xb0dcff };
+const _tmpCol = new THREE.Color();
+const HAT_EMOJI = Object.fromEntries(HATS.filter((h) => h.id && h.emoji).map((h) => [h.id, h.emoji]));
+const _hatTex = new Map();
+function hatTexture(emoji) {
+  let t = _hatTex.get(emoji);
+  if (!t) {
+    const cv = document.createElement('canvas'); cv.width = 96; cv.height = 96;
+    const g = cv.getContext('2d');
+    g.font = '64px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.shadowColor = 'rgba(0,0,0,0.75)'; g.shadowBlur = 8;
+    g.fillText(emoji, 48, 52);
+    t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    _hatTex.set(emoji, t);
+  }
+  return t;
+}
 
 // champion id -> [base model, right-hand item, left-hand item]
 export const LOOK = {
@@ -91,13 +110,25 @@ export class ChampView {
       const geo = bones[bone] && gearGeometry(c.champ, look, slot); if (!geo) continue;
       const mesh = new THREE.Mesh(geo, gearMaterial()); mesh.castShadow = true; mesh.frustumCulled = false; bones[bone].add(mesh); this.own.push(mesh);
     }
-    if (look.vehicle) { // courier scooter under the feet, body lifted onto the deck
-      const geo = gearGeometry(c.champ, look, 'vehicle'); if (geo) { const v = new THREE.Mesh(geo, gearMaterial()); v.position.y = 0.1; v.scale.setScalar(0.8); v.frustumCulled = false; this.root.add(v); this.own.push(v); this.model.position.y = 0.16; }
+    if (look.vehicle) { // courier scooter under the feet, attached to this.model so it rotates with yaw
+      const geo = gearGeometry(c.champ, look, 'vehicle');
+      if (geo) {
+        const v = new THREE.Mesh(geo, gearMaterial());
+        const sx = this.model.scale.x || 1, sy = this.model.scale.y || 1, sz = this.model.scale.z || 1;
+        this.model.position.y = 0.16;
+        v.position.y = (0.1 - 0.16) / sy;
+        v.scale.set(0.8 / sx, 0.8 / sy, 0.8 / sz);
+        v.frustumCulled = false;
+        this.model.add(v);
+        this.own.push(v);
+      }
     }
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.42, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: TEAM_COL[c.team] || TEAM_COL.neutral, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false }));
     this.ring.position.y = 0.03; this.root.add(this.ring);
     this.mixer = this.rig ? null : new THREE.AnimationMixer(this.model);
-    this.clips = models.clips; this.act = {}; this.cur = null; this.busy = 0; this.dead = false; this.flashT = 0;
+    this.clips = models.clips; this.act = {}; this.cur = null; this.busy = 0; this.dead = false; this.flashT = 0; this.atkRecoil = 0;
+    this._alpha = 1; this._buffs = ''; this._stanceCol = 0; this._hoverCol = 0;
+    this._hatId = ''; this.hatSprite = null; this._hatY = THREE.MathUtils.clamp(1.38 * (hs / CHAMP_SCALE) * kh, 1.24, 1.56);
     this.px = c.x; this.py = c.y; this.yaw = c.team === 'blue' ? -0.7 : 2.4; this.faceYaw = undefined; this.speed = 0; this.moving = false; this.seq = c.action_seq || 0;
     this.team = c.team;
     this.play('Idle', 0);
@@ -124,7 +155,23 @@ export class ChampView {
     this.busy = Math.min(a.getClip().duration / ts, 0.9);
   }
   flash() { this.flashT = 0.14; }
-  attack() { this.oneShot(this.ranged ? (this.def.role === 'Marksman' ? '1H_Ranged_Shoot' : 'Spellcast_Shoot') : '1H_Melee_Attack_Slice_Horizontal', 2.0); }
+  attack(tx, ty) {
+    if (this.dead) return;
+    if (Number.isFinite(tx) && Number.isFinite(ty)) this.faceYaw = Math.atan2(tx - this.px, ty - this.py);
+    this.oneShot(this.ranged ? (this.def.role === 'Marksman' ? '1H_Ranged_Shoot' : 'Spellcast_Shoot') : '1H_Melee_Attack_Slice_Horizontal', 2.0);
+    this.atkRecoil = 0.16;
+  }
+  _applyBaseEmissive() {
+    if (this._hoverCol) { _tmpCol.setHex(this._hoverCol).multiplyScalar(0.38); for (const m of this.mats) m.emissive.copy(_tmpCol); }
+    else if (this._stanceCol) { _tmpCol.setHex(this._stanceCol).multiplyScalar(0.28); for (const m of this.mats) m.emissive.copy(_tmpCol); }
+    else { for (const m of this.mats) m.emissive.setRGB(0, 0, 0); }
+  }
+  setHover(rel) {
+    const col = rel === 'enemy' ? 0xff4a4a : rel === 'ally' ? 0x5fe36a : rel === 'neutral' ? 0xffd23f : 0;
+    if (col === this._hoverCol) return;
+    this._hoverCol = col;
+    if (this.flashT <= 0) this._applyBaseEmissive();
+  }
   update(c, dt) {
     const dx = c.x - this.px, dy = c.y - this.py, d = Math.hypot(dx, dy);
     const tele = d > TELEPORT_PX;
@@ -134,8 +181,17 @@ export class ChampView {
     if (d > 1.5 && !tele) this.faceYaw = Math.atan2(dx, dy);
     if (this.faceYaw !== undefined) { let df = this.faceYaw - this.yaw; df = Math.atan2(Math.sin(df), Math.cos(df)); this.yaw += df * Math.min(1, dt * 14); }
     this.root.position.set(c.x * S, 0, c.y * S); this.model.rotation.y = this.yaw;
-    if (c.dead && !this.dead) { this.dead = true; this.play('Death_A', 0.1, { once: true }); }
-    else if (!c.dead && this.dead) { this.dead = false; this.cur = null; this.busy = 0; this.play('Idle', 0.2); }
+    if (c.dead && !this.dead) { this.dead = true; this.atkRecoil = 0; this.play('Death_A', 0.1, { once: true }); }
+    else if (!c.dead && this.dead) { this.dead = false; this.cur = null; this.busy = 0; this.atkRecoil = 0; this.play('Idle', 0.2); }
+    if (this.atkRecoil > 0 && !this.dead) {
+      this.atkRecoil = Math.max(0, this.atkRecoil - dt);
+      const k = Math.sin((this.atkRecoil / 0.16) * Math.PI) * (this.ranged ? -0.14 : 0.22);
+      this.model.position.x = Math.sin(this.yaw) * k;
+      this.model.position.z = Math.cos(this.yaw) * k;
+    } else if (this.model.position.x !== 0 || this.model.position.z !== 0) {
+      this.model.position.x = 0;
+      this.model.position.z = 0;
+    }
     this.ring.visible = !c.dead;
     if (!this.dead) {
       if (c.action_seq !== this.seq) {
@@ -149,13 +205,63 @@ export class ChampView {
       }
     }
     if (this.rig) this.rig.update(dt, this.speed, this.dead); else this.mixer.update(dt);
-    if (this.flashT > 0) { this.flashT -= dt; const k = Math.max(0, this.flashT / 0.14) * 0.9; for (const m of this.mats) m.emissive.setRGB(k, k * 0.8, k * 0.7); }
+    const tags = c.buffs || '';
+    const src = typeof window !== 'undefined' && window.__three && window.__three.source;
+    const st = src && src.state && src.state();
+    const me = st && st.champions && st.champions.get && st.champions.get(src.localId);
+    const isOwnTeam = !me || c.team === me.team;
+    const ghosted = !!c.stealthed || tags.includes('cc:untarget') || tags.includes('cc:ghost');
+    const bushHidden = !this.dead && !!c.inBush && isOwnTeam;
+    const wantA = ghosted ? 0.38 : bushHidden ? 0.48 : 1;
+    if (wantA !== this._alpha) {
+      this._alpha = wantA;
+      for (const m of this.mats) { m.transparent = wantA < 1; m.opacity = wantA; m.depthWrite = wantA >= 1; m.needsUpdate = true; }
+    }
+    const hatId = c.hat || '';
+    if (hatId !== this._hatId) {
+      this._hatId = hatId;
+      const emoji = HAT_EMOJI[hatId] || '';
+      if (emoji) {
+        if (!this.hatSprite) {
+          this.hatSprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: true, toneMapped: false }));
+          this.hatSprite.scale.set(0.42, 0.42, 1);
+          this.hatSprite.position.set(0, this._hatY, 0);
+          this.hatSprite.renderOrder = 15;
+          this.root.add(this.hatSprite);
+        }
+        this.hatSprite.material.map = hatTexture(emoji);
+        this.hatSprite.material.needsUpdate = true;
+      }
+    }
+    if (this.hatSprite) {
+      this.hatSprite.visible = !this.dead && !!HAT_EMOJI[this._hatId];
+      this.hatSprite.material.opacity = this._alpha;
+    }
+    if (tags !== this._buffs) {
+      this._buffs = tags;
+      const st = parseKitTags(tags).stance || '';
+      const wantCol = STANCE_TINT[st] || 0;
+      if (wantCol !== this._stanceCol) {
+        this._stanceCol = wantCol;
+        if (this.flashT <= 0) this._applyBaseEmissive();
+      }
+    }
+    if (this.flashT > 0) {
+      this.flashT -= dt;
+      if (this.flashT <= 0) {
+        this._applyBaseEmissive();
+      } else {
+        const k = Math.max(0, this.flashT / 0.14) * 0.9;
+        for (const m of this.mats) m.emissive.setRGB(k, k * 0.8, k * 0.7);
+      }
+    }
   }
   dispose() {
     if (this.mixer) this.mixer.stopAllAction(); if (this.rig) this.rig.dispose();
     for (const m of this.mats) m.dispose(); // (proc geometry is cached in proc.js)
     for (const g of this.own) g.parent && g.parent.remove(g); // gear geometry / material are shared + cached (gear.js)
     this.ring.geometry.dispose(); this.ring.material.dispose();
+    if (this.hatSprite) { this.hatSprite.material.dispose(); this.root.remove(this.hatSprite); this.hatSprite = null; }
     this.root.parent && this.root.parent.remove(this.root);
   }
 }

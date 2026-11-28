@@ -54,8 +54,9 @@ export function createTelegraphs(THREE, scene, { cap = 28, S = 0.01 } = {}) {
   function tele({ x, y, mode = 0, a = 1, b = 0.3, rot = 0, color = 0xffffff, delay = 0.5, life = 0, ext, onEnd = null, follow = null, tid }) {
     if (live.length >= cap) { onEnd && onEnd(); return null; }
     const mesh = acquire(), u = mesh.material.uniforms;
-    u.uColor.value.set(color); u.uProg.value = 0; u.uAlpha.value = 1; u.uTime.value = 0; u.uMode.value = mode; u.uExt.value = ext ?? a * 1.1; u.uA.value = a; u.uB.value = b;
-    mesh.scale.setScalar(1); mesh.position.set(x * S, 0.04, y * S); mesh.rotation.y = rot; root.add(mesh);
+    const extVal = ext ?? Math.max(a, b) * 1.1;
+    u.uColor.value.set(color); u.uProg.value = 0; u.uAlpha.value = 1; u.uTime.value = 0; u.uMode.value = mode; u.uExt.value = extVal; u.uA.value = a; u.uB.value = b;
+    mesh.scale.setScalar(extVal); mesh.position.set(x * S, 0.04, y * S); mesh.rotation.y = rot; root.add(mesh);
     const it = { mesh, t: 0, mode, delay, life, onEnd, follow, fired: false, tid }; live.push(it);
     if (tid !== undefined) byTid.set(tid, it);
     return it;

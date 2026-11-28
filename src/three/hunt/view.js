@@ -100,7 +100,8 @@ export async function createHuntView({ canvas, sim, hooks = {}, quality }) {
   function dropPick(uid) { const v = pickViews.get(uid); if (!v) return; scene.remove(v.s, v.glow); v.s.material.dispose(); v.glow.material.dispose(); pickViews.delete(uid); }
 
   // ---------- state ----------
-  let raf = 0, last = 0, tMs = 0, paused = false, ended = false, stopped = false, hover = null, endTimer = 0, hoverOn = false, sq = 0;
+  let raf = 0, last = 0, tMs = 0, paused = false, guidePaused = false, ended = false, stopped = false, hover = null, endTimer = 0, hoverOn = false, sq = 0;
+  let infoReady = false, winHasNext = false, slowMo = null;
   const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3(), ndc = new THREE.Vector2();
   const toSim = (e) => {
     const r = canvas.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -117,16 +118,36 @@ export async function createHuntView({ canvas, sim, hooks = {}, quality }) {
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('lostpointercapture', up);
   const key = (e) => {
     const k = e.key.toLowerCase();
-    if (k === 'p') togglePause();
+    if (e.code === 'KeyH' && !ended) { toggleGuide(); return; }
+    if (k === 'escape' && hud.guideOpen) { toggleGuide(); return; }
+    if (k === 'p') { if (hud.guideOpen) toggleGuide(); else togglePause(); }
     else if (k === 'escape') { if (ended) { if (sim.state === 'lost' || infoReady) hooks.menu && hooks.menu(); } else togglePause(true); }
     else if (k === 'm') { const m = AudioManager.toggleMute(); tryA(() => SaveManager.setMuted(m)); hud.showToast(m ? 'MUTED' : 'SOUND ON'); }
     else if (k === 'r' && ended && (sim.state === 'lost' || infoReady)) hooks.retry && hooks.retry();
+    else if ((k === 'enter' || k === ' ') && ended && infoReady) {
+      e.preventDefault();
+      if (sim.state === 'lost') hooks.retry && hooks.retry();
+      else if (winHasNext) hooks.next && hooks.next();
+      else hooks.again && hooks.again();
+    }
   };
   addEventListener('keydown', key);
-  let infoReady = false;
+
+  function toggleGuide() {
+    if (ended || stopped) return;
+    if (hud.guideOpen) {
+      hud.closeGuide();
+      if (guidePaused) { guidePaused = false; paused = false; tryA(() => AudioManager.resume()); }
+    } else {
+      if (!paused) { paused = true; guidePaused = true; sim.setHold(false); tryA(() => AudioManager.pause()); }
+      hud.showGuide(() => toggleGuide());
+    }
+  }
 
   function togglePause(quitAsk = false) {
     if (ended || stopped) return;
+    if (hud.guideOpen) hud.closeGuide();
+    guidePaused = false;
     if (!paused) { paused = true; sim.setHold(false); tryA(() => AudioManager.pause()); hud.showPause(quitAsk, { resume: () => togglePause(), menu: () => hooks.menu && hooks.menu() }); }
     else { paused = false; hud.clearModal(); tryA(() => AudioManager.resume()); }
   }
@@ -152,11 +173,19 @@ export async function createHuntView({ canvas, sim, hooks = {}, quality }) {
   on('warn', () => tryA(() => AudioManager.timerWarning())); on('tick', () => tryA(() => AudioManager.timerTick()));
   on('coach', () => tryA(() => AudioManager.uiClick()));
   on('win', (r) => {
-    ended = true; sim.setHold(false); const k = sim.lastKill || { x: 640, y: 360 };
-    // Minimal finale (cinematic is a later task): flash + shockwave + code fragments, then the overlay.
-    fx.flash('#ffffc8', 0.8, 220); fx.shake(420, 0.14); fx.shockwave(k.x, k.y, 0x39c2ff, 2.6, 0.6); fx.glyphs(k.x, k.y, 24); fx.burst(k.x, k.y, 0x7ed957, 40, 4);
+    ended = true; winHasNext = !!r.hasNext; sim.setHold(false);
+    const k = sim.lastKill || { x: 640, y: 360 };
+    // Crisp ~1.0s slow-motion finale: time ramp + double shockwave + flash before Victory overlay.
+    slowMo = { elapsed: 0, dur: 1050, kx: k.x, ky: k.y, wave2: false };
+    fx.flash('#ffffc8', 0.85, 240); fx.shake(480, 0.16); fx.shockwave(k.x, k.y, 0x39c2ff, 2.8, 0.65); fx.glyphs(k.x, k.y, 28); fx.burst(k.x, k.y, 0x7ed957, 44, 4.2);
     tryA(() => AudioManager.victory());
-    endTimer = setTimeout(() => { if (stopped) return; const info = hooks.onWin ? hooks.onWin(r) : null; infoReady = true; hud.showWin(r, info, { next: hooks.next, again: hooks.again, menu: hooks.menu }); }, 900);
+    endTimer = setTimeout(() => {
+      if (stopped) return;
+      slowMo = null;
+      const info = hooks.onWin ? hooks.onWin(r) : null;
+      infoReady = true;
+      hud.showWin(r, info, { next: hooks.next, again: hooks.again, menu: hooks.menu });
+    }, 1050);
   });
   on('lose', (r) => {
     ended = true; sim.setHold(false); fx.flash('#ff0000', 0.4, 220); fx.shake(400, 0.12); tryA(() => AudioManager.failure());
@@ -212,16 +241,37 @@ export async function createHuntView({ canvas, sim, hooks = {}, quality }) {
     if (!!hover !== hoverOn) { hoverOn = !!hover; canvas.style.cursor = hoverOn ? CURSOR : ''; }
   }
 
+  const camLook = new THREE.Vector3();
   function frame(now) {
     if (stopped) return;
     raf = requestAnimationFrame(frame);
     if (document.hidden) { last = now; return; }
-    const dt = Math.min(100, now - last); if (IS_MOBILE && dt < 30) return; last = now; tMs += dt;
-    if (!paused) sim.update(dt);
-    sync(paused ? 0 : dt);
-    backdrop.update(dt); if (!paused) fx.update(dt);
+    const dt = Math.min(100, now - last); if (IS_MOBILE && dt < 30) return; last = now;
+    let effDt = dt, zoom = 0;
+    if (slowMo) {
+      slowMo.elapsed += dt;
+      const u = Math.min(1, slowMo.elapsed / slowMo.dur);
+      const timeScale = u < 0.6 ? 0.15 : 0.15 + 0.85 * ((u - 0.6) / 0.4);
+      effDt = dt * timeScale;
+      zoom = Math.sin(u * Math.PI) * 0.22;
+      if (!slowMo.wave2 && u >= 0.35) {
+        slowMo.wave2 = true;
+        fx.shockwave(slowMo.kx, slowMo.ky, 0xffd23f, 3.4, 0.55);
+        fx.flash('#ffffff', 0.35, 160);
+      }
+    }
+    tMs += effDt;
+    if (!paused) sim.update(effDt);
+    sync(paused ? 0 : effDt);
+    backdrop.update(effDt); if (!paused) fx.update(effDt);
     hud.update(sim, tMs);
-    camera.position.copy(camBase).add(fx.shakeOff); camera.lookAt(camTarget);
+    if (slowMo && zoom > 0) {
+      camLook.set(wx(slowMo.kx) * zoom, 0, camTarget.z + (wz(slowMo.ky) - camTarget.z) * zoom);
+      camera.position.copy(camBase).lerp(camLook, zoom * 0.55).add(fx.shakeOff);
+      camera.lookAt(camLook);
+    } else {
+      camera.position.copy(camBase).add(fx.shakeOff); camera.lookAt(camTarget);
+    }
     gl.render(scene, camera);
     q.update(dt / 1000, dt);
     window.__hunt = { fps: 1000 / Math.max(1, dt), calls: gl.info.render.calls };

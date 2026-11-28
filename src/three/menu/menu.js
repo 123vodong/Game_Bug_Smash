@@ -16,7 +16,7 @@ import { loadMatch, clearMatch, fetchMe, apiUrl } from '../../core/Identity.js';
 import { CHAMPIONS, isChampionId } from '../../../shared/moba/champions.js';
 import { STORY_FLOORS, STORY_DEFAULT_CHAMP, nextStoryFloor, fmtRunTime } from '../../story2/catalog.js';
 import { t, onLangChange } from '../../core/I18n.js';
-import { h, openLevels, openSettings, openCareer, openLeaderboard, openWelcome, modalOpen, toast, getMenu3d } from './panels.js';
+import { h, openLevels, openSettings, openCareer, openLeaderboard, openWelcome, modalOpen, toast, getMenu3d, switchRenderer } from './panels.js';
 
 let cssLoaded = false;
 function loadCss() {
@@ -77,7 +77,15 @@ export async function startMenu({ params = new URLSearchParams(location.search),
   const dailyTitle = h('h3', null);
   L(dailyTitle, 'main.daily');
 
-  const top = h('div', { class: 'bsm-top' }, h('span'), h('button', { class: 'bsm-icobtn', 'aria-label': 'Mute', id: 'bsm-mute', onclick: () => toggleMute() }, AudioManager.isMuted?.() ? '🔇' : '🔊'));
+  const rendBtn = h('button', {
+    class: 'bsm-icobtn',
+    id: 'bsm-renderer',
+    title: '3D (beta): now your bugs cast shadows.',
+    'aria-label': 'Switch to classic 2D renderer',
+    style: 'padding:0 12px;font:900 12px "Arial Black",sans-serif;border-color:#00d9ff88;color:#7ec8ff;display:inline-flex;align-items:center;gap:6px',
+    onclick: () => { AudioManager.uiClick?.(); switchRenderer('2d'); },
+  }, '🧊 3D (beta)');
+  const top = h('div', { class: 'bsm-top' }, rendBtn, h('button', { class: 'bsm-icobtn', 'aria-label': 'Mute', id: 'bsm-mute', onclick: () => toggleMute() }, AudioManager.isMuted?.() ? '🔇' : '🔊'));
   const careerLine = h('button', { class: 'bsm-link bsm-career', onclick: () => panel(() => openCareer({ onClose: after })) });
   const nameBtn = h('button', { class: 'bsm-link', style: 'color:#aab0c0', onclick: () => rename() });
   const about = L(h('button', { class: 'bsm-link', onclick: () => panel(() => openSettings({ tab: 'about', onClose: after, onBackdrop: setBackdrop })) }), 'main.about');

@@ -112,6 +112,19 @@ const CREDITS = ['BUG SMASH: Deadline Hunter', '', 'A tiny office comedy about f
 const MENU3D_KEY = 'bs.menu3d';
 export const getMenu3d = () => { try { const v = localStorage.getItem(MENU3D_KEY); return v === 'med' || v === 'off' ? v : 'low'; } catch (_) { return 'low'; } };
 
+export function switchRenderer(mode) {
+  const target = mode === '3d' ? '3d' : '2d';
+  try { localStorage.setItem('bs.renderer', target); } catch (_) { /* private mode */ }
+  const cur = new URLSearchParams(location.search);
+  const next = new URLSearchParams();
+  const sc = cur.get('scene');
+  if (sc) next.set('scene', sc);
+  const srv = cur.get('server');
+  if (srv) next.set('server', srv);
+  next.set('renderer', target);
+  location.href = `${location.pathname}?${next.toString()}`;
+}
+
 function toggle(on, fn) {
   const b = h('button', { class: 'bsm-sw' + (on ? ' on' : ''), role: 'switch', 'aria-checked': String(!!on) });
   b.onclick = () => { on = !on; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); click(); fn(on); };
@@ -143,6 +156,9 @@ export function openSettings({ tab = 'settings', onClose, onBackdrop } = {}) {
           setRow(t('set.shake'), t('set.shakeSub'), toggle(s.shake, (on) => { SaveManager.setSettings({ shake: on }); fxPrefsChanged(); })),
           setRow(t('set.flashes'), t('set.flashesSub'), toggle(s.flashes, (on) => { SaveManager.setSettings({ flashes: on }); fxPrefsChanged(); })),
           setRow(t('set.fx'), t('set.fxSub'), seg([['auto', 'AUTO'], ['high', 'HIGH'], ['low', 'LOW']], SaveManager.getTeamFx(), (id) => SaveManager.setTeamFx(id))),
+          setRow('3D Renderer (Beta)', 'Now your bugs cast shadows. Off = classic 2D.', toggle(true, (on) => {
+            if (!on) switchRenderer('2d');
+          })),
           setRow('Menu backdrop (3D)', 'Low = default, light on phones. Off = plain gradient.', seg([['low', 'LOW'], ['med', 'MED'], ['off', 'OFF']], getMenu3d(), (id) => {
             try { localStorage.setItem(MENU3D_KEY, id); } catch (_) { /* private mode */ }
             onBackdrop?.(id);

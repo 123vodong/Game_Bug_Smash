@@ -11,11 +11,13 @@ export class FrameClock {
 }
 // ServerClock: smallest-RTT offset, same algorithm as the TeamModeScene 'time' handler.
 export class ServerClock {
-  constructor() { this.offset = 0; this.bestRtt = Infinity; this.set = false; }
+  constructor() { this.offset = 0; this.bestRtt = Infinity; this.lastRtt = null; this.set = false; }
   // sample(msg{t,serverNow}) with msg.t = our Date.now() at send time
   sample(m, now = Date.now()) {
     if (!m || !Number.isFinite(m.serverNow) || !Number.isFinite(m.t)) return false;
     const rtt = now - m.t; if (rtt < 0 || rtt > 30000) return false;
+    this.lastRtt = rtt;
+    if (typeof window !== 'undefined' && window.__bsPerf) window.__bsPerf.setPing(rtt);
     if (rtt < this.bestRtt) { this.bestRtt = rtt; this.offset = m.serverNow + rtt / 2 - now; this.set = true; return true; }
     return false;
   }

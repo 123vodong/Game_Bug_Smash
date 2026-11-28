@@ -51,8 +51,10 @@ export function createTarget({ parent }) {
     if (s) {
       if (!s.alive) { set(null); return false; }
       const rel = s.team === myTeam ? 'ally' : 'enemy';
-      set({ name: s.kind === 'core' ? 'Production Server' : 'Firewall Tower', sub: s.invulnerable ? 'INVULNERABLE' : rel.toUpperCase(), rel, hp: s.hp, maxHp: s.maxHp, mana: 0, maxMana: 0,
-        stats: s.kind === 'core' ? 'Core Objective · Destroy to win' : 'Firewall · hits whoever walks in uninvited' });
+      const towerStats = `ATK ${Math.round(s.atk || 120)} · RNG ${Math.round(s.range || 600)}${s.invulnerable ? ' · 🛡️ INVULNERABLE' : ''}`;
+      const coreStats = s.invulnerable ? 'Core Objective · 🛡️ INVULNERABLE' : 'Core Objective · Destroy to win';
+      set({ name: s.kind === 'core' ? 'Production Server' : 'Firewall Tower', sub: s.invulnerable ? '🛡️ INVULNERABLE' : rel.toUpperCase(), rel, hp: s.hp, maxHp: s.maxHp, mana: 0, maxMana: 0,
+        stats: s.kind === 'core' ? coreStats : towerStats });
       return true;
     }
     set(null); return false;

@@ -273,6 +273,7 @@ export class OfflineSim {
       _streak: 0, _activeCd: 0, _stasisUntil: 0, _castCount: 0, _lastTargetId: '', _cacheStacks: 0, _swipeReady: false, _gradStacks: 0, _gradUntil: 0, _auditUntil: 0,
       _mrPen: 0, _manaRegen: 0, _ccChainCount: 0, _ccChainUntil: 0, _ccImmuneUntil: 0, _wardCd: 0, _stealthUntil: 0, _servoOverdriveUntil: 0, _prefetchUntil: 0,
       augments: [], augmentOffer: null, _augNextIdx: 0, _augCd: {}, _lastQAt: 0, _cleaveReady: false, _lastStandUntil: 0, _wasInBush: false,
+      _bush: '', inBush: '',
     };
     this._kitInit(c);
     if (isBot) this._autoSpendSkills(c);
@@ -520,7 +521,7 @@ export class OfflineSim {
   // ───────────────────────── v4+: sight / fog-of-war + bushes ─────────────────────────
   _updateBushes() {
     const st = this.state;
-    st.champions.forEach((c) => { c._bush = c.dead ? '' : this.world.bushAt(c.x, c.y); c.inBush = c._bush; });
+    st.champions.forEach((c) => { c._bush = c.dead ? '' : (this.world.bushAt(c.x, c.y) || ''); c.inBush = !!c._bush; });
     st.units.forEach((u) => { u._bush = u.alive ? this.world.bushAt(u.x, u.y) : ''; });
     const me = st.champions.get(this.localId), team = me?.team || 'blue';
     this._visC.clear(); this._visU.clear();
@@ -2326,9 +2327,11 @@ export class OfflineSim {
       }
       free.push({ x, y }); last = { x, y };
     }
-    if (run >= 0) { // the target point is inside terrain: land on the nearest free cell if close enough and the run was thin enough
-      const q = this.nav.nearestFree(x1, y1, r);
-      if ((n - run + 1) * gap <= maxWall && Math.hypot(q.x - x1, q.y - y1) <= CCT.PHASE_LAND_SEARCH_PX) return { x: q.x, y: q.y, crossed: true, free };
+    if (run >= 0) { // the target point is inside terrain: cross to the far side if the wall is thin enough
+      const q = this.nav.blinkLanding(x0, y0, x1, y1, r, maxWall);
+      if ((n - run + 1) * gap <= maxWall && !this.nav.isBlocked(q.x, q.y, r) && Math.hypot(q.x - x1, q.y - y1) <= maxWall) {
+        return { x: q.x, y: q.y, crossed: true, free };
+      }
       return { x: last.x, y: last.y, crossed, free };
     }
     return { x: x1, y: y1, crossed, free };
@@ -2926,7 +2929,7 @@ export class OfflineSim {
           if (sk.behindTarget) {
             const x0 = c.x, y0 = c.y, d = dist(c, e) || 1, ux = (e.x - x0) / d, uy = (e.y - y0) / d;
             const b = this.world.clampToMap(e.x + ux * (this._radius(e) + CHAMP_RADIUS + 14), e.y + uy * (this._radius(e) + CHAMP_RADIUS + 14));
-            const bp = this.nav.nearestFree(b.x, b.y, CHAMP_RADIUS);
+            const bp = this.nav.blinkLanding(x0, y0, b.x, b.y, CHAMP_RADIUS);
             c.x = bp.x; c.y = bp.y; c._order = null; c._nav = null;
             fx({ k: 'blink', sid: c.id, x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(c.x), y1: Math.round(c.y) });
           }
@@ -2953,7 +2956,7 @@ export class OfflineSim {
             : Math.max(0, Math.min(sk.range, d - (this._radius(tgt) + CHAMP_RADIUS)));
           want = this.world.clampToMap(x0 + ((tgt.x - x0) / d) * reach, y0 + ((tgt.y - y0) / d) * reach);
         } else want = towardRange(sk.range);
-        let p = sk.behindTarget ? this.nav.nearestFree(want.x, want.y, CHAMP_RADIUS) : this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS);
+        let p = sk.behindTarget ? this.nav.blinkLanding(x0, y0, want.x, want.y, CHAMP_RADIUS) : this.nav.clipMove(x0, y0, want.x, want.y, CHAMP_RADIUS);
         if (!sk.behindTarget && !sk.phase) { const co = this._clipObjs(x0, y0, p.x, p.y, CHAMP_RADIUS); if (co.hit) p = { x: co.x, y: co.y }; } // barricades / barriers stop dashes
         let phased = null;
         if (sk.phase && !sk.behindTarget) { // v6.1 phase dash: crosses thin walls, barriers and barricades; lands on a free cell
@@ -2996,8 +2999,8 @@ export class OfflineSim {
         break;
       }
       case 'blink': {
-        const x0 = c.x, y0 = c.y, tr0 = towardRange(sk.range), co = this._clipObjs(x0, y0, tr0.x, tr0.y, CHAMP_RADIUS); // v6.1: blinks stop at a barrier / barricade too
-        const tr = co.hit ? { x: co.x, y: co.y } : tr0, p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
+        const x0 = c.x, y0 = c.y, tr0 = towardRange(sk.range);
+        const p = this.nav.blinkLanding(x0, y0, tr0.x, tr0.y, CHAMP_RADIUS);
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         if (sk.invisMs > 0) c._stealthUntil = t + sk.invisMs;
         if (sk.untarget) this._untargetFor(c, sk.untarget.ms);
@@ -3061,7 +3064,7 @@ export class OfflineSim {
       }
       case 'shadow': {
         if (sk.shadow?.mode === 'place') {
-          const tr = towardRange(sk.range), p = this.nav.nearestFree(tr.x, tr.y, CHAMP_RADIUS);
+          const tr = towardRange(sk.range), p = this.nav.blinkLanding(c.x, c.y, tr.x, tr.y, CHAMP_RADIUS);
           this._shadowSet(c, p.x, p.y, sk.shadow.ms || 6000);
         } else { // swap
           const sh = c._shadow, cx = c.x, cy = c.y;
@@ -3158,7 +3161,7 @@ export class OfflineSim {
         if (c.rootedUntil > t || c._dispUntil > t || !Number.isFinite(m.x) || !Number.isFinite(m.y)) return false;
         const dx = m.x - c.x, dy = m.y - c.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, sp.range);
         const aim = this.world.clampToMap(c.x + (dx / d) * r, c.y + (dy / d) * r);
-        const p = this.nav.nearestFree(aim.x, aim.y, CHAMP_RADIUS); // crosses walls
+        const p = this.nav.blinkLanding(c.x, c.y, aim.x, aim.y, CHAMP_RADIUS); // crosses thin walls cleanly
         x0 = c.x; y0 = c.y;
         c.x = p.x; c.y = p.y; c._order = null; c._nav = null;
         this._placePet(c);

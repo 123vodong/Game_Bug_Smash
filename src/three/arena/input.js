@@ -2,6 +2,8 @@
 // SPACE smash, Q/W/E/R skills, arrow keys, touch joystick (left half). Server stays authoritative:
 // we send move{x,y} at ~20 Hz and send smash{id|targetSid|boss,kind} / castSkill{slot,dirX,dirY}.
 import { WORLD_W, WORLD_H } from './source.js';
+import { AudioManager } from '../../core/AudioManager.js';
+import { SaveManager } from '../../core/SaveManager.js';
 
 const MOVE_SPEED = 240;            // px/s, mirrors server client speed (MultiPlayScene MOVE_SPEED)
 const SMASH_REACH = 96;            // mirrors server SMASH_RADIUS
@@ -102,8 +104,11 @@ export function createArenaInput({ canvas, source, view, hudRoot, onMenu = null,
   }
 
   // ----- pointer / keyboard -----
+  let audioPrimed = false;
+  const primeAudio = () => { if (audioPrimed) return; audioPrimed = true; try { AudioManager.prime?.(); } catch (_) { /* audio optional */ } };
   const rect = () => canvas.getBoundingClientRect();
   function onDown(e) {
+    primeAudio();
     if (dead || (isTouch && e.pointerType === 'touch' && e.clientX < rect().left + rect().width * 0.4 && !e.target.closest('[data-bsa-tap]') && false)) return;
     if (e.pointerType === 'touch' && e.clientX < window.innerWidth * 0.5 && stick.id < 0) { stick.id = e.pointerId; stick.ox = e.clientX; stick.oy = e.clientY; stick.x = stick.y = 0; showStick(e.clientX, e.clientY); try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } return; }
     if (e.button > 0) return;
@@ -128,7 +133,9 @@ export function createArenaInput({ canvas, source, view, hudRoot, onMenu = null,
   function onKeyDown(e) {
     if (dead || chatOpen) return;
     const tag = (e.target && e.target.tagName) || ''; if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    primeAudio();
     const k = e.key;
+    if (e.code === 'KeyM') { try { const m = AudioManager.toggleMute(); SaveManager.setMuted(m); } catch (_) { /* ignore */ } return; }
     if (k === ' ') { e.preventDefault(); smash(); return; }
     if (k === 'q' || k === 'Q') return void cast('q');
     if (k === 'w' || k === 'W') return void cast('w');

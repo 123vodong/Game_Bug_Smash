@@ -1,7 +1,7 @@
 // hud/augments.js - Code Augment picker (levels 5/10/15): 3 cards, per-card reroll, rarity colours, synergy hints, keys 1-3 / R.
 // createAugments({root, source, toast}) -> {update(me, ctx), isOpen(), dispose()}
 // Offer comes from me.augmentOffer (offline sim, object) or me.augmentOfferJson (server schema). Messages: 'augmentPick' {id}, 'augmentReroll' {slot} | {}.
-// Like the 2D game the picker opens by itself while you are dead or at your fountain (never mid-fight); otherwise a pulsing "AUGMENT READY" pill opens it.
+// Like the 2D game the picker ONLY opens while you are dead (never at fountain / mid-fight); once opened it stays open until you pick, unless a newer level offer replaces it while alive.
 // While open isOpen() is true; hud.js exposes it through hud.blocked() / scoreboardOpen() so Input.isBlocked() pauses orders and hotkeys.
 import { AUGMENTS, RARITY_COLOR, AUGMENT_SYNERGIES } from '../../../shared/moba/augments.js';
 import { esc } from './tooltip.js';
@@ -11,25 +11,26 @@ const hex = (n) => '#' + ((n >>> 0) & 0xffffff).toString(16).padStart(6, '0');
 const QUIPS = { 5: 'Merge request #1: approved without review.', 10: 'Senior engineer unlocked. Meetings +3.', 15: 'Principal level. Still debugging prod on Friday.' };
 
 export function createAugments({ root, source, toast = () => {} }) {
-  const pill = el(root, 'button', 'bsx-augpill bsh-pop', ''); pill.hidden = true;
+  const pill = el(root, 'div', 'bsx-augpill bsh-pop', '');
+  pill.style.pointerEvents = 'none';
+  pill.style.opacity = '0.85';
+  pill.hidden = true;
   const modal = el(root, 'div', 'bsx-aug bsh-pop'); modal.hidden = true;
-  let offer = null, owned = [], shown = false, dismissed = false, sig = '', lastJson = '', lastCsv = '', ownedCache = [], disposed = false, lastLevel = 0;
+  let offer = null, owned = [], shown = false, canShow = false, shownLv = 0, sig = '', lastJson = '', lastCsv = '', ownedCache = [], disposed = false, lastLevel = 0;
   const send = (type, msg) => { try { source.send(type, msg || {}); } catch (_) { /* closed */ } };
   const pick = (id) => { if (!offer || !offer.choices.includes(id)) return; send('augmentPick', { id }); toast(`⚡ Augment installed: ${AUGMENTS[id] ? AUGMENTS[id].name : id}`, '#ffd23f', 2000); close(true); };
   const reroll = (slot) => { if (!offer) return; send('augmentReroll', Number.isInteger(slot) ? { slot } : {}); sig = ''; };
-  function close(done) { shown = false; modal.hidden = true; sig = ''; if (done) { offer = null; dismissed = false; } else dismissed = true; }
+  function close(done) { shown = false; modal.hidden = true; sig = ''; if (done) { offer = null; canShow = false; shownLv = 0; } }
 
   modal.addEventListener('click', (e) => {
     const t = e.target.closest('[data-a]'); if (!t) return;
-    if (t.dataset.a === 'pick') pick(t.dataset.v); else if (t.dataset.a === 'reroll') reroll(t.dataset.v === '' ? undefined : Number(t.dataset.v)); else if (t.dataset.a === 'later') close(false);
+    if (t.dataset.a === 'pick') pick(t.dataset.v); else if (t.dataset.a === 'reroll') reroll(t.dataset.v === '' ? undefined : Number(t.dataset.v));
   });
-  pill.addEventListener('click', () => { if (offer) { shown = true; dismissed = false; sig = ''; render(); } });
   const onKey = (e) => {
     if (!shown || !offer || e.repeat) return;
     const i = e.code === 'Digit1' ? 0 : e.code === 'Digit2' ? 1 : e.code === 'Digit3' ? 2 : -1;
     if (i >= 0 && offer.choices[i]) { e.preventDefault(); e.stopPropagation(); pick(offer.choices[i]); }
     else if (e.code === 'KeyR' && !Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0) { e.preventDefault(); e.stopPropagation(); reroll(); }
-    else if (e.code === 'Escape') { e.stopPropagation(); close(false); }
   };
   window.addEventListener('keydown', onKey, true);
 
@@ -47,7 +48,7 @@ export function createAugments({ root, source, toast = () => {} }) {
     }).join('');
     const global = !Array.isArray(offer.slotRerolls) && (offer.rerolls || 0) > 0 ? `<button class="bsh-btn aug-rr big" data-a="reroll" data-v="">🎲 REROLL ALL [R] · ${offer.rerolls} left</button>` : '';
     const ownedRow = owned.length ? `<div class="aug-own">INSTALLED: ${owned.map((id) => AUGMENTS[id] ? `<span title="${esc(AUGMENTS[id].name)}">${AUGMENTS[id].icon || '⚡'}</span>` : '').join('')}</div>` : '';
-    modal.innerHTML = `<div class="aug-box"><div class="aug-t">⚡ CODE AUGMENT · Lv ${offer.level}</div><div class="aug-s">${esc(QUIPS[offer.level] || 'Choose one patch. No rollbacks.')} The match is paused for you (keys 1-3).</div><div class="aug-cards">${cards}</div><div class="aug-f">${global}<button class="bsh-btn aug-later" data-a="later">decide later</button></div>${ownedRow}</div>`;
+    modal.innerHTML = `<div class="aug-box"><div class="aug-t">⚡ CODE AUGMENT · Lv ${offer.level}</div><div class="aug-s">${esc(QUIPS[offer.level] || 'Choose one patch. No rollbacks.')} Pick one (keys 1-3).</div><div class="aug-cards">${cards}</div>${global ? `<div class="aug-f">${global}</div>` : ''}${ownedRow}</div>`;
   }
 
   function parseOffer(me) {
@@ -63,15 +64,20 @@ export function createAugments({ root, source, toast = () => {} }) {
     update(me, ctx) {
       if (disposed) return;
       const o = me ? parseOffer(me) : null;
-      if (!o || !o.choices.length) { offer = null; if (shown) close(true); pill.hidden = true; dismissed = false; lastLevel = 0; return; }
-      if (offer && offer.level !== o.level) { dismissed = false; }
+      if (!o || !o.choices.length) { offer = null; canShow = false; shownLv = 0; lastLevel = 0; if (shown) close(true); pill.hidden = true; return; }
       offer = o; owned = parseOwned(me);
-      if (lastLevel !== o.level) { lastLevel = o.level; toast(`⚡ Code Augment ready (Lv ${o.level})`, '#ffd23f', 2200); }
-      const safe = !!(me.dead || (ctx && ctx.canShop));
-      if (!shown && safe && !dismissed && ctx && ctx.phase === 'playing') { shown = true; sig = ''; }
-      if (shown) { modal.hidden = false; render(); }
+      if (lastLevel !== o.level) { lastLevel = o.level; toast(`⚡ Code Augment Lv ${o.level} — mở khi hồi sinh`, '#ffd23f', 2200); }
+      if (shownLv && shownLv !== o.level && !me.dead) { canShow = false; shownLv = 0; }
+      const safe = !!me.dead;
+      if (safe && ctx && ctx.phase === 'playing') { canShow = true; shownLv = o.level; }
+      if (canShow) {
+        if (!shown) { shown = true; sig = ''; }
+        modal.hidden = false; render();
+      } else if (shown) {
+        close(false);
+      }
       const showPill = !shown; if (pill.hidden === showPill) pill.hidden = !showPill;
-      if (showPill) { const t = `⚡ AUGMENT READY (Lv ${o.level}) - click`; if (pill._t !== t) { pill._t = t; pill.textContent = t; } }
+      if (showPill) { const t = `⚡ AUGMENT Lv ${o.level} — mở khi hồi sinh`; if (pill._t !== t) { pill._t = t; pill.textContent = t; } }
     },
     isOpen: () => shown,
     dispose() { disposed = true; window.removeEventListener('keydown', onKey, true); pill.remove(); modal.remove(); },

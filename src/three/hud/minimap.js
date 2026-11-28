@@ -13,6 +13,14 @@ export function createMinimap({ source, project, parent, hooks = null }) {
   const world = source.world || {};
   const WW = world.w || 6000, WH = world.h || 6000; // fallback mirrors shared/moba/map.js MAP_W/H
   let size = 0, k = 1, aim = null, lastSend = 0, drag = false;
+  const gpings = [];
+  function addGping(m) {
+    if (!m || ![m.x0, m.y0, m.x1, m.y1].every(Number.isFinite)) return;
+    while (gpings.length >= 4) gpings.shift();
+    const now = performance.now(), ms = Math.max(600, Number.isFinite(m.ms) ? Math.min(2000, m.ms) : 600);
+    gpings.push({ x0: m.x0, y0: m.y0, x1: m.x1, y1: m.y1, born: now, until: now + ms });
+  }
+  const offFx = source && source.on ? source.on('fx', (m) => { if (m && m.k === 'gping') addGping(m); }) : null;
 
   function layout() {
     const s = Math.round(root.clientWidth) || 200;
@@ -115,12 +123,29 @@ export function createMinimap({ source, project, parent, hooks = null }) {
     });
     const v = viewBox(view, me);
     if (v) { g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 1; g.strokeRect(v.x * k, v.y * k, v.width * k, v.height * k); }
+    if (gpings.length) {
+      const now = performance.now();
+      for (let i = gpings.length - 1; i >= 0; i--) {
+        const gp = gpings[i];
+        if (now >= gp.until) { gpings.splice(i, 1); continue; }
+        const f = Math.max(0, Math.min(1, (gp.until - now) / (gp.until - gp.born)));
+        g.save();
+        g.globalAlpha = 0.35 + 0.65 * f;
+        g.strokeStyle = '#ff3b1f'; g.lineWidth = 3.5;
+        g.beginPath(); g.moveTo(gp.x0 * k, gp.y0 * k); g.lineTo(gp.x1 * k, gp.y1 * k); g.stroke();
+        g.strokeStyle = '#ffb347'; g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(gp.x0 * k, gp.y0 * k); g.lineTo(gp.x1 * k, gp.y1 * k); g.stroke();
+        g.restore();
+      }
+    }
     if (aim) { g.strokeStyle = g.fillStyle = '#ff5e5e'; g.lineWidth = 2; g.beginPath(); g.arc(aim.x * k, aim.y * k, 6, 0, 6.3); g.stroke(); g.fillRect(aim.x * k - 1.5, aim.y * k - 1.5, 3, 3); }
   }
 
   return {
-    el: root, draw, setAim(p) { aim = p ? { x: p.x, y: p.y } : null; },
+    el: root, draw, addGping, setAim(p) { aim = p ? { x: p.x, y: p.y } : null; },
     dispose() {
+      if (typeof offFx === 'function') offFx();
+      gpings.length = 0;
       dyn.removeEventListener('pointerdown', down); dyn.removeEventListener('pointermove', move);
       dyn.removeEventListener('pointerup', up); dyn.removeEventListener('pointercancel', up); dyn.removeEventListener('contextmenu', noCtx);
       root.remove();

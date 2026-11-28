@@ -4,11 +4,14 @@
 // params: { name, hat, server (ws url override), q ('low'|'med'|'high') }. Needs window.Colyseus (index.html loads it).
 import { ensureImportMap } from '../vendor/importmap.js';
 import { SaveManager } from '../../core/SaveManager.js';
+import { AudioManager } from '../../core/AudioManager.js';
+import { Progress } from '../../core/Progress.js';
 import { hatById, isHatUnlocked } from '../../data/cosmetics.js';
 import { joinError } from '../../core/Identity.js';
 
 export async function launchArena({ canvas = null, onExit = null, params = {} } = {}) {
   ensureImportMap();
+  try { AudioManager.applySaved?.(); } catch (_) { /* audio optional */ }
   const [{ createArenaSource }, { createArenaView }, { createArenaInput }, { createArenaHud }] = await Promise.all([
     import('./source.js'), import('./view.js'), import('./input.js'), import('./hud.js'),
   ]);
@@ -18,16 +21,32 @@ export async function launchArena({ canvas = null, onExit = null, params = {} } 
     canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;display:block;z-index:1;background:#0a0e16;touch-action:none';
     document.body.appendChild(canvas);
   }
-  const name = (params.name || SaveManager.getPlayerName?.() || `Guest-${1000 + Math.floor(Math.random() * 9000)}`).slice(0, 16);
-  let hat = params.hat != null ? params.hat : (SaveManager.getHat?.() || '');
+  const pGet = (k) => (params && typeof params.get === 'function' ? params.get(k) : params?.[k]);
+  const pName = pGet('name'), pHat = pGet('hat'), pServer = pGet('server'), pQ = pGet('q');
+  const name = (pName || SaveManager.getPlayerName?.() || `Guest-${1000 + Math.floor(Math.random() * 9000)}`).slice(0, 16);
+  let hat = pHat != null ? pHat : (SaveManager.getHat?.() || '');
   if (hat && !isHatUnlocked(hatById(hat), SaveManager.getCareer?.() || {})) hat = '';
-  const source = createArenaSource({ name, hat, url: params.server || '' });
-  const view = createArenaView({ canvas, source, quality: params.q });
-  let hud = null, raf = 0, disposed = false, lastT = performance.now();
+  const source = createArenaSource({ name, hat, url: pServer || '' });
+  const view = createArenaView({ canvas, source, quality: pQ || undefined });
+  let hud = null, raf = 0, disposed = false, lastT = performance.now(), joined = false, recorded = false;
+  const offs = [
+    source.on('welcome', () => { joined = true; }),
+    source.on('kill', () => { try { Progress.add('bugsSmashed', 1, { daily: 'bugsSmashed' }); } catch (_) { /* ignore */ } }),
+  ];
+  function recordSession() {
+    if (recorded || !joined) return;
+    recorded = true;
+    try { Progress.add('mpGames', 1, { daily: 'mpGames' }); } catch (_) { /* ignore */ }
+  }
   const input = createArenaInput({ canvas, source, view, hudRoot: document.body, onMenu: () => hud && hud.showModal('Break room', 'Clock out and leave the arena?', [{ label: 'KEEP SMASHING', fn: () => hud.closeModal() }, { label: 'CLOCK OUT', fn: () => { hud.closeModal(); exit(); } }]), onChatFocus: () => hud && hud.openChat() });
   hud = createArenaHud({ source, view, input, root: document.body, onExit: () => exit() });
 
-  function exit() { dispose(); if (onExit) onExit(); }
+  function exit() {
+    recordSession();
+    dispose();
+    if (onExit) onExit();
+    else location.href = location.pathname + '?scene=menu&renderer=3d';
+  }
   const onResize = () => view.resize();
   window.addEventListener('resize', onResize);
   function loop(t) {
@@ -55,7 +74,8 @@ export async function launchArena({ canvas = null, onExit = null, params = {} } 
     }
   }
   function dispose() {
-    if (disposed) return; disposed = true; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize);
+    if (disposed) return; disposed = true; recordSession(); cancelAnimationFrame(raf); window.removeEventListener('resize', onResize);
+    offs.forEach((f) => { try { f(); } catch (_) { /* ignore */ } });
     try { input.dispose(); hud.dispose(); source.dispose(); view.dispose(); } catch (e) { console.error(e); }
     if (own) canvas.remove();
     if (window.__arena === api) window.__arena = null;

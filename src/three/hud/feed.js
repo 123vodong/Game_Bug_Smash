@@ -1,5 +1,7 @@
 // Feed, chat, announce banner, toasts, coaching tip and the rollback vote prompt (C6).
 // Subscribes to source.on('feed'|'announce'|'chat'|'chatHistory'|'vote'|'voteEnd'|'voteDeny'|'dummyDps'); sends 'chat' and 'vote'.
+import { ROLLBACK_FROM_MS } from '../../../shared/moba/rules.js';
+
 const FEED_MAX = 6, FEED_TTL = 10000, CHAT_MAX = 7, CHAT_TTL = 14000;
 const VOTE_MS = 20000; // mirrors shared/moba/rules.js ROLLBACK_VOTE_MS (bar length only)
 const VOTE_DENY = {
@@ -41,7 +43,15 @@ export function createFeed({ source, root, left, now: clock = () => Date.now() }
   const closeChat = () => { input.hidden = true; input.blur(); };
   const onInputKey = (e) => {
     e.stopPropagation(); // typing must not trigger Q/W/E/R etc. in Input.js (window listeners)
-    if (e.key === 'Enter') { const text = input.value.trim(); if (text) { if (/^\/(yes|no)$/i.test(text)) castVote(/yes/i.test(text)); else source.send('chat', { text: text.slice(0, 120) }); } closeChat(); } else if (e.key === 'Escape') closeChat();
+    if (e.key === 'Enter') {
+      const text = input.value.trim();
+      if (text) {
+        if (/^\/(rollback|ff|surrender)$/i.test(text)) startVote();
+        else if (/^\/(yes|no)$/i.test(text)) castVote(/yes/i.test(text));
+        else source.send('chat', { text: text.slice(0, 120) });
+      }
+      closeChat();
+    } else if (e.key === 'Escape') closeChat();
   };
   input.addEventListener('keydown', onInputKey); input.addEventListener('keyup', (e) => e.stopPropagation());
   const onGlobalKey = (e) => { if (dead || e.key !== 'Enter' || !input.hidden || e.repeat) return; const t = e.target; if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return; openChat(); };
@@ -123,8 +133,14 @@ export function createFeed({ source, root, left, now: clock = () => Date.now() }
     vbar.style.width = `${Math.max(0, Math.min(1, lm / VOTE_MS)) * 100}%`;
     vmine.textContent = mine == null ? '' : `you ${mine === 'voted' ? 'already voted' : mine ? 'voted ✔ yes' : 'voted ✖ no'} · ${Math.ceil(lm / 1000)}s left`;
   }
-  const onVoteKey = (e) => { if (dead || !vote || mine != null || (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))) return; if (e.code === 'KeyN') castVote(false); };
-  addEventListener('keydown', onVoteKey); // Y is shared with the camera lock (Input.js); the YES button / /yes cover it. N is vote-only.
+  const onVoteKey = (e) => {
+    if (dead || !vote || (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))) return;
+    if (e.code === 'KeyY' || e.code === 'KeyN') {
+      e.stopPropagation();
+      if (mine == null) castVote(e.code === 'KeyY');
+    }
+  };
+  addEventListener('keydown', onVoteKey, true);
 
   // ---- source subscriptions (every callback guarded) ----
   const sub = (type, fn) => { const off = source.on(type, (m) => { if (dead) return; fn(m); }); if (typeof off === 'function') offs.push(off); };
@@ -155,12 +171,14 @@ export function createFeed({ source, root, left, now: clock = () => Date.now() }
       while (feed.length && n - feed[0]._born > FEED_TTL) { const d = feed.shift(); d.classList.add('bsh-fade'); later(() => d.remove(), 300); }
       while (chat.length && n - chat[0]._born > CHAT_TTL) { const d = chat.shift(); d.classList.add('bsh-fade'); later(() => d.remove(), 300); }
       if (vote) { if (srvNow > vote.endsAt + 2500 || phase !== 'playing') { vote = null; mine = null; } renderVote(); }
-      rbBtn.hidden = !(phase === 'playing' && source.kind !== 'offline' && !vote);
+      const st = source.state && source.state();
+      const elapsed = st && st.startedAt ? (srvNow - st.startedAt) : 0;
+      rbBtn.hidden = !(phase === 'playing' && source.kind !== 'offline' && !vote && elapsed >= ROLLBACK_FROM_MS);
     },
     dispose() {
       dead = true; offs.forEach((o) => { try { o(); } catch (_) { /* ignore */ } }); offs.length = 0;
       timers.forEach(clearTimeout); timers.clear();
-      removeEventListener('keydown', onGlobalKey); removeEventListener('keydown', onVoteKey);
+      removeEventListener('keydown', onGlobalKey); removeEventListener('keydown', onVoteKey, true);
       for (const e of [feedEl, chatEl, bannerEl, toastEl, status, tipEl, voteEl, rbBtn]) e.remove();
     },
   };

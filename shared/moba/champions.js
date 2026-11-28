@@ -241,7 +241,7 @@ export const CHAMPIONS = {
            range: 900, summon: { kind: 'drone', ms: 7000, speed: 520, vision: 650, maxActive: 1, mark: { tag: 'spotted', ms: 3000, max: 1 } }, bot: 'skip',
            desc: 'Flies a drone toward the aim for 7s. It sees through bushes and spots enemies (3s) so your shots hit harder.' },
       e: { name: 'Edge Case', icon: '↗️', type: 'dash', mana: 45, cd: 11, color: 0xffffff,
-           range: 400, hitRadius: 120, dmg: { base: 45, perLevel: 10, ad: 0.5 }, slow: { pct: 0.4, ms: 1600 },
+           range: 400, hitRadius: 120, phase: { maxWall: 200 }, dmg: { base: 45, perLevel: 10, ad: 0.5 }, slow: { pct: 0.4, ms: 1600 },
            desc: 'Vaults away and throws an edge-case net that damages and slows foes passed.' },
       r: { name: 'Regression Barrage', icon: '🎯', type: 'projectile', mana: 100, cd: 65, color: 0xff5e5e,
            global: true, windupMs: 450, range: 5600, speed: 2600, width: 120, champOnly: true, dmg: { base: 240, perLevel: 30, ad: 1.25 },
@@ -361,7 +361,7 @@ export const CHAMPIONS = {
            cycle: ['mop', 'bucket'], duration: 1500, buff: { msPct: 0.15 }, bot: 'skip',
            desc: 'Swaps between Mop stance (melee: sweep, slide, mop-up) and Bucket stance (ranged: toss, bubble, flood).' },
       e: { name: 'Mop Slide', icon: '🌊', type: 'dash', mana: 45, cd: 12, color: 0xbfe6ff,
-           range: 460, hitRadius: 70, dmg: { base: 45, perLevel: 10, ap: 0.4 }, slow: { pct: 0.25, ms: 1200 },
+           range: 460, hitRadius: 70, phase: { maxWall: 200 }, dmg: { base: 45, perLevel: 10, ap: 0.4 }, slow: { pct: 0.25, ms: 1200 },
            trail: { radius: 230, duration: 3000, tickMs: 500, dmg: { base: 12, perLevel: 3, ap: 0.08 }, slow: { pct: 0.45, ms: 700 } },
            stances: {
              bucket: { name: 'Soap Bubble', icon: '🫧', type: 'circle', mana: 55, cd: 11, color: 0x7ec8ff, fx: 'bubble',
@@ -453,7 +453,7 @@ export const CHAMPIONS = {
            range: 330, inner: 40, angle: 200, sweepMs: 260, delay: 80, dmg: { base: 70, perLevel: 16, ad: 0.85 }, healOnHit: { base: 45, perLevel: 10, hp: 0.04 },
            stances: {
              hotfix: { name: 'Hotfix', icon: '🩹', type: 'dash', mana: 30, cd: 4, color: 0xff3b8a, fx: 'hotfixSlash',
-                       range: 300, hitRadius: 100, dmg: { base: 60, perLevel: 14, ad: 0.9 }, slow: { pct: 0.25, ms: 800 },
+                       range: 300, hitRadius: 100, phase: { maxWall: 200 }, dmg: { base: 60, perLevel: 14, ad: 0.9 }, slow: { pct: 0.25, ms: 800 },
                        desc: 'Hotfix branch: a quick slashing dash through enemies. Short cooldown.' },
              feature: { name: 'Feature Creep', icon: '🌱', type: 'zone', mana: 45, cd: 8, color: 0x7ed957, fx: 'featureAura',
                         range: 0, radius: 280, duration: 2500, tickMs: 500, dmg: { base: 22, perLevel: 5, ad: 0.25 }, slow: { pct: 0.35, ms: 700 },
@@ -464,7 +464,7 @@ export const CHAMPIONS = {
            cycle: ['main', 'hotfix', 'feature'], duration: 3000, buff: { adPct: 0.1 }, bot: 'skip',
            desc: 'Cycles your branch: main (balanced), hotfix (fast, mobile, execute) or feature (tanky, area, team buffs). Q, E and R change with it.' },
       e: { name: 'git checkout -b', icon: '🌿', type: 'dash', mana: 50, cd: 11, color: 0xff3b8a,
-           range: 380, hitRadius: 90, dmg: { base: 50, perLevel: 12, ad: 0.6 }, recast: { ms: 3000, mode: 'again' },
+           range: 380, hitRadius: 90, phase: { maxWall: 200 }, dmg: { base: 50, perLevel: 12, ad: 0.6 }, recast: { ms: 3000, mode: 'again' },
            stances: {
              hotfix: { name: 'Cherry-pick', icon: '🍒', type: 'blink', mana: 40, cd: 8, color: 0xff3b8a, fx: 'cherryPick',
                        range: 450, desc: 'Hotfix branch: blinks 450 px instantly.' },
@@ -536,7 +536,7 @@ export const CHAMPIONS = {
            timebox: { ms: 4000, refundPct: 0.6, exclude: ['w', 'r'], buff: { adPct: 0.12, as: 0.15 } }, bot: 'self',
            desc: 'Opens a 4s timebox (+12% AD, +15% AS). When it ends, 60% of the cooldown of every Q and E you cast inside it is refunded.' },
       e: { name: 'Story Points', icon: '🃏', type: 'dash', mana: 45, cd: 10, color: 0xffffff,
-           range: 520, toTarget: true, killReset: true, hitRadius: 65, stopAtFirst: true, dmg: { base: 65, perLevel: 15, ad: 0.8 }, stun: { ms: 700 },
+           range: 520, toTarget: true, killReset: true, hitRadius: 65, stopAtFirst: true, phase: { maxWall: 200 }, dmg: { base: 65, perLevel: 15, ad: 0.8 }, stun: { ms: 700 },
            untarget: { ms: 350 },
            desc: 'Leaps onto a target to damage and stun (0.7s). You cannot be targeted while in the air. Killing a champion resets E cooldown.' },
       r: { name: 'All Hands Sprint', icon: '📣', type: 'allies', mana: 100, cd: 75, color: 0xff9800,
@@ -672,7 +672,7 @@ export const CHAMPIONS = {
     growth: { hp: 97,  mana: 34,  ad: 4.1, armor: 4, mr: 1.6,  as: 0.012 },
     skills: {
       q: { name: 'Ping', icon: '📶', type: 'dash', mana: 35, cd: 6, color: 0xff5252,
-           range: 560, toTarget: true, targets: 'enemy', hitRadius: 65, dmg: { base: 60, perLevel: 14, ad: 0.7 }, slow: { pct: 0.4, ms: 1500 },
+           range: 560, toTarget: true, targets: 'enemy', hitRadius: 65, phase: { maxWall: 200 }, dmg: { base: 60, perLevel: 14, ad: 0.7 }, slow: { pct: 0.4, ms: 1500 },
            detonate: { tag: 'paged', pctPerStack: 0.3 },
            desc: 'Pings a target and rushes onto it, slowing them 40%; +30% true damage if they are Paged. Works on monsters to hop between camps.' },
       w: { name: 'Page Everyone', icon: '📟', type: 'projectile', mana: 50, cd: 12, color: 0xffb347,

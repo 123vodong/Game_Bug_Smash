@@ -63,12 +63,13 @@ export function createFlipbooks(THREE, scene, { cap = 70, S = 0.01 } = {}) {
           it.h.obj.visible = true; if (it.fade) it.h.mat.opacity = it.a * Math.min(1, (it.dur * it.loops - it.t) / 0.25, it.t / 0.15 + 0.2); it.h.tex.repeat.set(1 / 8, 1 / sh.rows); it.h.tex.offset.set((f % 8) / 8, 1 - (Math.floor(f / 8) + 1) / sh.rows);
           if (it.follow) { const p = it.follow(); if (p) it.h.obj.position.set(p.x * S, it.z, p.y * S); }
         }
-      } else if (it.kill || it.t > 8 + it.dur) dead = true; // sheet never loaded: don't leak
+      } else if (it.t >= 0 && !it.kill) { it.w = (it.w || 0) + dt; it.t -= dt; if (it.w > 2.5) dead = true; } // sheet still loading: hold the animation so the first cast shows when it arrives
+      else if (it.kill || it.t > 8 + it.dur) dead = true;
       if (dead) { release(it); live[i] = live[live.length - 1]; live.pop(); }
     }
   }
   return {
-    flip, update, preload: (keys) => keys.forEach(sheet), ringKey, burstKey, get count() { return live.length; },
+    flip, update, preload: (keys) => keys.forEach(sheet), isReady: (k) => !!(sheets.get(k) && sheets.get(k).ready), ringKey, burstKey, get count() { return live.length; },
     dispose() { for (const it of live) release(it); live.length = 0; for (const l of free.values()) for (const h of l) { h.mat.dispose(); h.tex.dispose(); } free.clear(); for (const s of sheets.values()) s.tex.dispose(); sheets.clear(); planeGeo.dispose(); scene.remove(root); },
   };
 }
