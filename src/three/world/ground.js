@@ -77,6 +77,9 @@ vec3 gW; float gLane, gJ, gBase, gRiver;
 /** -> Mesh; mesh.userData.uniforms.uTime is advanced by the caller. */
 export function makeGround(world, aniso = 8, lite = false) {
   const W = (world && world.w) || MAP_W, H = (world && world.h) || MAP_W;
+  // Visual-only apron. Simulation and input remain clamped to world.w/world.h.
+  // Keeping this as one plane avoids extra draw calls while removing the hard map cut-off.
+  const apron = is5v5(world) ? 48 : 24;
   const uniforms = {
     tSplat: { value: makeSplat(world, W, H) },
     tCarpet: { value: tex('tex/dirty_carpet_diff.jpg', true, aniso) },
@@ -97,8 +100,11 @@ export function makeGround(world, aniso = 8, lite = false) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + GROUND_FRAG_HEAD)
       .replace('#include <map_fragment>', `
-        vec2 suv = vWPos.xz / uWorld;
+        vec2 suv = clamp(vWPos.xz / uWorld, vec2(0.0), vec2(1.0));
         vec4 sp = texture2D(tSplat, suv);
+        vec2 edgeDelta = max(max(-vWPos.xz, vWPos.xz - uWorld), vec2(0.0));
+        float outside = max(edgeDelta.x, edgeDelta.y);
+        float edgeBlend = smoothstep(0.0, 5.0, outside);
         gBase = sp.g;
         gLane = sp.r * (1.0 - gBase);
         gRiver = sp.b * (1.0 - gBase) * (1.0 - gLane);
@@ -117,8 +123,14 @@ export function makeGround(world, aniso = 8, lite = false) {
         float redSide = step(vWPos.z, vWPos.x) * uTeamSplit;
         cB *= mix(vec3(0.62, 0.85, 1.25), vec3(1.3, 0.72, 0.74), redSide);
         vec3 albedo = cC * gLane + cM * gJ + cB * gBase + vec3(0.02, 0.05, 0.12) * gRiver;
-        float inMap = step(0.0, vWPos.x) * step(vWPos.x, uWorld.x) * step(0.0, vWPos.z) * step(vWPos.z, uWorld.y);
-        albedo *= mix(0.12, 1.0, inMap);
+        // Continue as subdued forest floor beyond the playable rectangle. A soft,
+        // irregular fade keeps the arena readable without exposing a square border.
+        float noiseFade = 0.92 + 0.08 * sin(vWPos.x * 0.57 + sin(vWPos.z * 0.31));
+        vec3 outskirts = cM * vec3(0.62, 0.70, 0.58) * noiseFade;
+        outskirts *= 1.0 - smoothstep(18.0, 48.0, outside) * 0.28;
+        albedo = mix(albedo, outskirts, edgeBlend);
+        gLane *= 1.0 - edgeBlend; gBase *= 1.0 - edgeBlend; gRiver *= 1.0 - edgeBlend;
+        gJ = mix(gJ, 1.0, edgeBlend);
         diffuseColor.rgb = albedo;`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(roughnessFactor, 0.25, gRiver); roughnessFactor = mix(roughnessFactor, 0.55, gBase);`)
@@ -147,7 +159,7 @@ export function makeGround(world, aniso = 8, lite = false) {
           totalEmissiveRadiance += mix(vec3(0.1, 0.45, 1.0), vec3(1.0, 0.2, 0.25), redSide) * line * gBase * 0.06;
         }`);
   };
-  const geo = new THREE.PlaneGeometry(W * S + 6, H * S + 6);
+  const geo = new THREE.PlaneGeometry(W * S + apron * 2, H * S + apron * 2);
   geo.rotateX(-Math.PI / 2);
   geo.translate(W * S / 2, 0, H * S / 2);
   const m = new THREE.Mesh(geo, mat);

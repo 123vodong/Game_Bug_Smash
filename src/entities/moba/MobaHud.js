@@ -227,12 +227,12 @@ export class MobaHud {
     const L = -PANEL_W / 2, T = -PANEL_H;
     const root = s.add.container(this.px, this.H).setScrollFactor(0).setDepth(46);
     this.panelRoot = root;
-    let savedScale = 0.75;
+    let savedScale = 0.7;
     try {
       const raw = window.localStorage.getItem('bugsmash.hud.scale');
       const v = raw != null && raw !== '' ? Number(raw) : NaN;
       if (Number.isFinite(v)) savedScale = Math.max(0.7, Math.min(1.15, v));
-    } catch (_) { /* default compact legible 0.75 */ }
+    } catch (_) { /* default to the smallest supported HUD */ }
     this._hudScale = savedScale;
     const addR = (x, y, w, h, color, a = 1) => {
       const r = s.add.rectangle(x, y, w, h, color, a);

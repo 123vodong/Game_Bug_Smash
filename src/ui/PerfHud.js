@@ -1,4 +1,4 @@
-// src/ui/PerfHud.js — Global top-right FPS + Ping benchmark HUD (works in 2D Phaser, 3D Three.js, and Menu).
+// src/ui/PerfHud.js — Global top-left FPS + Ping benchmark HUD (works in 2D Phaser, 3D Three.js, and Menu).
 // Idempotent: calling mountPerfHud() multiple times returns the same controller on window.__bsPerf.
 
 const STALE_PING_MS = 25000;
@@ -25,7 +25,7 @@ export function mountPerfHud() {
   pill.style.cssText = [
     'position: fixed',
     'top: 8px',
-    'right: 10px',
+    'left: 10px',
     'z-index: 9500',
     'pointer-events: none',
     'font: 600 11px/1 Consolas, "Courier New", monospace',

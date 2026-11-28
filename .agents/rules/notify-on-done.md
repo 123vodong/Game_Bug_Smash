@@ -8,7 +8,7 @@ description: Beep 10 times in a row when all requested tasks (including backgrou
 When **every** requested task is finished (including all background agents/workflows), and just before the final report, run this command once (it beeps 10 times in a row):
 
 ```powershell
-powershell -c "1..10 | ForEach-Object { [System.Console]::Beep(1000, 300); Start-Sleep -Milliseconds 100 }"
+powershell -c "1..3 | ForEach-Object { [System.Console]::Beep(1000, 300); Start-Sleep -Milliseconds 100 }"
 ```
 
 - One run per completed batch of work, not after each sub-task or agent.

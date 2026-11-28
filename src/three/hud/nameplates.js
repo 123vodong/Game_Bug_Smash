@@ -35,7 +35,7 @@ export function createNameplates({ source, project, root }) {
   }) : null;
   const flags = (window.__three = window.__three || {}); flags.hud = flags.hud || {};
   if (flags.hud.hideChampBars == null) flags.hud.hideChampBars = true; // units/index.js should skip its 3D champion HP bar while this is true
-  let raf = 0, last = 0, disposed = false, mePos = null, pxScale = 1, W = innerWidth, H = innerHeight;
+  let raf = 0, last = 0, disposed = false, suppressed = false, mePos = null, pxScale = 1, W = innerWidth, H = innerHeight;
   const onResize = () => { W = innerWidth; H = innerHeight; };
   addEventListener('resize', onResize);
 
@@ -173,7 +173,8 @@ export function createNameplates({ source, project, root }) {
   let tickN = 0;
   function frame(t) {
     raf = requestAnimationFrame(frame);
-    if (disposed || document.hidden || t - last < 33) return; last = t;
+    if (disposed || document.hidden || t - last < 50) return; last = t;
+    if (suppressed) { layer.hidden = true; return; }
     const st = source.state && source.state(); if (!st) return;
     const myId = source.localId, srvNow = source.srvNow(), me = st.champions && st.champions.get ? st.champions.get(myId) : null, myTeam = me ? me.team : 'blue';
     const hide = (flags.hud && flags.hud.nameplates === false);
@@ -197,6 +198,7 @@ export function createNameplates({ source, project, root }) {
 
   return {
     setMePos(p) { mePos = p; },
+    setHidden(on) { suppressed = !!on; if (suppressed) layer.hidden = true; },
     dispose() { disposed = true; cancelAnimationFrame(raf); removeEventListener('resize', onResize); if (typeof offFx === 'function') offFx(); layer.remove(); plates.clear(); free.length = 0; objHeat.clear(); },
   };
 }

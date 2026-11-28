@@ -1,7 +1,21 @@
 /* ======================= LoL skin (v2), loaded after hud.css =======================
    Overrides the older rules in hud.css (#bsh-root prefix beats .bsx-touch). --hs = HUD scale, set by hud.js fit() from the viewport.
-   Gold #c8aa6e frames, glass #0b1020 -> #1b2a49. */
-#bsh-root { --hs: 1; --gold: #c8aa6e; --glass: linear-gradient(180deg, rgba(27,42,73,.94), rgba(11,16,32,.96)); --sa-b: env(safe-area-inset-bottom, 0px); --sa-l: env(safe-area-inset-left, 0px); --sa-r: env(safe-area-inset-right, 0px); --sa-t: env(safe-area-inset-top, 0px); font-size: 14px; }
+   Dark teal-black surfaces, antique-gold frames, cyan reserved for interaction. */
+#bsh-root {
+  --hs: 1;
+  --ink-0: #05090d;
+  --ink-1: #09131b;
+  --ink-2: #10232b;
+  --gold: #c89b3c;
+  --gold-hi: #f0d58a;
+  --teal: #0ac8b9;
+  --line: rgba(200,155,60,.72);
+  --glass: linear-gradient(155deg, rgba(16,35,43,.97), rgba(5,9,13,.98) 70%);
+  --frame-shadow: 0 5px 18px rgba(0,0,0,.68), inset 0 0 0 1px rgba(240,213,138,.08);
+  --sa-b: env(safe-area-inset-bottom, 0px); --sa-l: env(safe-area-inset-left, 0px); --sa-r: env(safe-area-inset-right, 0px); --sa-t: env(safe-area-inset-top, 0px);
+  color: #e8e4d6;
+  font-size: 14px;
+}
 /* overhead nameplates */
 .bsh-np-layer { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
 .bsh-np { position: absolute; left: 0; top: 0; will-change: transform; display: flex; align-items: flex-end; gap: 3px; font: 600 13px/1.1 "Segoe UI", system-ui, sans-serif; color: #fff; }
@@ -28,19 +42,20 @@
 .bsh-np.small .nt { font-size: 12px; white-space: nowrap; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; } .bsh-np.small.epic .nt { font-size: 16px; color: #ffd23f; letter-spacing: .5px; }
 
 /* top-center score bar */
-#bsh-root .bsh-top { top: calc(6px + var(--sa-t)); min-width: 280px; padding: 5px 16px 4px; background: var(--glass); border: 2px solid var(--gold); border-radius: 0 0 10px 10px; transform: translateX(-50%) scale(var(--hs)); transform-origin: 50% 0; }
+#bsh-root .bsh-top { top: calc(6px + var(--sa-t)); min-width: 280px; padding: 5px 20px 6px; background: var(--glass); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 4px 4px; clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% calc(100% - 8px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 8px)); box-shadow: var(--frame-shadow); transform: translateX(-50%) scale(var(--hs)); transform-origin: 50% 0; }
 #bsh-root .bsh-kb, #bsh-root .bsh-kr { font-size: 20px; font-weight: 700; } #bsh-root .bsh-clock { font-size: 18px; font-weight: 700; color: var(--gold); }
 #bsh-root .bsh-epic { font-size: 13px; color: #e6ecf8; } #bsh-root .bsh-buff { font-size: 13px; }
 
-/* minimap bottom-right with frame */
-#bsh-root .bsh-mmbox { position: absolute; right: calc(8px + var(--sa-r)); bottom: calc(6px + var(--sa-b)); width: calc(160px * var(--hs)); height: calc(160px * var(--hs)); }
-#bsh-root .bsh-mmbox .bsh-mm { width: 100%; height: 100%; border: 3px solid var(--gold); border-radius: 6px; box-shadow: 0 0 0 2px #0b1020, 0 4px 14px #000a; }
+/* Minimap stays at a medium tactical size; HUD +/- must not resize it. */
+#bsh-root .bsh-mmbox { position: absolute; right: calc(8px + var(--sa-r)); bottom: calc(6px + var(--sa-b)); width: 160px; height: 160px; }
+#bsh-root .bsh-mmbox { box-sizing: border-box; padding: 5px; background: var(--glass); border: 1px solid var(--line); clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px); box-shadow: var(--frame-shadow); }
+#bsh-root .bsh-mmbox .bsh-mm { width: 100%; height: 100%; border: 1px solid #735d30; border-radius: 0; box-shadow: inset 0 0 18px #000; }
 #bsh-root .bsh-left { left: calc(10px + var(--sa-l)); top: calc(8px + var(--sa-t) + 92px * var(--hs)); width: calc(220px * var(--hs)); }
 #bsh-root .bsh-target { left: calc(10px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: calc(230px * var(--hs)); background: var(--glass); border-color: var(--gold); font-size: 14px; }
 #bsh-root .bsh-target.enemy { border-color: #ff5e5e; }
 
 /* bottom panel */
-#bsh-root .bsh-panel { left: 50%; bottom: calc(6px + var(--sa-b)); width: 900px; height: 150px; max-width: none; padding: 8px 10px; grid-template-columns: 196px 1fr 188px; gap: 10px; background: var(--glass); border: 2px solid var(--gold); border-radius: 8px; transform: translateX(-50%) scale(var(--hs)); transform-origin: 50% 100%; box-shadow: 0 -2px 18px #0009, inset 0 0 0 1px #000; }
+#bsh-root .bsh-panel { left: 50%; bottom: calc(6px + var(--sa-b)); width: 900px; height: 150px; max-width: none; padding: 9px 13px; grid-template-columns: 196px 1fr 188px; gap: 10px; background: var(--glass); border: 1px solid var(--line); border-radius: 3px; clip-path: polygon(13px 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 0 100%, 0 13px); transform: translateX(-50%) scale(var(--hs)); transform-origin: 50% 100%; box-shadow: var(--frame-shadow); }
 .bsh-lcol { display: flex; gap: 8px; align-items: center; min-width: 0; }
 #bsh-root .bsh-who { flex: 0 0 82px; width: 82px; height: 82px; margin: 0; }
 #bsh-root .bsh-ring { -webkit-mask: radial-gradient(circle, transparent 35px, #000 36px); mask: radial-gradient(circle, transparent 35px, #000 36px); background: conic-gradient(var(--gold) calc(var(--p, 0) * 1%), rgba(0,0,0,.7) 0); }
@@ -51,7 +66,8 @@
 #bsh-root .bsh-mid { gap: 5px; justify-content: flex-end; }
 #bsh-root .bsh-slots { order: 0; gap: 8px; align-items: flex-end; margin: 0; }
 #bsh-root .bsh-slot { width: 60px; } #bsh-root .bsh-slot.sp { width: 44px; }
-#bsh-root .bsh-sbox { width: 60px; height: 60px; border: 2px solid var(--gold); border-radius: 8px; background: radial-gradient(circle at 50% 35%, #223a63, #0b1020); box-shadow: inset 0 0 0 2px var(--c, #3a4a66), 0 2px 6px #000a; font-size: 30px; }
+#bsh-root .bsh-sbox { width: 60px; height: 60px; border: 1px solid var(--gold); border-radius: 2px; background: radial-gradient(circle at 50% 35%, #183540, var(--ink-0) 78%); box-shadow: inset 0 0 0 2px var(--c, #28434b), 0 2px 7px #000c; clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); font-size: 30px; }
+#bsh-root .bsh-sbox:hover { border-color: var(--gold-hi); filter: brightness(1.12); }
 #bsh-root .bsh-slot.sp .bsh-sbox { width: 44px; height: 44px; font-size: 22px; border-radius: 6px; }
 #bsh-root .bsh-sbox .key { left: auto; right: 2px; top: 1px; padding: 0 4px; font-size: 13px; background: rgba(11,16,32,.88); border: 1px solid var(--gold); border-radius: 3px; line-height: 15px; }
 #bsh-root .bsh-sbox .mana { right: auto; left: 3px; bottom: 1px; font-size: 12px; }
@@ -66,21 +82,22 @@
 #bsh-root .bsh-bar > b { font-size: 14px; line-height: 18px; } #bsh-root .bsh-bar.mp { height: 16px; } #bsh-root .bsh-bar.mp > b { font-size: 12px; line-height: 12px; }
 #bsh-root .bsh-right { gap: 5px; }
 #bsh-root .bsh-gold-t { order: 0; font-size: 20px; cursor: pointer; pointer-events: auto; } #bsh-root .bsh-gold-t:hover { filter: brightness(1.18); } #bsh-root .bsh-items { order: 1; grid-template-columns: repeat(3, 1fr); gap: 4px; } #bsh-root .bsh-kda { order: 2; font-size: 14px; font-weight: 600; white-space: nowrap; }
-#bsh-root .bsh-item { position: relative; height: 36px; font-size: 22px; background: radial-gradient(circle at 50% 30%, #223a63, #0b1020); border: 1px solid #4a4030; border-radius: 5px; cursor: pointer; pointer-events: auto; } #bsh-root .bsh-item.on { border-color: var(--gold); cursor: pointer; pointer-events: auto; } #bsh-root .bsh-item.on:hover { box-shadow: 0 0 8px rgba(200,170,110,.6); }
+#bsh-root .bsh-item { position: relative; height: 36px; font-size: 22px; background: radial-gradient(circle at 50% 30%, #17343d, var(--ink-0)); border: 1px solid #51452e; border-radius: 2px; cursor: pointer; pointer-events: auto; } #bsh-root .bsh-item.on { border-color: var(--gold); cursor: pointer; pointer-events: auto; } #bsh-root .bsh-item.on:hover { border-color: var(--gold-hi); box-shadow: 0 0 9px rgba(10,200,185,.35); }
 #bsh-root .bsh-item::after { content: attr(data-k); position: absolute; left: 2px; top: 0; font: 700 10px Consolas, monospace; color: #cbd5e6; }
 #bsh-root .bsh-scale { right: -30px; gap: 5px; }
-#bsh-root .bsh-scb { width: 24px; height: 24px; font-size: 15px; color: var(--gold); background: var(--glass); border: 1.5px solid var(--gold); border-radius: 5px; box-shadow: 0 2px 8px #000a; }
+#bsh-root .bsh-scb { width: 24px; height: 24px; font-size: 15px; color: var(--gold-hi); background: var(--glass); border: 1px solid var(--gold); border-radius: 2px; box-shadow: 0 2px 8px #000a; }
 #bsh-root .bsh-scb:hover { color: #fff; border-color: #ffe9a8; background: linear-gradient(180deg, rgba(42,64,106,.96), rgba(16,24,48,.98)); }
 
 /* things stacked above the panel (offsets scale with --hs) */
 #bsh-root .bsh-ccrow { bottom: calc(162px * var(--hs) + var(--sa-b)); } #bsh-root .bsh-kit { bottom: calc(214px * var(--hs) + var(--sa-b)); font-size: 13px; }
 #bsh-root .bsh-recall { bottom: calc(188px * var(--hs) + var(--sa-b)); font-size: 14px; } #bsh-root .bsh-hidepill { bottom: calc(162px * var(--hs) + var(--sa-b)); font-size: 14px; }
 #bsh-root .bsh-toasts { bottom: calc(230px * var(--hs) + var(--sa-b)); } #bsh-root .bsh-toasts > div { font-size: 16px; }
-#bsh-root .bsx-acts { right: calc(8px + var(--sa-r)); bottom: calc(194px * var(--hs) + var(--sa-b)); }
 #bsh-root .bsh-chat { left: calc(12px + var(--sa-l)); bottom: calc(164px * var(--hs) + var(--sa-b)); width: min(340px, 26vw); }
 #bsh-root .bsh-feed { top: calc(10px + var(--sa-t)); }
 #bsh-root .bsh-banner { top: 15%; }
-#bsh-root .bsx-sbx { top: calc(60px + var(--sa-t)); right: calc(8px + var(--sa-r)); }
+#bsh-root .bsx-sbx { top: calc(36px + var(--sa-t)); left: calc(8px + var(--sa-l)); right: auto; }
+#bsh-root.bsx-sandbox .bsh-target { top: calc(112px + var(--sa-t)); }
+#bsh-root.bsx-sandbox .bsh-left { top: calc(232px + var(--sa-t)); }
 #bsh-root .bsh-death { inset: 0; top: 0; transform: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(5,8,16,.35); -webkit-backdrop-filter: grayscale(1) brightness(.8); backdrop-filter: grayscale(1) brightness(.8); }
 #bsh-root .bsh-death .dt { font-size: 26px; } #bsh-root .bsh-death .dc { font-size: 40px; } #bsh-root .bsh-death .dh { font-size: 15px; }
 
@@ -89,12 +106,11 @@
 #bsh-root.bsh-compact .bsh-stats, #bsh-root.bsh-compact .bsh-slots, #bsh-root.bsh-compact .bsh-items { display: none; }
 #bsh-root.bsh-compact .bsh-mid, #bsh-root.bsh-compact .bsh-right { justify-content: center; }
 #bsh-root.bsh-compact .bsh-who { flex-basis: 76px; width: 76px; height: 76px; }
-#bsh-root.bsh-compact .bsh-mmbox { right: auto; bottom: auto; left: calc(8px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: calc(120px * var(--hs)); height: calc(120px * var(--hs)); }
+#bsh-root.bsh-compact .bsh-mmbox { right: auto; bottom: auto; left: calc(8px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: 120px; height: 120px; }
 #bsh-root.bsh-compact .bsh-left { left: calc(8px + var(--sa-l)); top: calc(16px + var(--sa-t) + 120px * var(--hs)); width: calc(150px * var(--hs)); }
 #bsh-root.bsh-compact .bsh-target { left: calc(136px * var(--hs) + 12px + var(--sa-l)); top: calc(8px + var(--sa-t)); width: calc(200px * var(--hs)); }
-#bsh-root.bsh-compact .bsx-acts { bottom: calc(112px * var(--hs) + var(--sa-b)); right: auto; left: calc(180px * var(--hs)); justify-content: flex-start; }
 #bsh-root.bsh-compact .bsh-chat { bottom: calc(180px + var(--sa-b)); width: 30vw; }
 #bsh-root.bsh-compact .bsh-ccrow { bottom: calc(112px * var(--hs) + var(--sa-b)); } #bsh-root.bsh-compact .bsh-kit { bottom: calc(150px * var(--hs) + var(--sa-b)); }
 #bsh-root.bsh-compact .bsh-toasts { bottom: calc(140px * var(--hs) + var(--sa-b)); } #bsh-root.bsh-compact .bsh-recall { bottom: calc(130px * var(--hs) + var(--sa-b)); }
-#bsh-root.bsh-compact .bsh-top { min-width: 0; padding: 3px 10px; } #bsh-root.bsh-compact .bsx-sbx { top: calc(56px + var(--sa-t)); }
+#bsh-root.bsh-compact .bsh-top { min-width: 0; padding: 3px 10px; } #bsh-root.bsh-compact .bsx-sbx { top: calc(36px + var(--sa-t)); }
 #bsh-root.bsh-compact .bsh-np.champ { font-size: 12px; }

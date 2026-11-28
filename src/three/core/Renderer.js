@@ -54,7 +54,7 @@ function stubCamera({ canvas, source }) {
 }
 
 export function createRenderer({ canvas, source, mode = 'team', opts = {} }) {
-  const gl = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, stencil: false, depth: true, precision: IS_MOBILE ? 'mediump' : 'highp', powerPreference: 'high-performance' });
+  const gl = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, stencil: false, depth: true, precision: 'mediump', powerPreference: 'high-performance' });
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x14161c);
   const mods = { world: null, units: null, fx: null, hud: null, input: null, cam: null };
